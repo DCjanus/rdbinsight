@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_standalone_config() {
-        let toml_str = include_str!("../exmaples/standalone.toml");
+        let toml_str = include_str!("../examples/standalone.toml");
         let config: Config = toml::from_str(toml_str).unwrap();
 
         assert_eq!(config.concurrency, 10);
@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_sentinel_config() {
-        let toml_str = include_str!("../exmaples/sentinel.toml");
+        let toml_str = include_str!("../examples/sentinel.toml");
         let config: Config = toml::from_str(toml_str).unwrap();
 
         assert_eq!(config.concurrency, 10);
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_cluster_config() {
-        let toml_str = include_str!("../exmaples/cluster.toml");
+        let toml_str = include_str!("../examples/cluster.toml");
         let config: Config = toml::from_str(toml_str).unwrap();
 
         assert_eq!(config.concurrency, 10);
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_codis_config() {
-        let toml_str = include_str!("../exmaples/codis.toml");
+        let toml_str = include_str!("../examples/codis.toml");
         let config: Config = toml::from_str(toml_str).unwrap();
 
         assert_eq!(config.concurrency, 10);
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_rdb_file_config() {
-        let toml_str = include_str!("../exmaples/rdb_file.toml");
+        let toml_str = include_str!("../examples/rdb_file.toml");
         let config: Config = toml::from_str(toml_str).unwrap();
 
         assert_eq!(config.concurrency, 1);

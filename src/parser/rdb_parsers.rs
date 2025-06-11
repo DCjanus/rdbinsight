@@ -3,7 +3,7 @@ use bytes::Bytes;
 
 use crate::{
     helper::AnyResult,
-    parser::combinators::{read_be_u16, read_be_u32, read_be_u64, read_n, read_u8},
+    parser::combinators::{read_be_u16, read_be_u32, read_be_u64, read_exact, read_u8},
 };
 
 pub fn read_aux(input: &[u8]) -> AnyResult<(&[u8], (RDBStr, RDBStr))> {
@@ -64,17 +64,26 @@ pub fn read_rdb_len(input: &[u8]) -> AnyResult<(&[u8], RDBLen)> {
     }
 }
 
-#[derive(Clone, Hash, Debug)]
+#[derive(Clone, Hash, Debug, PartialEq, Eq)]
 pub enum RDBStr {
     Str(Bytes), /* XXX: tricky way to avoid lifetime issue, might be slow than &[u8], but easy to use */
     Int(u64),
+}
+
+impl RDBStr {
+    pub fn mem_size(&self) -> usize {
+        match self {
+            RDBStr::Str(bytes) => bytes.len(),
+            RDBStr::Int(_) => 8, // FIXME: estimate memory size based on integer value range
+        }
+    }
 }
 
 pub fn read_rdb_str(input: &[u8]) -> AnyResult<(&[u8], RDBStr)> {
     let (input, len) = read_rdb_len(input)?;
     match len {
         RDBLen::Simple(len) => {
-            let (input, str) = read_n(input, len as usize)?;
+            let (input, str) = read_exact(input, len as usize)?;
             Ok((input, RDBStr::Str(Bytes::copy_from_slice(str))))
         }
         RDBLen::IntStr(len) => Ok((input, RDBStr::Int(len))),
@@ -88,7 +97,7 @@ pub fn read_rdb_str(input: &[u8]) -> AnyResult<(&[u8], RDBStr)> {
                 anyhow!("Invalid output length for LZFStr, expected simple length")
             })?;
 
-            let (input, compressed) = read_n(input, in_len as usize)?;
+            let (input, compressed) = read_exact(input, in_len as usize)?;
             let decompressed = lzf::decompress(compressed, out_len as usize)
                 .map_err(|e| anyhow!("Failed to decompress LZFStr: {}", e))?;
             Ok((input, RDBStr::Str(Bytes::from(decompressed))))

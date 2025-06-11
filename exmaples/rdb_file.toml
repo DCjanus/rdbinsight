@@ -1,0 +1,13 @@
+concurrency = 1
+
+[source]
+type = "rdb_file"
+cluster_name = "my-rdb-file"
+batch_id = "batch-456"
+path = "/path/to/dump.rdb"
+
+[output]
+type = "clickhouse"
+address = "127.0.0.1:9000"
+username = "default"
+password = "123456" 

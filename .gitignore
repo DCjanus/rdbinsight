@@ -1,0 +1,4 @@
+/target
+
+# 忽略测试中生成的 RDB 文件
+tests/dumps/

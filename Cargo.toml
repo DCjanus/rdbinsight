@@ -1,0 +1,24 @@
+[package]
+name = "rdbinsight"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+async-trait = "0.1.88"
+bytes = "1.10.1"
+lzf = "1.0.0"
+num_enum = "0.7.3"
+serde = { version = "1.0.219", features = ["derive"] }
+thiserror = "2.0.12"
+tokio = { version = "1.45.1", features = ["full"] }
+tracing = { version = "0.1.41", features = ["log"] }
+
+[dev-dependencies]
+redis = { version = "0.32.0", features = ["tokio-comp"] }
+rstest = "0.25.0"
+tempfile = "3.20.0"
+testcontainers = "0.24.0"
+testcontainers-modules = { version = "0.12.1", features = ["redis"] }
+tokio = { version = "1.45.1", features = ["full"] }
+toml = "0.8.23"

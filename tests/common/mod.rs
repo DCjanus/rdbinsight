@@ -13,15 +13,16 @@ use tracing_subscriber::{EnvFilter, util::SubscriberInitExt};
 ///
 /// # Example
 /// ```rust
-/// #[tokio::test]  
+/// #[tokio::test]
 /// async fn my_test() -> anyhow::Result<()> {
-///     let _guard = common::new_log_guard();  // ✓ Correct
+///     let _guard = common::new_log_guard(); // ✓ Correct
 ///     // let _ = common::new_log_guard();    // ✗ Wrong - immediately drops
 ///     // test code here
 ///     Ok(())
 /// }
 /// ```
 #[must_use]
+#[allow(dead_code)]
 pub fn new_log_guard() -> impl Drop {
     let level_filter = EnvFilter::from_str("info,rdbinsight=debug").expect("invalid level filter");
     tracing_subscriber::fmt()

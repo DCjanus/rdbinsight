@@ -11,6 +11,16 @@ use tracing::info;
 
 mod common;
 
+// TODO: Add comprehensive unit tests for different List encodings
+// This includes testing various List formats such as:
+// - RDBType::List (basic list format)
+// - RDBType::ListZipList (ziplist encoded lists)
+// - RDBType::ListQuickList (quicklist format for Redis 3.2+)
+// - RDBType::ListQuickList2 (enhanced quicklist for Redis 8.0+)
+// Testing different encodings requires careful setup of Redis instances
+// with specific configurations to force different encoding behaviors,
+// which is a significant amount of work that should be implemented in the future.
+
 #[tokio::test]
 async fn parser_unified_test() -> AnyResult<()> {
     let redis_instance = common::RedisInstance::new("8.0")
@@ -113,6 +123,10 @@ async fn parser_unified_test() -> AnyResult<()> {
             }
             Item::Aux { .. } => {
                 unreachable!("Aux items should have been filtered out");
+            }
+            Item::ListRecord { .. } => {
+                // For now, we don't expect List records in this test
+                panic!("Unexpected ListRecord in basic string test");
             }
         }
     }

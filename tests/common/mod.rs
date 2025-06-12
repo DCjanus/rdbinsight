@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr};
 
 use anyhow::{Result, anyhow};
-use redis::{Client, Connection};
+use redis::{Client, Commands, Connection};
 use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::redis::Redis;
 use tracing_subscriber::{EnvFilter, util::SubscriberInitExt};
@@ -39,7 +39,6 @@ pub struct RedisInstance {
 }
 
 impl RedisInstance {
-    /// Create a new Redis instance with specified version
     pub async fn new(redis_version: &str) -> Result<Self> {
         let redis_image = Redis::default().with_tag(redis_version);
         let container: ContainerAsync<Redis> = redis_image.start().await?;
@@ -93,3 +92,12 @@ impl RedisInstance {
         Ok(local_rdb_path)
     }
 }
+
+pub fn seed_quicklist(conn: &mut Connection, key: &str, count: usize) -> Result<()> {
+    for idx in 0..count {
+        let _: () = conn.rpush(key, idx.to_string())?;
+    }
+    Ok(())
+}
+
+pub mod parser_utils;

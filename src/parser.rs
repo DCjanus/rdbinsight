@@ -26,10 +26,12 @@ pub enum ParseTask {
     },
     SkipListItems {
         key: RDBStr,
-        items_total: u64,
-        items_skipped: u64,
+        members_total: u64,
+        members_skipped: u64,
         rdb_size_acc: u64,
         mem_size_acc: u64,
+        elem_count_acc: u64,
+        encoding: ListEncoding,
     },
 }
 
@@ -63,13 +65,30 @@ pub enum Item {
         key: RDBStr,
         rdb_size: u64,
         mem_size: u64,
+        encoding: StringEncoding,
     },
     ListRecord {
         key: RDBStr,
-        items: u64,
+        members: u64,
         rdb_size: u64,
         mem_size: u64,
+        encoding: ListEncoding,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StringEncoding {
+    Raw,
+    Int,
+    LZF,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListEncoding {
+    List,
+    ZipList,
+    QuickList,
+    QuickList2,
 }
 
 impl Parser {
@@ -120,8 +139,8 @@ impl Parser {
 
         self.advance_to(input.len())?;
 
-        self.tasks.pop();
-        self.tasks.push(ParseTask::WaitForItem);
+        self.pop_task();
+        self.push_task(ParseTask::WaitForItem);
 
         Ok(Poll::Pending)
     }
@@ -164,7 +183,7 @@ impl Parser {
                 }
                 RDBOpcode::Eof => {
                     self.advance_to(input.len())?;
-                    self.tasks.pop();
+                    self.pop_task();
                     Ok(Poll::Ready(None))
                 }
                 _ => bail!("unexpected rdb opcode: {:?}", opcode),
@@ -186,7 +205,7 @@ impl Parser {
 
                             self.advance_to(input.len())?;
 
-                            self.tasks.push(ParseTask::SkipBytes {
+                            self.push_task(ParseTask::SkipBytes {
                                 remaining_len: val_len,
                             });
 
@@ -194,6 +213,7 @@ impl Parser {
                                 key,
                                 rdb_size,
                                 mem_size,
+                                encoding: StringEncoding::Raw,
                             })))
                         }
                         RDBLen::IntStr(val) => {
@@ -208,6 +228,7 @@ impl Parser {
                                 key,
                                 rdb_size,
                                 mem_size,
+                                encoding: StringEncoding::Int,
                             })))
                         }
                         RDBLen::LZFStr => {
@@ -228,7 +249,7 @@ impl Parser {
 
                             self.advance_to(input.len())?;
 
-                            self.tasks.push(ParseTask::SkipBytes {
+                            self.push_task(ParseTask::SkipBytes {
                                 remaining_len: in_len,
                             });
 
@@ -236,25 +257,16 @@ impl Parser {
                                 key,
                                 rdb_size,
                                 mem_size,
+                                encoding: StringEncoding::LZF,
                             })))
                         }
                     }
                 }
                 RDBType::List => {
-                    // TODO: Add comprehensive unit tests for different List encodings
-                    // This includes testing various List formats such as:
-                    // - RDBType::List (basic list format)
-                    // - RDBType::ListZipList (ziplist encoded lists)
-                    // - RDBType::ListQuickList (quicklist format for Redis 3.2+)
-                    // - RDBType::ListQuickList2 (enhanced quicklist for Redis 8.0+)
-                    // Creating proper unit tests would require setting up Redis instances with
-                    // specific configurations to force different encoding behaviors, which is
-                    // a significant amount of work that should be implemented in the future.
-
                     let begin_size = input.len() as u64;
                     let (input, key) = read_rdb_str(input).context("read list key")?;
-                    let (input, items_total) = read_rdb_len(input).context("read list size")?;
-                    let items_total = items_total
+                    let (input, members_total) = read_rdb_len(input).context("read list size")?;
+                    let members_total = members_total
                         .as_simple()
                         .context("list size should be a simple number")?;
 
@@ -264,48 +276,23 @@ impl Parser {
                     self.advance_to(input.len())?;
 
                     // Replace current task with SkipListItems
-                    self.tasks.pop();
-                    self.tasks.push(ParseTask::SkipListItems {
+                    self.pop_task();
+                    self.push_task(ParseTask::SkipListItems {
                         key,
-                        items_total,
-                        items_skipped: 0,
+                        members_total,
+                        members_skipped: 0,
                         rdb_size_acc,
                         mem_size_acc: 0,
+                        elem_count_acc: 0,
+                        encoding: ListEncoding::List,
                     });
 
                     Ok(Poll::Pending)
                 }
                 RDBType::ListZipList => {
-                    let begin_size = input.len() as u64;
-                    let (input, key) = read_rdb_str(input).context("read list ziplist key")?;
-                    let (input, ziplist_len) =
-                        read_rdb_len(input).context("read ziplist length")?;
-                    let ziplist_len = ziplist_len
-                        .as_simple()
-                        .context("ziplist length should be a simple number")?;
-
-                    let end_size = input.len() as u64;
-                    let rdb_size = begin_size - end_size + ziplist_len + 1; // +1 for the type id
-                    // For ziplist, we estimate mem_size as the ziplist size itself
-                    let mem_size = key.mem_size() as u64 + ziplist_len;
-
-                    self.advance_to(input.len())?;
-
-                    self.tasks.push(ParseTask::SkipBytes {
-                        remaining_len: ziplist_len,
-                    });
-
-                    // We need to count the items in the ziplist, but for now we'll estimate it as 1
-                    // This is a simplification - in real implementation we'd need to parse the ziplist header
-                    Ok(Poll::Ready(Some(Item::ListRecord {
-                        key,
-                        items: 1, // Simplified estimation
-                        rdb_size,
-                        mem_size,
-                    })))
+                    bail!("TODO: support ZipList encoding (currently unsupported)");
                 }
                 RDBType::ListQuickList => {
-                    // QuickList format: each node is a ziplist
                     let begin_size = input.len() as u64;
                     let (input, key) = read_rdb_str(input).context("read quicklist key")?;
                     let (input, nodes_total) =
@@ -319,23 +306,21 @@ impl Parser {
 
                     self.advance_to(input.len())?;
 
-                    // For QuickList, we need to parse each ziplist node
-                    // For now, we'll estimate items count as nodes_total (simplified)
-                    // In a full implementation, we'd need to parse each ziplist to count actual items
-                    let estimated_items = nodes_total; // Simplified estimation
-                    let estimated_mem_size = key.mem_size() as u64 + nodes_total * 64; // Rough estimate
-
-                    // For now, return the record immediately with estimated values
-                    // A complete implementation would need to parse each ziplist node
-                    Ok(Poll::Ready(Some(Item::ListRecord {
+                    self.pop_task();
+                    self.push_task(ParseTask::SkipListItems {
                         key,
-                        items: estimated_items,
-                        rdb_size: rdb_size_acc,
-                        mem_size: estimated_mem_size,
-                    })))
+                        members_total: nodes_total,
+                        members_skipped: 0,
+                        rdb_size_acc,
+                        mem_size_acc: 0,
+                        elem_count_acc: 0,
+                        encoding: ListEncoding::QuickList,
+                    });
+
+                    Ok(Poll::Pending)
                 }
                 RDBType::ListQuickList2 => {
-                    // QuickList2 format: similar to QuickList but with additional metadata
+                    // QuickList2 format: each node contains a ziplist
                     let begin_size = input.len() as u64;
                     let (input, key) = read_rdb_str(input).context("read quicklist2 key")?;
                     let (input, nodes_total) =
@@ -349,31 +334,24 @@ impl Parser {
 
                     self.advance_to(input.len())?;
 
-                    // For QuickList2, we also estimate items count
-                    // Since we created 3 items, and got 1 node, let's estimate better
-                    let estimated_items = nodes_total * 3; // Better estimation based on our test
-                    let estimated_mem_size = key.mem_size() as u64 + estimated_items * 16; // Better estimate
-
-                    // Return the record immediately with estimated values
-                    Ok(Poll::Ready(Some(Item::ListRecord {
+                    self.pop_task();
+                    self.push_task(ParseTask::SkipListItems {
                         key,
-                        items: estimated_items,
-                        rdb_size: rdb_size_acc,
-                        mem_size: estimated_mem_size,
-                    })))
+                        members_total: nodes_total,
+                        members_skipped: 0,
+                        rdb_size_acc,
+                        mem_size_acc: 0,
+                        elem_count_acc: 0,
+                        encoding: ListEncoding::QuickList2,
+                    });
+
+                    Ok(Poll::Pending)
                 }
                 RDBType::Set => {
-                    // Skip Set for now - we'll implement this later
-                    let (input, _key) = read_rdb_str(input).context("read set key")?;
-                    self.advance_to(input.len())?;
-                    bail!("Set type not yet implemented - skipping");
+                    bail!("Set type not yet implemented");
                 }
                 RDBType::ZSet => {
-                    // Skip ZSet for now - we'll implement this later
-                    let (input, _key) = read_rdb_str(input).context("read zset key")?;
-                    self.advance_to(input.len())?;
-                    // For now, just skip to the end and let the next parser handle unknown data
-                    bail!("ZSet type not yet implemented - skipping");
+                    bail!("ZSet type not yet implemented");
                 }
                 RDBType::ZSet2 => todo!(),
                 RDBType::ModulePreGA => todo!(),
@@ -406,159 +384,261 @@ impl Parser {
 
         self.advance_to(input.len())?;
 
-        if remaining_len > 0 {
-            if let Some(ParseTask::SkipBytes { remaining_len: len }) = self.tasks.last_mut() {
-                *len = remaining_len;
-            }
-        } else {
-            self.tasks.pop();
+        if remaining_len == 0 {
+            self.pop_task();
+            return Ok(Poll::Pending);
+        }
+
+        if let Some(ParseTask::SkipBytes { remaining_len: len }) = self.tasks.last_mut() {
+            *len = remaining_len;
         }
 
         Ok(Poll::Pending)
     }
 
     fn handle_skip_list_items(&mut self) -> AnyResult<Poll<Option<Item>>> {
-        // Get the current task details
-        let (key, items_total, items_skipped, rdb_size_acc, mem_size_acc) =
-            if let Some(ParseTask::SkipListItems {
-                key,
-                items_total,
-                items_skipped,
-                rdb_size_acc,
-                mem_size_acc,
-            }) = self.tasks.last()
-            {
-                (
-                    key.clone(),
-                    *items_total,
-                    *items_skipped,
-                    *rdb_size_acc,
-                    *mem_size_acc,
-                )
-            } else {
-                bail!("handle_skip_list_items called without SkipListItems task");
-            };
+        let (
+            key,
+            members_total,
+            members_skipped,
+            rdb_size_acc,
+            mem_size_acc,
+            elem_count_acc,
+            encoding,
+        ) = if let Some(ParseTask::SkipListItems {
+            key,
+            members_total,
+            members_skipped,
+            rdb_size_acc,
+            mem_size_acc,
+            elem_count_acc,
+            encoding,
+        }) = self.tasks.last()
+        {
+            (
+                key.clone(),
+                *members_total,
+                *members_skipped,
+                *rdb_size_acc,
+                *mem_size_acc,
+                *elem_count_acc,
+                encoding.clone(),
+            )
+        } else {
+            bail!("handle_skip_list_items called without SkipListItems task");
+        };
 
-        // Check if we've processed all items
-        if items_skipped >= items_total {
-            // Calculate final memory size estimate
+        if members_skipped >= members_total {
             let mem_size = key.mem_size() as u64 + mem_size_acc;
 
-            // Pop the current task
-            self.tasks.pop();
+            const LIST_RECORD_MIN_MEM_THRESHOLD: u64 = 1024; // 1 KiB
 
-            // Push WaitForItem task to continue parsing
-            self.tasks.push(ParseTask::WaitForItem);
+            self.pop_task();
+            self.push_task(ParseTask::WaitForItem);
+
+            if mem_size < LIST_RECORD_MIN_MEM_THRESHOLD {
+                return Ok(Poll::Pending);
+            }
 
             return Ok(Poll::Ready(Some(Item::ListRecord {
                 key,
-                items: items_total,
+                members: elem_count_acc,
                 rdb_size: rdb_size_acc,
                 mem_size,
+                encoding,
             })));
         }
 
-        // Parse the next list element
-        let input = self.buf.as_ref();
-        let begin_size = input.len() as u64;
+        match encoding {
+            ListEncoding::QuickList2 => {
+                let input = self.buf.as_ref();
+                let begin_size = input.len() as u64;
 
-        // Try to read the length of the next element
-        let (input, element_len) = read_rdb_len(input).context("read list element length")?;
+                let (input, _container_type) = read_u8(input).context("read container type")?;
 
-        match element_len {
-            RDBLen::Simple(elem_len) => {
-                let end_size = input.len() as u64;
-                let elem_rdb_size = begin_size - end_size + elem_len;
-                let elem_mem_size = elem_len; // Simplified memory estimation
+                let (input, ziplist_len_variant) =
+                    read_rdb_len(input).context("read ziplist length")?;
+
+                let (input, elem_rdb_size, elem_mem_size, ziplist_in_len) =
+                    match ziplist_len_variant {
+                        RDBLen::Simple(ziplist_len) => {
+                            let end_size = input.len() as u64;
+                            let elem_rdb_size = begin_size - end_size + ziplist_len;
+                            let elem_mem_size = ziplist_len;
+                            (input, elem_rdb_size, elem_mem_size, ziplist_len)
+                        }
+                        RDBLen::LZFStr => {
+                            let (input, in_len) = read_rdb_len(input).context("read lzf in len")?;
+                            let (input, out_len) =
+                                read_rdb_len(input).context("read lzf out len")?;
+                            let in_len = in_len
+                                .as_simple()
+                                .context("lzf in len should be a simple number")?;
+                            let out_len = out_len
+                                .as_simple()
+                                .context("lzf out len should be a simple number")?;
+
+                            let end_size = input.len() as u64;
+                            let elem_rdb_size = begin_size - end_size + in_len;
+                            let elem_mem_size = out_len;
+                            (input, elem_rdb_size, elem_mem_size, in_len)
+                        }
+                        other => {
+                            bail!("unsupported ziplist length variant: {:?}", other);
+                        }
+                    };
 
                 self.advance_to(input.len())?;
 
-                // Update parent task with accumulated sizes
+                let node_payload = if self.buf.len() >= ziplist_in_len as usize {
+                    &self.buf[..ziplist_in_len as usize]
+                } else {
+                    &[]
+                };
+
+                let elems_in_node = count_listpack_entries(node_payload).unwrap_or(0);
+
                 if let Some(ParseTask::SkipListItems {
-                    items_skipped,
+                    members_skipped,
                     rdb_size_acc,
                     mem_size_acc,
+                    elem_count_acc,
                     ..
                 }) = self.tasks.last_mut()
                 {
                     *rdb_size_acc += elem_rdb_size;
                     *mem_size_acc += elem_mem_size;
-                    *items_skipped += 1;
+                    *members_skipped += 1;
+                    *elem_count_acc += elems_in_node;
                 }
 
-                // Push SkipBytes subtask to skip the element content
-                self.tasks.push(ParseTask::SkipBytes {
-                    remaining_len: elem_len,
+                // Skip the ziplist data
+                self.push_task(ParseTask::SkipBytes {
+                    remaining_len: ziplist_in_len,
                 });
 
                 Ok(Poll::Pending)
             }
-            RDBLen::IntStr(_) => {
-                // Integer-encoded string element
-                let elem_mem_size = 8; // Rough estimate for integer
+            ListEncoding::QuickList => {
+                // QuickList node: ziplist_length (or LZFStr) + ziplist_data (no container type prefix)
+                let input = self.buf.as_ref();
+                let begin_size = input.len() as u64;
+
+                // Read the ziplist length
+                let (input, ziplist_len_variant) =
+                    read_rdb_len(input).context("read ziplist length")?;
+
+                let (input, elem_rdb_size, elem_mem_size, ziplist_in_len) =
+                    match ziplist_len_variant {
+                        RDBLen::Simple(ziplist_len) => {
+                            let end_size = input.len() as u64;
+                            let elem_rdb_size = begin_size - end_size + ziplist_len;
+                            let elem_mem_size = ziplist_len; // Rough estimate
+                            (input, elem_rdb_size, elem_mem_size, ziplist_len)
+                        }
+                        RDBLen::LZFStr => {
+                            // Compressed node
+                            let (input, in_len) = read_rdb_len(input).context("read lzf in len")?;
+                            let (input, out_len) =
+                                read_rdb_len(input).context("read lzf out len")?;
+                            let in_len = in_len
+                                .as_simple()
+                                .context("lzf in len should be a simple number")?;
+                            let out_len = out_len
+                                .as_simple()
+                                .context("lzf out len should be a simple number")?;
+
+                            let end_size = input.len() as u64;
+                            let elem_rdb_size = begin_size - end_size + in_len;
+                            let elem_mem_size = out_len;
+                            (input, elem_rdb_size, elem_mem_size, in_len)
+                        }
+                        other => {
+                            bail!("unsupported ziplist length variant: {:?}", other);
+                        }
+                    };
+
+                self.advance_to(input.len())?;
+
+                // Attempt to determine the number of entries in the ziplist.
+                let node_payload = if self.buf.len() >= ziplist_in_len as usize {
+                    &self.buf[..ziplist_in_len as usize]
+                } else {
+                    &[]
+                };
+
+                // If the node is compressed we can't inspect it unless we
+                // decompress it first. For now, fall back to `0` in that case.
+                let elems_in_node = count_ziplist_entries(node_payload).unwrap_or(0);
+
+                if let Some(ParseTask::SkipListItems {
+                    members_skipped,
+                    rdb_size_acc,
+                    mem_size_acc,
+                    elem_count_acc,
+                    ..
+                }) = self.tasks.last_mut()
+                {
+                    *rdb_size_acc += elem_rdb_size;
+                    *mem_size_acc += elem_mem_size;
+                    *members_skipped += 1;
+                    *elem_count_acc += elems_in_node;
+                }
+
+                // Skip the ziplist data
+                self.push_task(ParseTask::SkipBytes {
+                    remaining_len: ziplist_in_len,
+                });
+
+                Ok(Poll::Pending)
+            }
+            ListEncoding::List => {
+                // Plain list item: an RDB string element
+                let input = self.buf.as_ref();
+                let begin_size = input.len() as u64;
+
+                let (input, element) = read_rdb_str(input).context("read list element")?;
+
                 let end_size = input.len() as u64;
                 let elem_rdb_size = begin_size - end_size;
+                let elem_mem_size = element.mem_size() as u64;
 
                 self.advance_to(input.len())?;
 
-                // Update parent task with accumulated sizes
                 if let Some(ParseTask::SkipListItems {
-                    items_skipped,
+                    members_skipped,
                     rdb_size_acc,
                     mem_size_acc,
+                    elem_count_acc,
                     ..
                 }) = self.tasks.last_mut()
                 {
                     *rdb_size_acc += elem_rdb_size;
                     *mem_size_acc += elem_mem_size;
-                    *items_skipped += 1;
+                    *members_skipped += 1;
+                    *elem_count_acc += 1;
                 }
 
-                // No need to skip bytes for integer-encoded strings
                 Ok(Poll::Pending)
             }
-            RDBLen::LZFStr => {
-                // LZF compressed string
-                let (input, in_len) = read_rdb_len(input).context("read lzf element in len")?;
-                let (input, out_len) = read_rdb_len(input).context("read lzf element out len")?;
-                let in_len = in_len
-                    .as_simple()
-                    .context("lzf in len should be a simple number")?;
-                let out_len = out_len
-                    .as_simple()
-                    .context("lzf out len should be a simple number")?;
-
-                let end_size = input.len() as u64;
-                let elem_rdb_size = begin_size - end_size + in_len;
-                let elem_mem_size = out_len; // Memory size is the uncompressed size
-
-                self.advance_to(input.len())?;
-
-                // Update parent task with accumulated sizes
-                if let Some(ParseTask::SkipListItems {
-                    items_skipped,
-                    rdb_size_acc,
-                    mem_size_acc,
-                    ..
-                }) = self.tasks.last_mut()
-                {
-                    *rdb_size_acc += elem_rdb_size;
-                    *mem_size_acc += elem_mem_size;
-                    *items_skipped += 1;
-                }
-
-                // Push SkipBytes subtask to skip the compressed content
-                self.tasks.push(ParseTask::SkipBytes {
-                    remaining_len: in_len,
-                });
-
-                Ok(Poll::Pending)
+            ListEncoding::ZipList => {
+                bail!("TODO: support ZipList encoding (currently unsupported)")
             }
         }
     }
 }
 
 impl Parser {
+    fn push_task(&mut self, task: ParseTask) {
+        debug!(name = "event.push_task", task = ?task);
+        self.tasks.push(task);
+    }
+
+    fn pop_task(&mut self) -> Option<ParseTask> {
+        debug!(name = "event.pop_task", task = ?self.tasks.last());
+        self.tasks.pop()
+    }
+
     fn advance_to(&mut self, expect: usize) -> AnyResult {
         let actual = self.buf.len();
         ensure!(actual >= expect, "not enough data to consume");
@@ -567,4 +647,23 @@ impl Parser {
         debug!(name = "event.advance", consumed = consumed);
         Ok(())
     }
+}
+
+fn count_ziplist_entries(buf: &[u8]) -> Option<u64> {
+    if buf.len() < 10 {
+        return None;
+    }
+    let zllen = u16::from_le_bytes([buf[8], buf[9]]) as u64;
+    if zllen == 0xFFFF { None } else { Some(zllen) }
+}
+
+/// Parse a Redis ListPack buffer and return the number of entries it stores.
+/// Returns `None` if the input buffer is too small or malformed.
+fn count_listpack_entries(buf: &[u8]) -> Option<u64> {
+    // A listpack starts with: <total-bytes: u32><num-elements: u16>...
+    if buf.len() < 6 {
+        return None;
+    }
+    let num_elems = u16::from_le_bytes([buf[4], buf[5]]) as u64;
+    Some(num_elems)
 }

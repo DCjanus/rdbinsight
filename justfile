@@ -7,7 +7,9 @@ check:
 	cargo +nightly fmt --all -- --check
 	cargo machete
 	cargo clippy --all -- -D warnings
-	cargo test --all -- --nocapture
+
+test:
+    cargo test --all -- --nocapture
 
 fmt:
 	cargo sort --workspace
@@ -19,10 +21,7 @@ fix: fmt
 prepare:
     just fix
     just check
-    just parser_test # TODO: remove this after active development
+    just test
 
 clean:
 	rm -rf tests/dumps/*.rdb
-
-parser_test:
-	cargo test --test parser_test -- --nocapture

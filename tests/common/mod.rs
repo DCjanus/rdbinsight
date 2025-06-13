@@ -1,7 +1,7 @@
 use std::{future::Future, path::PathBuf, pin::Pin, str::FromStr};
 
 use anyhow::{Result, anyhow};
-use redis::{AsyncCommands, Client, aio::MultiplexedConnection as AsyncConnection};
+use redis::{Client, aio::MultiplexedConnection as AsyncConnection};
 use testcontainers::{ContainerAsync, GenericImage, core::WaitFor, runners::AsyncRunner};
 use tracing_subscriber::{EnvFilter, util::SubscriberInitExt};
 
@@ -111,9 +111,11 @@ impl RedisInstance {
 }
 
 pub async fn seed_list(conn: &mut AsyncConnection, key: &str, count: usize) -> Result<()> {
+    let mut pipe = redis::pipe();
     for idx in 0..count {
-        conn.rpush::<_, _, ()>(key, idx.to_string()).await?;
+        pipe.rpush(key, idx.to_string()).ignore();
     }
+    pipe.query_async::<()>(&mut *conn).await?;
     Ok(())
 }
 

@@ -1,10 +1,10 @@
 use anyhow::Context;
 use bytes::Bytes;
+use futures_util::FutureExt;
 use rdbinsight::{
     helper::AnyResult,
     parser::{Item, rdb_parsers::RDBStr},
 };
-use redis::Commands;
 use tokio;
 
 mod common;
@@ -18,7 +18,7 @@ async fn empty_rdb_test() -> AnyResult<()> {
         .context("create redis instance")?;
 
     let rdb_path = redis_instance
-        .generate_rdb("empty_rdb_test", |_| Ok(()))
+        .generate_rdb("empty_rdb_test", |_| async { Ok(()) }.boxed())
         .await
         .context("generate rdb file")?;
 
@@ -36,8 +36,15 @@ async fn string_raw_encoding_test() -> AnyResult<()> {
 
     let rdb_path = redis
         .generate_rdb("string_raw_encoding_test", |conn| {
-            let _: () = conn.set("raw_key", "raw_value")?;
-            Ok(())
+            async move {
+                redis::cmd("SET")
+                    .arg("raw_key")
+                    .arg("raw_value")
+                    .query_async::<()>(conn)
+                    .await?;
+                Ok(())
+            }
+            .boxed()
         })
         .await?;
 
@@ -69,8 +76,15 @@ async fn string_int_encoding_test() -> AnyResult<()> {
 
     let rdb_path = redis
         .generate_rdb("string_int_encoding_test", |conn| {
-            let _: () = conn.set("int_key", 123_i64)?;
-            Ok(())
+            async move {
+                redis::cmd("SET")
+                    .arg("int_key")
+                    .arg(123_i64)
+                    .query_async::<()>(conn)
+                    .await?;
+                Ok(())
+            }
+            .boxed()
         })
         .await?;
 
@@ -104,13 +118,21 @@ async fn string_lzf_encoding_test() -> AnyResult<()> {
 
     let rdb_path = redis
         .generate_rdb("string_lzf_encoding_test", |conn| {
-            let _: () = redis::cmd("CONFIG")
-                .arg("SET")
-                .arg("rdb-save-incremental-fsync")
-                .arg("no")
-                .exec(conn)?;
-            let _: () = conn.set("lzf_key", &long_text)?;
-            Ok(())
+            async move {
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("rdb-save-incremental-fsync")
+                    .arg("no")
+                    .query_async::<()>(conn)
+                    .await?;
+                redis::cmd("SET")
+                    .arg("lzf_key")
+                    .arg(&long_text)
+                    .query_async::<()>(conn)
+                    .await?;
+                Ok(())
+            }
+            .boxed()
         })
         .await?;
 
@@ -135,8 +157,7 @@ async fn string_lzf_encoding_test() -> AnyResult<()> {
     Ok(())
 }
 
-// TODO: Add tests for simple list encodings
-// TODO: Add tests for ziplist encodings
+// (additional list encoding tests can be added here)
 
 #[tokio::test]
 async fn list_quicklist_encoding_test() -> AnyResult<()> {
@@ -144,7 +165,7 @@ async fn list_quicklist_encoding_test() -> AnyResult<()> {
 
     let rdb_path = redis
         .generate_rdb("list_quicklist_encoding_test", |conn| {
-            common::seed_quicklist(conn, "ql_key", 2000)
+            async move { common::seed_list(conn, "ql_key", 2000).await }.boxed()
         })
         .await?;
 
@@ -178,7 +199,7 @@ async fn list_quicklist2_encoding_test() -> AnyResult<()> {
 
     let rdb_path = redis
         .generate_rdb("list_quicklist2_encoding_test", |conn| {
-            common::seed_quicklist(conn, "ql2_key", 2000)
+            async move { common::seed_list(conn, "ql2_key", 2000).await }.boxed()
         })
         .await?;
 
@@ -202,5 +223,45 @@ async fn list_quicklist2_encoding_test() -> AnyResult<()> {
     assert_eq!(mem_size, 5886);
     assert_eq!(members, 2000);
     assert_eq!(encoding, ListEncoding::QuickList2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_raw_encoding_test() -> AnyResult<()> {
+    // Redis 2.8 still produces the legacy LIST encoding (type id = 1)
+    let redis = common::RedisInstance::new("2.8").await?;
+
+    let rdb_path = redis
+        .generate_rdb("list_raw_encoding_test", |conn| {
+            async move { common::seed_list(conn, "list_key", 2000).await }.boxed()
+        })
+        .await?;
+
+    // Parse the RDB and collect records.
+    let bytes = tokio::fs::read(&rdb_path).await?;
+    let items = common::parser_utils::collect_items(&bytes)?;
+    let items = common::parser_utils::filter_records(items);
+
+    // Expect exactly one ListRecord.
+    assert_eq!(items.len(), 1);
+    let item = items[0].clone();
+    let Item::ListRecord {
+        key,
+        rdb_size,
+        mem_size,
+        encoding,
+        members,
+    } = item
+    else {
+        panic!("expected ListRecord");
+    };
+
+    assert_eq!(key, RDBStr::Str(Bytes::from("list_key")));
+    assert_eq!(members as usize, 2000);
+    assert_eq!(encoding, ListEncoding::List);
+
+    assert_eq!(mem_size, 16008);
+    assert_eq!(rdb_size, 5884);
+
     Ok(())
 }

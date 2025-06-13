@@ -1,9 +1,8 @@
-use std::{path::PathBuf, str::FromStr};
+use std::{future::Future, path::PathBuf, pin::Pin, str::FromStr};
 
 use anyhow::{Result, anyhow};
-use redis::{Client, Commands, Connection};
-use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
-use testcontainers_modules::redis::Redis;
+use redis::{AsyncCommands, Client, aio::MultiplexedConnection as AsyncConnection};
+use testcontainers::{ContainerAsync, GenericImage, core::WaitFor, runners::AsyncRunner};
 use tracing_subscriber::{EnvFilter, util::SubscriberInitExt};
 
 /// Creates a logging guard for tests with info/debug level filtering.
@@ -33,15 +32,25 @@ pub fn new_log_guard() -> impl Drop {
 
 /// Redis testing utilities
 pub struct RedisInstance {
-    pub container: ContainerAsync<Redis>,
+    pub container: ContainerAsync<GenericImage>,
     pub connection_string: String,
     pub redis_version: String,
 }
 
 impl RedisInstance {
     pub async fn new(redis_version: &str) -> Result<Self> {
-        let redis_image = Redis::default().with_tag(redis_version);
-        let container: ContainerAsync<Redis> = redis_image.start().await?;
+        let wait_for = if redis_version.starts_with("2.")
+            || redis_version.starts_with("3.")
+            || redis_version.starts_with("4.")
+        {
+            WaitFor::message_on_stdout("ready to accept connections")
+        } else {
+            WaitFor::message_on_stdout("Ready to accept connections")
+        };
+
+        let redis_image = GenericImage::new("redis", redis_version).with_wait_for(wait_for);
+
+        let container: ContainerAsync<GenericImage> = redis_image.start().await?;
         let host = container.get_host().await?;
         let port = container.get_host_port_ipv4(6379).await?;
         let connection_string = format!("redis://{}:{}", host, port);
@@ -55,12 +64,20 @@ impl RedisInstance {
 
     /// Generate RDB file using provided data seeder function
     pub async fn generate_rdb<F>(&self, test_case_name: &str, data_seeder: F) -> Result<PathBuf>
-    where F: Fn(&mut Connection) -> Result<()> {
+    where F: for<'c> FnOnce(
+            &'c mut AsyncConnection,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'c>> {
         let client = Client::open(self.connection_string.as_str())?;
-        let mut conn = client.get_connection()?;
+        // Obtain an async multiplexed connection (tokio runtime).
+        let mut conn = client.get_multiplexed_tokio_connection().await?;
 
-        data_seeder(&mut conn)?;
-        redis::cmd("SAVE").exec(&mut conn)?;
+        // Seed data using the provided async closure.
+        data_seeder(&mut conn).await?;
+
+        // Ensure data is persisted to RDB.
+        redis::cmd("SAVE").query_async::<()>(&mut conn).await?;
+
+        // Give Redis some time to finish writing the RDB file on disk.
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         let local_dumps_dir = PathBuf::from("tests/dumps");
@@ -93,9 +110,9 @@ impl RedisInstance {
     }
 }
 
-pub fn seed_quicklist(conn: &mut Connection, key: &str, count: usize) -> Result<()> {
+pub async fn seed_list(conn: &mut AsyncConnection, key: &str, count: usize) -> Result<()> {
     for idx in 0..count {
-        let _: () = conn.rpush(key, idx.to_string())?;
+        conn.rpush::<_, _, ()>(key, idx.to_string()).await?;
     }
     Ok(())
 }

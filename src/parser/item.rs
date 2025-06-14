@@ -26,6 +26,13 @@ pub enum Item {
         encoding: ListEncoding,
         member_count: u64,
     },
+    SetRecord {
+        key: RDBStr,
+        /// Size of the record in bytes.
+        rdb_size: u64,
+        encoding: SetEncoding,
+        member_count: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,4 +48,11 @@ pub enum ListEncoding {
     ZipList,
     QuickList,
     QuickList2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetEncoding {
+    Raw,
+    IntSet,
+    ListPack,
 }

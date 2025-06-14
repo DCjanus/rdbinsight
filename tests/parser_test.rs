@@ -4,8 +4,8 @@ use futures_util::FutureExt;
 use rdbinsight::{
     helper::AnyResult,
     parser::{
-        Buffer, Item, ListEncoding, RDBFileParser, StringEncoding, combinators::NotFinished,
-        rdb_parsers::RDBStr,
+        Buffer, Item, ListEncoding, RDBFileParser, SetEncoding, StringEncoding,
+        combinators::NotFinished, rdb_parsers::RDBStr,
     },
 };
 
@@ -354,6 +354,208 @@ async fn list_quicklist_lzf_compressed_test() -> AnyResult<()> {
     assert_eq!(*key, RDBStr::Str(Bytes::from("ql_lzf_key")));
     assert_eq!(*member_count as usize, ELEMENTS);
     assert_eq!(*encoding, ListEncoding::QuickList);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_raw_encoding_test() -> AnyResult<()> {
+    // Redis 2.8 encodes large integer sets as raw hash table (type id = 2)
+    const MEMBER_COUNT: usize = 3_000;
+
+    let redis = RedisInstance::new("2.8").await?;
+
+    let rdb_path = redis
+        .generate_rdb("set_raw_encoding_test", |conn| {
+            async move { common::seed_set(conn, "set_raw_key", MEMBER_COUNT).await }.boxed()
+        })
+        .await?;
+
+    let bytes = tokio::fs::read(&rdb_path).await?;
+    let items = collect_items(&bytes)?;
+    let items = filter_records(items);
+
+    assert_eq!(items.len(), 1, "expected exactly one SetRecord");
+    let item = items[0].clone();
+    let Item::SetRecord {
+        key,
+        encoding,
+        member_count,
+        ..
+    } = item
+    else {
+        panic!("expected SetRecord");
+    };
+
+    assert_eq!(key, RDBStr::Str(Bytes::from("set_raw_key")));
+    assert_eq!(member_count as usize, MEMBER_COUNT);
+    assert_eq!(encoding, SetEncoding::Raw);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_intset_encoding_test() -> AnyResult<()> {
+    // Redis 2.8 encodes small integer-only sets as intset (type id = 11)
+    const MEMBER_COUNT: usize = 50;
+
+    let redis = RedisInstance::new("2.8").await?;
+
+    let rdb_path = redis
+        .generate_rdb("set_intset_encoding_test", |conn| {
+            async move { common::seed_set(conn, "intset_key", MEMBER_COUNT).await }.boxed()
+        })
+        .await?;
+
+    let bytes = tokio::fs::read(&rdb_path).await?;
+    let items = collect_items(&bytes)?;
+    let items = filter_records(items);
+
+    assert_eq!(items.len(), 1);
+    let item = items[0].clone();
+    let Item::SetRecord {
+        key,
+        encoding,
+        member_count,
+        ..
+    } = item
+    else {
+        panic!("expected SetRecord");
+    };
+
+    assert_eq!(key, RDBStr::Str(Bytes::from("intset_key")));
+    assert_eq!(member_count as usize, MEMBER_COUNT);
+    assert_eq!(encoding, SetEncoding::IntSet);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_listpack_encoding_test() -> AnyResult<()> {
+    // Redis 7.2 encodes small non-integer sets using listpack (type id = 13)
+    const MEMBER_COUNT: usize = 30;
+
+    let redis = RedisInstance::new("7.2").await?;
+
+    let rdb_path = redis
+        .generate_rdb("set_listpack_encoding_test", |conn| {
+            async move {
+                // Use non–integer members to avoid intset encoding
+                let mut pipe = redis::pipe();
+                for idx in 0..MEMBER_COUNT {
+                    pipe.sadd("lp_key", format!("m{}", idx)).ignore();
+                }
+                pipe.query_async::<()>(&mut *conn).await?;
+                // Disable RDB compression to guarantee raw listpack data for easier parsing
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("rdbcompression")
+                    .arg("no")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("rdb-save-incremental-fsync")
+                    .arg("no")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let bytes = tokio::fs::read(&rdb_path).await?;
+    let items = collect_items(&bytes)?;
+    let items = filter_records(items);
+
+    assert_eq!(items.len(), 1, "should produce exactly one SetRecord");
+    let Item::SetRecord {
+        key,
+        encoding,
+        member_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected SetRecord");
+    };
+
+    assert_eq!(*key, RDBStr::Str(Bytes::from("lp_key")));
+    assert_eq!(*member_count as usize, MEMBER_COUNT);
+    assert_eq!(*encoding, SetEncoding::ListPack);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_listpack_scan_path_test() -> AnyResult<()> {
+    // Redis 7.2 + tweaked listpack thresholds to trigger lp_length == 0xFFFF
+    const MEMBER_COUNT: usize = 66_000; // > 65_534 so Redis writes 0xFFFF
+
+    let redis = RedisInstance::new("7.2").await?;
+
+    let rdb_path = redis
+        .generate_rdb("set_listpack_scan_path_test", |conn| {
+            async move {
+                // Allow very large listpack (entries < 70_000 & val length <= 64)
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("set-max-listpack-entries")
+                    .arg("70000")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+
+                // Disable RDB compression to ensure predictable encoding
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("rdbcompression")
+                    .arg("no")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+                // Disable incremental fsync to avoid extra header records
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("rdb-save-incremental-fsync")
+                    .arg("no")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+
+                // TODO(perf): this test is slow—the majority of the runtime
+                // is spent queuing 66 000 SADD commands.
+
+                // Seed a large non-integer set so Redis keeps listpack encoding but writes lp_len = 0xFFFF
+                let mut pipe = redis::pipe();
+                for idx in 0..MEMBER_COUNT {
+                    pipe.sadd("lp_ff_key", format!("m{}", idx)).ignore();
+                }
+                pipe.query_async::<()>(&mut *conn).await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    // Parse the generated RDB file and collect items
+    let bytes = tokio::fs::read(&rdb_path).await?;
+    let items = collect_items(&bytes)?;
+    let items = filter_records(items);
+
+    // Expect exactly one SetRecord.
+    assert_eq!(items.len(), 1, "expect exactly one SetRecord");
+
+    let Item::SetRecord {
+        key,
+        encoding,
+        member_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected SetRecord");
+    };
+
+    assert_eq!(*key, RDBStr::Str(Bytes::from("lp_ff_key")));
+    assert_eq!(*member_count as usize, MEMBER_COUNT);
+    assert_eq!(*encoding, SetEncoding::ListPack);
 
     Ok(())
 }

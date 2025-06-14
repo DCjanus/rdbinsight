@@ -4,7 +4,8 @@ use spire_enum::prelude::{delegate_impl, delegated_enum};
 use super::{
     buffer::Buffer,
     item::Item,
-    record_list::{ListRecordParser, QuickListRecordParser, ZipListRecordParser},
+    record_list::{ListQuickListRecordParser, ListRecordParser, ListZipListRecordParser},
+    record_set::{SetIntSetRecordParser, SetListPackRecordParser, SetRecordParser},
     record_string::StringRecordParser,
     state_parser::StateParser,
 };
@@ -21,8 +22,11 @@ use crate::{
 enum ItemParser {
     StringRecord(StringRecordParser),
     ListRecord(ListRecordParser),
-    ZipListRecord(ZipListRecordParser),
-    QuickListRecord(QuickListRecordParser),
+    ListZipListRecord(ListZipListRecordParser),
+    ListQuickListRecord(ListQuickListRecordParser),
+    SetRecord(SetRecordParser),
+    SetIntSetRecord(SetIntSetRecordParser),
+    SetListPackRecord(SetListPackRecordParser),
 }
 
 #[delegate_impl]
@@ -125,7 +129,14 @@ impl RDBFileParser {
                     buffer.consume_to(input.as_ptr());
                     Ok(None)
                 }
-                _ => bail!("unsupported opcode: {:?} (raw: {:#04x})", opcode, flag),
+                RDBOpcode::SlotInfo => todo!("unsupported opcode: SlotInfo"),
+                RDBOpcode::Function2 => todo!("unsupported opcode: Function2"),
+                RDBOpcode::FunctionPreGA => todo!("unsupported opcode: FunctionPreGA"),
+                RDBOpcode::ModuleAux => todo!("unsupported opcode: ModuleAux"),
+                RDBOpcode::Idle => todo!("unsupported opcode: Idle"),
+                RDBOpcode::Freq => todo!("unsupported opcode: Freq"),
+                RDBOpcode::ExpireTimeMs => todo!("unsupported opcode: ExpireTimeMs"),
+                RDBOpcode::ExpireTime => todo!("unsupported opcode: ExpireTime"),
             };
         }
 
@@ -145,18 +156,53 @@ impl RDBFileParser {
                     Ok(Some(item))
                 }
                 RDBType::ListZipList => {
-                    let (input, entrust) = ZipListRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = ListZipListRecordParser::init(buffer.tell(), input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
                 RDBType::ListQuickList => {
-                    let (input, entrust) = QuickListRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = ListQuickListRecordParser::init(buffer.tell(), input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
-                _ => bail!("unsupported type: {:?} (raw: {:#04x})", type_id, flag),
+                RDBType::Set => {
+                    let (input, entrust) = SetRecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
+                RDBType::SetIntSet => {
+                    let (input, entrust) = SetIntSetRecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
+                RDBType::SetListPack => {
+                    let (input, entrust) = SetListPackRecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
+                RDBType::ZSet => todo!("unsupported type: ZSet"),
+                RDBType::Hash => todo!("unsupported type: Hash"),
+                RDBType::ZSet2 => todo!("unsupported type: ZSet2"),
+                RDBType::ModulePreGA => todo!("unsupported type: ModulePreGA"),
+                RDBType::Module2 => todo!("unsupported type: Module2"),
+                RDBType::HashZipMap => todo!("unsupported type: HashZipMap"),
+                RDBType::ZSetZipList => todo!("unsupported type: ZSetZipList"),
+                RDBType::HashZipList => todo!("unsupported type: HashZipList"),
+                RDBType::StreamListPacks => todo!("unsupported type: StreamListPacks"),
+                RDBType::HashListPack => todo!("unsupported type: HashListPack"),
+                RDBType::ZSetListPack => todo!("unsupported type: ZSetListPack"),
+                RDBType::ListQuickList2 => todo!("unsupported type: ListQuickList2"),
+                RDBType::StreamListPacks2 => todo!("unsupported type: StreamListPacks2"),
+                RDBType::StreamListPacks3 => todo!("unsupported type: StreamListPacks3"),
+                RDBType::HashMetadataPreGA => todo!("unsupported type: HashMetadataPreGA"),
+                RDBType::HashListPackExPreGA => todo!("unsupported type: HashListPackExPreGA"),
+                RDBType::HashMetadata => todo!("unsupported type: HashMetadata"),
+                RDBType::HashListPackEx => todo!("unsupported type: HashListPackEx"),
             };
         }
 

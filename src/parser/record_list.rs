@@ -68,13 +68,13 @@ impl StateParser for ListRecordParser {
     }
 }
 
-pub struct ZipListRecordParser {
+pub struct ListZipListRecordParser {
     entrust: ZipListLengthParser,
     key: RDBStr,
     started: u64,
 }
 
-impl ZipListRecordParser {
+impl ListZipListRecordParser {
     pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, entrust) = ZipListLengthParser::init(input)?;
@@ -86,7 +86,7 @@ impl ZipListRecordParser {
     }
 }
 
-impl StateParser for ZipListRecordParser {
+impl StateParser for ListZipListRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -276,13 +276,13 @@ impl StateParser for IsEndZipListEntryParser {
     }
 }
 
-pub struct QuickListRecordParser {
+pub struct ListQuickListRecordParser {
     started: u64,
     key: RDBStr,
     entrust: QuickListLengthParser,
 }
 
-impl QuickListRecordParser {
+impl ListQuickListRecordParser {
     pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, entrust) = QuickListLengthParser::init(input)?;
@@ -294,7 +294,7 @@ impl QuickListRecordParser {
     }
 }
 
-impl StateParser for QuickListRecordParser {
+impl StateParser for ListQuickListRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {

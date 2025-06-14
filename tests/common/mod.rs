@@ -92,3 +92,12 @@ pub async fn seed_list(conn: &mut AsyncConnection, key: &str, count: usize) -> R
     pipe.query_async::<()>(&mut *conn).await?;
     Ok(())
 }
+
+pub async fn seed_set(conn: &mut AsyncConnection, key: &str, count: usize) -> Result<()> {
+    let mut pipe = redis::pipe();
+    for idx in 0..count {
+        pipe.sadd(key, idx.to_string()).ignore();
+    }
+    pipe.query_async::<()>(&mut *conn).await?;
+    Ok(())
+}

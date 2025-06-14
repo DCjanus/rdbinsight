@@ -3,6 +3,7 @@ use anyhow::{Context, ensure};
 use super::{
     buffer::{Buffer, skip_bytes},
     item::{Item, ListEncoding},
+    record_set::ListPackLengthParser,
     record_string::StringEncodingParser,
     state_parser::StateParser,
 };
@@ -122,6 +123,7 @@ impl ZipListLengthParser {
     }
 
     fn raw_init(input: &[u8], raw_len: u64) -> AnyResult<(&[u8], Self)> {
+        crate::parser_trace!("quicklist.ziplist.raw");
         let (input, header) = read_exact(input, 10).context("read ziplist header")?;
         let member_count = u16::from_le_bytes([header[8], header[9]]);
         if member_count != u16::MAX {
@@ -138,6 +140,7 @@ impl ZipListLengthParser {
     }
 
     fn lzf_init(input: &[u8]) -> AnyResult<(&[u8], Self)> {
+        crate::parser_trace!("quicklist.ziplist.lzf");
         let (input, in_len) = read_rdb_len(input).context("read compressed in_len")?;
         let in_len = in_len
             .as_simple()
@@ -351,8 +354,6 @@ impl StateParser for QuickListLengthParser {
 
 // ---------------------- QuickList2 (Redis 7.0+) ----------------------
 
-use super::record_set::ListPackLengthParser;
-
 /// Parser for `RDB_TYPE_LIST_QUICKLIST_2` records (Redis ≥ 7.0).
 pub struct ListQuickList2RecordParser {
     started: u64,
@@ -399,10 +400,14 @@ impl StateParser for QuickList2NodeParser {
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
         match self {
             Self::Plain(parser) => {
+                crate::parser_trace!("quicklist2.plain");
                 let _ = parser.call(buffer)?;
                 Ok(1)
             }
-            Self::Packed(parser) => parser.call(buffer),
+            Self::Packed(parser) => {
+                crate::parser_trace!("quicklist2.packed.raw");
+                parser.call(buffer)
+            }
         }
     }
 }
@@ -474,6 +479,7 @@ impl StateParser for QuickList2LengthParser {
                             (input_after_len, QuickList2NodeParser::Packed(entrust))
                         }
                         RDBLen::LZFStr => {
+                            crate::parser_trace!("quicklist2.packed.lzf");
                             // ----------------- LZF compressed listpack -----------------
                             // <in_len> <out_len> <compressed payload>
                             let (end_ptr, node_count) = {

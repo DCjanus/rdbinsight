@@ -4,6 +4,8 @@ use anyhow::{Result, anyhow};
 use redis::{Client, aio::MultiplexedConnection as AsyncConnection};
 use testcontainers::{ContainerAsync, GenericImage, core::WaitFor, runners::AsyncRunner};
 
+pub mod trace;
+
 /// Redis testing utilities
 pub struct RedisInstance {
     pub container: ContainerAsync<GenericImage>,
@@ -97,6 +99,15 @@ pub async fn seed_set(conn: &mut AsyncConnection, key: &str, count: usize) -> Re
     let mut pipe = redis::pipe();
     for idx in 0..count {
         pipe.sadd(key, idx.to_string()).ignore();
+    }
+    pipe.query_async::<()>(&mut *conn).await?;
+    Ok(())
+}
+
+pub async fn config_set_many(conn: &mut AsyncConnection, pairs: &[(&str, &str)]) -> Result<()> {
+    let mut pipe = redis::pipe();
+    for (key, value) in pairs {
+        pipe.cmd("CONFIG").arg("SET").arg(*key).arg(*value).ignore();
     }
     pipe.query_async::<()>(&mut *conn).await?;
     Ok(())

@@ -7,6 +7,8 @@ pub use item::{Item, ListEncoding, SetEncoding, StringEncoding};
 pub use rdb_file::RDBFileParser;
 pub use state_parser::StateParser;
 
+pub mod trace;
+
 mod buffer;
 mod item;
 mod rdb_file;

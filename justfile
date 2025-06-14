@@ -10,6 +10,7 @@ check:
 
 test:
     # cargo install cargo-nextest --locked
+    # Run all tests with optional parser-trace feature enabled to validate trace instrumentation.
     cargo nextest run --all --status-level=all
 
 fmt:

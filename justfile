@@ -9,7 +9,8 @@ check:
 	cargo clippy --all -- -D warnings
 
 test:
-    cargo test --all -- --nocapture
+    # cargo install cargo-nextest --locked
+    cargo nextest run --all --status-level=all
 
 fmt:
 	cargo sort --workspace

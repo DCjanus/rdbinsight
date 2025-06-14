@@ -4,7 +4,10 @@ use spire_enum::prelude::{delegate_impl, delegated_enum};
 use super::{
     buffer::Buffer,
     item::Item,
-    record_list::{ListQuickListRecordParser, ListRecordParser, ListZipListRecordParser},
+    record_list::{
+        ListQuickList2RecordParser, ListQuickListRecordParser, ListRecordParser,
+        ListZipListRecordParser,
+    },
     record_set::{SetIntSetRecordParser, SetListPackRecordParser, SetRecordParser},
     record_string::StringRecordParser,
     state_parser::StateParser,
@@ -24,6 +27,7 @@ enum ItemParser {
     ListRecord(ListRecordParser),
     ListZipListRecord(ListZipListRecordParser),
     ListQuickListRecord(ListQuickListRecordParser),
+    ListQuickList2Record(ListQuickList2RecordParser),
     SetRecord(SetRecordParser),
     SetIntSetRecord(SetIntSetRecordParser),
     SetListPackRecord(SetListPackRecordParser),
@@ -167,6 +171,12 @@ impl RDBFileParser {
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
+                RDBType::ListQuickList2 => {
+                    let (input, entrust) = ListQuickList2RecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
                 RDBType::Set => {
                     let (input, entrust) = SetRecordParser::init(buffer.tell(), input)?;
                     buffer.consume_to(input.as_ptr());
@@ -196,7 +206,6 @@ impl RDBFileParser {
                 RDBType::StreamListPacks => todo!("unsupported type: StreamListPacks"),
                 RDBType::HashListPack => todo!("unsupported type: HashListPack"),
                 RDBType::ZSetListPack => todo!("unsupported type: ZSetListPack"),
-                RDBType::ListQuickList2 => todo!("unsupported type: ListQuickList2"),
                 RDBType::StreamListPacks2 => todo!("unsupported type: StreamListPacks2"),
                 RDBType::StreamListPacks3 => todo!("unsupported type: StreamListPacks3"),
                 RDBType::HashMetadataPreGA => todo!("unsupported type: HashMetadataPreGA"),

@@ -560,6 +560,230 @@ async fn set_listpack_scan_path_test() -> AnyResult<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn list_quicklist2_encoding_test() -> AnyResult<()> {
+    // Redis 7.0 encodes lists using the newer QuickList2 format (RDB type id = 17)
+    const MEMBER_COUNT: usize = 2000;
+
+    let redis = RedisInstance::new("7.0").await?;
+
+    let rdb_path = redis
+        .generate_rdb("list_quicklist2_encoding_test", |conn| {
+            async move { common::seed_list(conn, "ql2_key", MEMBER_COUNT).await }.boxed()
+        })
+        .await?;
+
+    // Parse the RDB file and collect items
+    let bytes = tokio::fs::read(&rdb_path).await?;
+    let items = collect_items(&bytes)?;
+    let items = filter_records(items);
+
+    // Expect exactly one ListRecord.
+    assert_eq!(items.len(), 1, "should produce exactly one ListRecord");
+
+    let Item::ListRecord {
+        key,
+        encoding,
+        member_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected ListRecord");
+    };
+
+    assert_eq!(*key, RDBStr::Str(Bytes::from("ql2_key")));
+    assert_eq!(*member_count as usize, MEMBER_COUNT);
+    assert_eq!(*encoding, ListEncoding::QuickList2);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_quicklist2_plain_node_test() -> AnyResult<()> {
+    // Plain node is produced when an element exceeds list-max-listpack-size (8 KiB by default).
+    let redis = RedisInstance::new("7.0").await?;
+
+    const LARGE_TEXT_SIZE: usize = 10_000; // > 8 KiB
+    let large_text = "X".repeat(LARGE_TEXT_SIZE);
+
+    let rdb_path = redis
+        .generate_rdb("list_quicklist2_plain_node_test", |conn| {
+            async move {
+                // Ensure deterministic quicklist behaviour.
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("list-max-listpack-size")
+                    .arg("-2") // 8 KiB size cap
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("list-compress-depth")
+                    .arg("0")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+                // Disable RDB-level compression to keep plain node truly raw.
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("rdbcompression")
+                    .arg("no")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+
+                redis::cmd("RPUSH")
+                    .arg("ql2_plain_key")
+                    .arg(&large_text)
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let bytes = tokio::fs::read(&rdb_path).await?;
+    let items = collect_items(&bytes)?;
+    let items = filter_records(items);
+
+    assert_eq!(items.len(), 1, "expect exactly one ListRecord");
+
+    let Item::ListRecord {
+        key,
+        encoding,
+        member_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected ListRecord");
+    };
+
+    assert_eq!(*key, RDBStr::Str(Bytes::from("ql2_plain_key")));
+    assert_eq!(*member_count as usize, 1);
+    assert_eq!(*encoding, ListEncoding::QuickList2);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_quicklist2_listpack_raw_node_test() -> AnyResult<()> {
+    // Disable RDB compression to force raw listpack serialization for each node.
+    const ELEMENTS: usize = 2000;
+
+    let redis = RedisInstance::new("7.0").await?;
+
+    let rdb_path = redis
+        .generate_rdb("list_quicklist2_listpack_raw_node_test", |conn| {
+            async move {
+                // Ensure deterministic quicklist behaviour.
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("rdbcompression")
+                    .arg("no")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("list-max-listpack-size")
+                    .arg("-2")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("list-compress-depth")
+                    .arg("0")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+
+                common::seed_list(conn, "ql2_lp_raw_key", ELEMENTS).await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let bytes = tokio::fs::read(&rdb_path).await?;
+    let items = collect_items(&bytes)?;
+    let items = filter_records(items);
+
+    assert_eq!(items.len(), 1, "should produce exactly one ListRecord");
+
+    let Item::ListRecord {
+        key,
+        encoding,
+        member_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected ListRecord");
+    };
+
+    assert_eq!(*key, RDBStr::Str(Bytes::from("ql2_lp_raw_key")));
+    assert_eq!(*member_count as usize, ELEMENTS);
+    assert_eq!(*encoding, ListEncoding::QuickList2);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_quicklist2_listpack_lzf_node_test() -> AnyResult<()> {
+    // With rdbcompression=yes (default) and many elements, Redis will LZF-compress each listpack node.
+    const ELEMENTS: usize = 4000;
+
+    let redis = RedisInstance::new("7.0").await?;
+
+    let rdb_path = redis
+        .generate_rdb("list_quicklist2_listpack_lzf_node_test", |conn| {
+            async move {
+                // Ensure deterministic quicklist behaviour and enable compression.
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("rdbcompression")
+                    .arg("yes")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("list-max-listpack-size")
+                    .arg("-2")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+                redis::cmd("CONFIG")
+                    .arg("SET")
+                    .arg("list-compress-depth")
+                    .arg("0")
+                    .query_async::<()>(&mut *conn)
+                    .await?;
+
+                common::seed_list(conn, "ql2_lp_lzf_key", ELEMENTS).await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let bytes = tokio::fs::read(&rdb_path).await?;
+    let items = collect_items(&bytes)?;
+    let items = filter_records(items);
+
+    assert_eq!(items.len(), 1, "should produce exactly one ListRecord");
+
+    let Item::ListRecord {
+        key,
+        encoding,
+        member_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected ListRecord");
+    };
+
+    assert_eq!(*key, RDBStr::Str(Bytes::from("ql2_lp_lzf_key")));
+    assert_eq!(*member_count as usize, ELEMENTS);
+    assert_eq!(*encoding, ListEncoding::QuickList2);
+
+    Ok(())
+}
+
 fn collect_items(bytes: &[u8]) -> AnyResult<Vec<Item>> {
     let mut parser = RDBFileParser::default();
     let mut buffer = Buffer::new(1024 * 1024 * 64);

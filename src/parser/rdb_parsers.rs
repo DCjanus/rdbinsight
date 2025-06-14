@@ -6,12 +6,6 @@ use crate::{
     parser::combinators::{read_be_u16, read_be_u32, read_be_u64, read_exact, read_u8},
 };
 
-pub fn read_aux(input: &[u8]) -> AnyResult<(&[u8], (RDBStr, RDBStr))> {
-    let (input, key) = read_rdb_str(input)?;
-    let (input, val) = read_rdb_str(input)?;
-    Ok((input, (key, val)))
-}
-
 #[derive(Clone, Hash, Debug)]
 pub enum RDBLen {
     Simple(u64),

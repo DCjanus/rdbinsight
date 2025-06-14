@@ -16,11 +16,9 @@ pub fn read_exact(input: &[u8], len: usize) -> AnyResult<(&[u8], &[u8])> {
     Ok((&input[len..], &input[..len]))
 }
 
-pub fn read_at_most(input: &[u8], len: usize) -> AnyResult<(&[u8], &[u8])> {
-    if len <= input.len() {
-        return read_exact(input, len);
-    }
-    Ok((&input[len..], &input[..len]))
+pub fn read_at_most_but_at_least_one(input: &[u8], len: usize) -> AnyResult<(&[u8], &[u8])> {
+    not_empty(input)?;
+    read_exact(input, len.min(input.len()))
 }
 
 pub fn read_u8(input: &[u8]) -> AnyResult<(&[u8], u8)> {
@@ -48,6 +46,18 @@ pub fn read_be_u64(input: &[u8]) -> AnyResult<(&[u8], u64)> {
     Ok((input, value))
 }
 
+pub fn not_empty(input: &[u8]) -> AnyResult {
+    if input.is_empty() {
+        return Err(NotFinished.into());
+    }
+    Ok(())
+}
+
+pub fn peek_u8(input: &[u8]) -> AnyResult<(&[u8], u8)> {
+    not_empty(input)?;
+    Ok((input, input[0]))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[error("Not finished")]
-struct NotFinished;
+pub struct NotFinished;

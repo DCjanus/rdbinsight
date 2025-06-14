@@ -1,34 +1,8 @@
-use std::{future::Future, path::PathBuf, pin::Pin, str::FromStr};
+use std::{future::Future, path::PathBuf, pin::Pin};
 
 use anyhow::{Result, anyhow};
 use redis::{Client, aio::MultiplexedConnection as AsyncConnection};
 use testcontainers::{ContainerAsync, GenericImage, core::WaitFor, runners::AsyncRunner};
-use tracing_subscriber::{EnvFilter, util::SubscriberInitExt};
-
-/// Creates a logging guard for tests with info/debug level filtering.
-///
-/// **Important**: Assign to a variable (e.g., `let _guard = ...`) to keep the guard alive.
-/// Do NOT use `let _ = ...` as it will immediately drop the guard.
-///
-/// # Example
-/// ```rust
-/// #[tokio::test]
-/// async fn my_test() -> anyhow::Result<()> {
-///     let _guard = common::new_log_guard(); // ✓ Correct
-///     // let _ = common::new_log_guard();    // ✗ Wrong - immediately drops
-///     // test code here
-///     Ok(())
-/// }
-/// ```
-#[must_use]
-#[allow(dead_code)]
-pub fn new_log_guard() -> impl Drop {
-    let level_filter = EnvFilter::from_str("info,rdbinsight=debug").expect("invalid level filter");
-    tracing_subscriber::fmt()
-        .with_env_filter(level_filter)
-        .with_test_writer()
-        .set_default()
-}
 
 /// Redis testing utilities
 pub struct RedisInstance {
@@ -118,5 +92,3 @@ pub async fn seed_list(conn: &mut AsyncConnection, key: &str, count: usize) -> R
     pipe.query_async::<()>(&mut *conn).await?;
     Ok(())
 }
-
-pub mod parser_utils;

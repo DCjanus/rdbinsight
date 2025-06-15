@@ -2,54 +2,77 @@
 
 本文件记录当前解析器中已插桩的 `parser_trace!` 事件以及对应的集成测试覆盖情况，方便后续维护与补充。
 
-| Trace Path | 触发场景 / 源位置 | 覆盖测试 |
-|------------|------------------|-----------|
-| `quicklist.ziplist.raw` | `src/parser/record_list.rs:125`<br/>QuickList (Redis 6.0) 解析 ziplist 节点走 *raw* 分支 | `list_quicklist_ziplist_raw_node_test` |
-| `quicklist.ziplist.lzf` | `src/parser/record_list.rs:142`<br/>QuickList 解析 ziplist 节点走 *LZF* 解压分支 | `list_quicklist_lzf_compressed_test` |
-| `intset.raw` | `src/parser/record_set.rs:104`<br/>IntSet (RDB type 11) 原始解析分支 | `set_intset_encoding_test` |
-| `quicklist2.plain` | `src/parser/record_list.rs:402`<br/>QuickList2 解析 *plain* 节点 | `list_quicklist2_plain_node_test` |
-| `quicklist2.packed.raw` | `src/parser/record_list.rs:407`<br/>QuickList2 解析 *listpack* 节点（未压缩） | `list_quicklist2_listpack_raw_node_test` |
-| `quicklist2.packed.lzf` | `src/parser/record_list.rs:481`<br/>QuickList2 解析 LZF 压缩的 *listpack* 节点 | `list_quicklist2_listpack_lzf_node_test` |
-| `zset.skiplist` | `src/parser/record_zset.rs:31`<br/>ZSet 解析 *skiplist* 路径 | `zset_skiplist_encoding_test` |
-| `zset2.skiplist` | `src/parser/record_zset2.rs:30`<br/>ZSet2 解析 *skiplist* 路径 | `zset2_skiplist_encoding_test` |
-| `hash.zipmap.raw` | `src/parser/record_hash.rs:303`<br/>Hash/ZipMap 走 *raw/LZF* 路径 | `hash_zipmap_fixture_raw_test`<br/>`hash_zipmap_fixture_lzf_test` |
-| `module2.raw` | `src/parser/record_module.rs:63`<br/>Module2 记录写入完成 | `module2_encoding_test` |
+| Trace Path              | 触发场景 / 源位置                                                                        | 覆盖测试                                                              |
+|-------------------------|-----------------------------------------------------------------------------------|-------------------------------------------------------------------|
+| `quicklist.ziplist.raw` | `src/parser/record_list.rs:125`<br/>QuickList (Redis 6.0) 解析 ziplist 节点走 *raw* 分支 | `list_quicklist_ziplist_raw_node_test`                            |
+| `quicklist.ziplist.lzf` | `src/parser/record_list.rs:142`<br/>QuickList 解析 ziplist 节点走 *LZF* 解压分支           | `list_quicklist_lzf_compressed_test`                              |
+| `intset.raw`            | `src/parser/record_set.rs:104`<br/>IntSet (RDB type 11) 原始解析分支                    | `set_intset_encoding_test`                                        |
+| `quicklist2.plain`      | `src/parser/record_list.rs:402`<br/>QuickList2 解析 *plain* 节点                      | `list_quicklist2_plain_node_test`                                 |
+| `quicklist2.packed.raw` | `src/parser/record_list.rs:407`<br/>QuickList2 解析 *listpack* 节点（未压缩）              | `list_quicklist2_listpack_raw_node_test`                          |
+| `quicklist2.packed.lzf` | `src/parser/record_list.rs:481`<br/>QuickList2 解析 LZF 压缩的 *listpack* 节点           | `list_quicklist2_listpack_lzf_node_test`                          |
+| `zset.skiplist`         | `src/parser/record_zset.rs:31`<br/>ZSet 解析 *skiplist* 路径                          | `zset_skiplist_encoding_test`                                     |
+| `zset2.skiplist`        | `src/parser/record_zset2.rs:30`<br/>ZSet2 解析 *skiplist* 路径                        | `zset2_skiplist_encoding_test`                                    |
+| `hash.zipmap.raw`       | `src/parser/record_hash.rs:303`<br/>Hash/ZipMap 走 *raw/LZF* 路径                    | `hash_zipmap_fixture_raw_test`<br/>`hash_zipmap_fixture_lzf_test` |
+| `module2.raw`           | `src/parser/record_module.rs:63`<br/>Module2 记录写入完成                               | `module2_encoding_test`                                           |
+| `expiry.ms`             | `src/parser/rdb_file.rs:186`<br/>解析 ExpiryMS (毫秒级过期时间) opcode                     | `expiry_time_ms_item_order_test`                                  |
+| `expiry.s`              | `src/parser/rdb_file.rs:196`<br/>解析 ExpiryS (秒级过期时间) opcode                       | –                                                                 |
 
-当前 `tests/parser_test.rs` 已覆盖上述所有十个追踪点。若未来新增 `parser_trace!` 事件，请同时在此表补充并编写对应测试。
+当前 `tests/parser_test.rs` 已覆盖除 `expiry.s` 外的所有追踪点（共 11/12 个）。若未来新增 `parser_trace!`
+事件，请同时在此表补充并编写对应测试。
 
 # 支持的 RDB 类型与编码概览
 
 以下内容基于 `src/parser/definitions.rs` 中的 **RDBType** 枚举及各 `record_*` 解析器（见 `src/parser/` 目录）整理而得。
 
-| RDBType (十进制) | 对应数据结构 | 已实现的编码 / 容器 | 解析实现 | 集成测试 |
-|-----------------|--------------|--------------------|-----------|-----------|
-| 0  (`String`)   | String 键值  | Raw / Int / LZF | `record_string.rs` | `string_raw_encoding_test`<br/>`string_int_encoding_test`<br/>`string_lzf_encoding_test` |
-| 1  (`List`)     | List (原始)  | Plain List | `record_list.rs` (`ListRecordParser`) | `list_raw_encoding_test` |
-| 2  (`Set`)      | Set (原始)   | Raw Hash-Table | `record_set.rs` (`SetRecordParser`) | `set_raw_encoding_test` |
-| 3  (`ZSet`)     | Sorted Set   | SkipList | `record_zset.rs` (`ZSetRecordParser`) | `zset_skiplist_encoding_test` |
-| 4  (`Hash`)     | Hash         | Raw / ZipList / ListPack | `record_hash.rs` (`HashRecordParser`) | `hash_raw_encoding_test`<br/>`hash_ziplist_encoding_test`<br/>`hash_listpack_encoding_test` |
-| 5  (`ZSet2`)    | Sorted Set (double score) | SkipList | `record_zset2.rs` (`ZSet2RecordParser`) | `zset2_skiplist_encoding_test` |
-| 6  (`ModulePreGA`) | Module (pre-GA) | – | **不支持** | – |
-| 7  (`Module2`)  | Module       | Raw | `record_module.rs` (`Module2RecordParser`) | `module2_encoding_test` |
-| 9  (`HashZipMap`) | Hash (ZipMap) | ZipMap raw / LZF | `record_hash.rs` (`HashZipMapRecordParser`) | `hash_zipmap_fixture_raw_test`<br/>`hash_zipmap_fixture_lzf_test` |
-| 10 (`ListZipList`) | List (ZipList) | ZipList / *ZipList (raw/LZF)* | `record_list.rs` (`ListZipListRecordParser`) | `list_ziplist_encoding_test`<br/>`list_ziplist_scan_path_test` |
-| 11 (`SetIntSet`) | Set (IntSet) | IntSet | `record_set.rs` (`SetIntSetRecordParser`) | `set_intset_encoding_test` |
-| 12 (`ZSetZipList`) | ZSet (ZipList) | ZipList | `record_zset.rs` (`ZSetZipListRecordParser`) | `zset_ziplist_encoding_test` |
-| 13 (`HashZipList`) | Hash (ZipList) | ZipList | `record_hash.rs` (`HashZipListRecordParser`) | `hash_ziplist_encoding_test` |
-| 14 (`ListQuickList`) | List (QuickList) | QuickList-ZipList raw / LZF | `record_list.rs` (`ListQuickListRecordParser`) | `list_quicklist_encoding_test`<br/>`list_quicklist_lzf_compressed_test`<br/>`list_quicklist_ziplist_raw_node_test` |
-| 15 (`StreamListPacks`) | Stream (v1) | – | – | – |
-| 16 (`HashListPack`) | Hash (ListPack) | ListPack raw / LZF | `record_hash.rs` (`HashListPackRecordParser`) | `hash_listpack_encoding_test` |
-| 17 (`ZSetListPack`) | ZSet (ListPack) | – | – | – |
-| 18 (`ListQuickList2`) | List (QuickList2) | Plain / ListPack raw / LZF | `record_list.rs` (`ListQuickList2RecordParser`) | `list_quicklist2_encoding_test`<br/>`list_quicklist2_plain_node_test`<br/>`list_quicklist2_listpack_raw_node_test`<br/>`list_quicklist2_listpack_lzf_node_test` |
-| 19 (`StreamListPacks2`) | Stream (v2) | – | – | – |
-| 20 (`SetListPack`) | Set (ListPack) | ListPack raw / LZF | `record_set.rs` (`SetListPackRecordParser`) | `set_listpack_encoding_test`<br/>`set_listpack_scan_path_test`<br/>`set_listpack_large_string_variants_test`<br/>`set_listpack_integer_variants_test` |
-| 21 (`StreamListPacks3`) | Stream (v3) | – | – | – |
-| 22 (`HashMetadataPreGA`) | Hash Meta (pre-GA) | – | – | – |
-| 23 (`HashListPackExPreGA`) | Hash LP-Ex (pre-GA) | – | – | – |
-| 24 (`HashMetadata`) | Hash Meta | – | – | – |
-| 25 (`HashListPackEx`) | Hash LP-Ex | – | – | – |
-| – | Meta 信息 (Aux / SelectDB / ResizeDB) | – | `src/parser/item.rs` 及状态机 | `empty_rdb_test` |
+| RDBType (十进制)              | 对应数据结构                    | 已实现的编码 / 容器                   | 解析实现                                            | 集成测试                                                                                                                                                            |
+|----------------------------|---------------------------|-------------------------------|-------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 0  (`String`)              | String 键值                 | Raw / Int / LZF               | `record_string.rs`                              | `string_raw_encoding_test`<br/>`string_int_encoding_test`<br/>`string_lzf_encoding_test`                                                                        |
+| 1  (`List`)                | List (原始)                 | Plain List                    | `record_list.rs` (`ListRecordParser`)           | `list_raw_encoding_test`                                                                                                                                        |
+| 2  (`Set`)                 | Set (原始)                  | Raw Hash-Table                | `record_set.rs` (`SetRecordParser`)             | `set_raw_encoding_test`                                                                                                                                         |
+| 3  (`ZSet`)                | Sorted Set                | SkipList                      | `record_zset.rs` (`ZSetRecordParser`)           | `zset_skiplist_encoding_test`                                                                                                                                   |
+| 4  (`Hash`)                | Hash                      | Raw / ZipList / ListPack      | `record_hash.rs` (`HashRecordParser`)           | `hash_raw_encoding_test`<br/>`hash_ziplist_encoding_test`<br/>`hash_listpack_encoding_test`                                                                     |
+| 5  (`ZSet2`)               | Sorted Set (double score) | SkipList                      | `record_zset2.rs` (`ZSet2RecordParser`)         | `zset2_skiplist_encoding_test`                                                                                                                                  |
+| 6  (`ModulePreGA`)         | Module (pre-GA)           | –                             | **不支持**                                         | –                                                                                                                                                               |
+| 7  (`Module2`)             | Module                    | Raw                           | `record_module.rs` (`Module2RecordParser`)      | `module2_encoding_test`                                                                                                                                         |
+| 9  (`HashZipMap`)          | Hash (ZipMap)             | ZipMap raw / LZF              | `record_hash.rs` (`HashZipMapRecordParser`)     | `hash_zipmap_fixture_raw_test`<br/>`hash_zipmap_fixture_lzf_test`                                                                                               |
+| 10 (`ListZipList`)         | List (ZipList)            | ZipList / *ZipList (raw/LZF)* | `record_list.rs` (`ListZipListRecordParser`)    | `list_ziplist_encoding_test`<br/>`list_ziplist_scan_path_test`                                                                                                  |
+| 11 (`SetIntSet`)           | Set (IntSet)              | IntSet                        | `record_set.rs` (`SetIntSetRecordParser`)       | `set_intset_encoding_test`                                                                                                                                      |
+| 12 (`ZSetZipList`)         | ZSet (ZipList)            | ZipList                       | `record_zset.rs` (`ZSetZipListRecordParser`)    | `zset_ziplist_encoding_test`                                                                                                                                    |
+| 13 (`HashZipList`)         | Hash (ZipList)            | ZipList                       | `record_hash.rs` (`HashZipListRecordParser`)    | `hash_ziplist_encoding_test`                                                                                                                                    |
+| 14 (`ListQuickList`)       | List (QuickList)          | QuickList-ZipList raw / LZF   | `record_list.rs` (`ListQuickListRecordParser`)  | `list_quicklist_encoding_test`<br/>`list_quicklist_lzf_compressed_test`<br/>`list_quicklist_ziplist_raw_node_test`                                              |
+| 15 (`StreamListPacks`)     | Stream (v1)               | –                             | –                                               | –                                                                                                                                                               |
+| 16 (`HashListPack`)        | Hash (ListPack)           | ListPack raw / LZF            | `record_hash.rs` (`HashListPackRecordParser`)   | `hash_listpack_encoding_test`                                                                                                                                   |
+| 17 (`ZSetListPack`)        | ZSet (ListPack)           | –                             | –                                               | –                                                                                                                                                               |
+| 18 (`ListQuickList2`)      | List (QuickList2)         | Plain / ListPack raw / LZF    | `record_list.rs` (`ListQuickList2RecordParser`) | `list_quicklist2_encoding_test`<br/>`list_quicklist2_plain_node_test`<br/>`list_quicklist2_listpack_raw_node_test`<br/>`list_quicklist2_listpack_lzf_node_test` |
+| 19 (`StreamListPacks2`)    | Stream (v2)               | –                             | –                                               | –                                                                                                                                                               |
+| 20 (`SetListPack`)         | Set (ListPack)            | ListPack raw / LZF            | `record_set.rs` (`SetListPackRecordParser`)     | `set_listpack_encoding_test`<br/>`set_listpack_scan_path_test`<br/>`set_listpack_large_string_variants_test`<br/>`set_listpack_integer_variants_test`           |
+| 21 (`StreamListPacks3`)    | Stream (v3)               | –                             | –                                               | –                                                                                                                                                               |
+| 22 (`HashMetadataPreGA`)   | Hash Meta (pre-GA)        | –                             | –                                               | –                                                                                                                                                               |
+| 23 (`HashListPackExPreGA`) | Hash LP-Ex (pre-GA)       | –                             | –                                               | –                                                                                                                                                               |
+| 24 (`HashMetadata`)        | Hash Meta                 | –                             | –                                               | –                                                                                                                                                               |
+| 25 (`HashListPackEx`)      | Hash LP-Ex                | –                             | –                                               | –                                                                                                                                                               |
 
 说明：表中 "–" 表示当前尚未支持的解析逻辑与测试。后续若新增支持，请补充相应列的数据。
 
-> 注：如上表中"编码 / 容器"列出现 *raw / LZF*，表示对应分支已考虑到 Redis 的 LZF 压缩选项并在测试中覆盖。 
+> 注：如上表中"编码 / 容器"列出现 *raw / LZF*，表示对应分支已考虑到 Redis 的 LZF 压缩选项并在测试中覆盖。
+
+# 支持的 RDB Opcode 覆盖情况
+
+以下内容基于 `src/parser/definitions.rs` 中的 **RDBOpcode** 枚举及 `src/parser/rdb_file.rs` 解析逻辑整理而得。
+
+| RDBOpcode (十进制)       | 含义                        | 解析实现                                           | 集成测试                             |
+|-----------------------|---------------------------|------------------------------------------------|----------------------------------|
+| 244 (`SlotInfo`)      | Slot 分片信息                 | `rdb_file.rs`                                  | `slot_info_opcode_test`          |
+| 245 (`Function2`)     | Function Library (GA)     | `record_function.rs` (`Function2RecordParser`) | `function2_encoding_test`        |
+| 246 (`FunctionPreGA`) | Function Library (pre-GA) | **不支持**                                        | –                                |
+| 247 (`ModuleAux`)     | Module 附加信息               | `record_module.rs` (`ModuleAuxParser`)         | –                                |
+| 248 (`Idle`)          | 键空闲时长（秒）                  | `rdb_file.rs`                                  | `idle_opcode_test`               |
+| 249 (`Freq`)          | 键访问频度（LFU）                | `rdb_file.rs`                                  | `freq_opcode_test`               |
+| 250 (`Aux`)           | 文件级元信息 (AUX)              | `rdb_file.rs`                                  | `empty_rdb_test`                 |
+| 251 (`ResizeDB`)      | Hash-Table 预分配大小          | `rdb_file.rs`                                  | –                                |
+| 252 (`ExpireTimeMs`)  | 过期时间（毫秒）                  | `rdb_file.rs`                                  | `expiry_time_ms_item_order_test` |
+| 253 (`ExpireTime`)    | 过期时间（秒）                   | `rdb_file.rs`                                  | –                                |
+| 254 (`SelectDB`)      | 切换数据库                     | `rdb_file.rs`                                  | –                                |
+| 255 (`Eof`)           | 文件结束标识                    | `rdb_file.rs`                                  | –                                |
+
+说明：表中 "–" 表示当前尚未支持的解析逻辑或测试。

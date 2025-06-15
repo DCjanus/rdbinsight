@@ -63,6 +63,23 @@ pub enum Item {
         key: RDBStr,
         rdb_size: u64,
     },
+    ExpiryMs {
+        expire_at_ms: u64,
+    },
+    Idle {
+        idle_seconds: u64,
+    },
+    Freq {
+        freq: u8,
+    },
+    FunctionRecord {
+        rdb_size: u64,
+    },
+    SlotInfo {
+        slot_id: u64,
+        slot_size: u64,
+        expires_slot_size: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

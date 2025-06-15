@@ -4,6 +4,7 @@ use spire_enum::prelude::{delegate_impl, delegated_enum};
 use super::{
     buffer::Buffer,
     item::Item,
+    record_function::Function2RecordParser,
     record_hash::{
         HashListPackRecordParser, HashRecordParser, HashZipListRecordParser, HashZipMapRecordParser,
     },
@@ -21,7 +22,7 @@ use super::{
 use crate::{
     helper::AnyResult,
     parser::{
-        combinators::{read_exact, read_tag, read_u8},
+        combinators::{read_exact, read_le_u32, read_le_u64, read_tag, read_u8},
         definitions::{RDBOpcode, RDBType},
         rdb_parsers::{read_rdb_len, read_rdb_str},
     },
@@ -46,6 +47,7 @@ enum ItemParser {
     HashListPackRecord(HashListPackRecordParser),
     Module2Record(Module2RecordParser),
     ModuleAuxRecord(ModuleAuxParser),
+    Function2Record(Function2RecordParser),
 }
 
 #[delegate_impl]
@@ -92,22 +94,18 @@ impl RDBFileParser {
 }
 
 impl RDBFileParser {
-    /// Parse the next [`Item`], returning `Ok(None)` on `EOF`.
     pub fn poll_next(&mut self, buffer: &mut Buffer) -> AnyResult<Option<Item>> {
-        // If we're currently waiting for a child parser to finish, give it a
-        // chance to consume more data first.
         if let Some(entrust) = self.entrust.as_mut() {
             let item = entrust.call(buffer)?;
             self.entrust = None;
             return Ok(Some(item));
         }
 
-        // Ensure the header has been parsed.
         if self.version == 0 {
+            // TODO: init RDBFileParser with entrust with RDBFileHeaderParser, to skip this branch
             self.read_header(buffer).context("read header")?;
         }
 
-        // Read the next flag byte from the stream.
         let input = buffer.as_ref();
         let (input, flag) = read_u8(input).context("read item flag")?;
 
@@ -148,19 +146,70 @@ impl RDBFileParser {
                     buffer.consume_to(input.as_ptr());
                     Ok(None)
                 }
-                RDBOpcode::SlotInfo => todo!("unsupported opcode: SlotInfo"),
-                RDBOpcode::Function2 => todo!("unsupported opcode: Function2"),
-                RDBOpcode::FunctionPreGA => todo!("unsupported opcode: FunctionPreGA"),
+                RDBOpcode::SlotInfo => {
+                    let (input, slot_id) = read_rdb_len(input).context("read slot count")?;
+                    let slot_id = slot_id
+                        .as_simple()
+                        .context("slot id should be a simple number")?;
+                    let (input, slot_size) = read_rdb_len(input).context("read slot size")?;
+                    let slot_size = slot_size
+                        .as_simple()
+                        .context("slot size should be a simple number")?;
+                    let (input, expires_slot_size) =
+                        read_rdb_len(input).context("read expires slot size")?;
+                    let expires_slot_size = expires_slot_size
+                        .as_simple()
+                        .context("expires slot size should be a simple number")?;
+                    buffer.consume_to(input.as_ptr());
+                    Ok(Some(Item::SlotInfo {
+                        slot_id,
+                        slot_size,
+                        expires_slot_size,
+                    }))
+                }
+                RDBOpcode::Function2 => {
+                    let (input, entrust) = Function2RecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
+                RDBOpcode::FunctionPreGA => bail!("not supported opcode: FunctionPreGA"),
                 RDBOpcode::ModuleAux => {
                     let (input, entrust) = ModuleAuxParser::init(buffer.tell(), input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
-                RDBOpcode::Idle => todo!("unsupported opcode: Idle"),
-                RDBOpcode::Freq => todo!("unsupported opcode: Freq"),
-                RDBOpcode::ExpireTimeMs => todo!("unsupported opcode: ExpireTimeMs"),
-                RDBOpcode::ExpireTime => todo!("unsupported opcode: ExpireTime"),
+                RDBOpcode::Idle => {
+                    let (input, idle_seconds) = read_rdb_len(input).context("read idle seconds")?;
+                    let idle_seconds = idle_seconds
+                        .as_simple()
+                        .context("idle seconds should be a simple number")?;
+                    buffer.consume_to(input.as_ptr());
+                    Ok(Some(Item::Idle { idle_seconds }))
+                }
+                RDBOpcode::Freq => {
+                    let (input, freq) = read_u8(input).context("read freq")?;
+                    buffer.consume_to(input.as_ptr());
+                    Ok(Some(Item::Freq { freq }))
+                }
+                RDBOpcode::ExpireTimeMs => {
+                    let (input, expire_at_ms) =
+                        read_le_u64(input).context("read expire time ms")?;
+                    buffer.consume_to(input.as_ptr());
+                    crate::parser_trace!("expiry.ms");
+                    Ok(Some(Item::ExpiryMs { expire_at_ms }))
+                }
+                RDBOpcode::ExpireTime => {
+                    // since RDB 3.0, Redis save expire time in milliseconds instead of seconds
+                    // ref: https://github.com/redis/redis/commit/7dcc10b65e0075fccc90d93bac5b078baefdbb07#diff-c77a3d2b15213159471dad3359f23629c2297c3579861945e94ff05c34bb3d7dL572
+                    let (input, expire_at_s) =
+                        read_le_u32(input).context("read expire time seconds")?;
+                    let expire_at_ms = expire_at_s as u64 * 1000;
+                    buffer.consume_to(input.as_ptr());
+                    crate::parser_trace!("expiry.s");
+                    Ok(Some(Item::ExpiryMs { expire_at_ms }))
+                }
             };
         }
 
@@ -233,9 +282,7 @@ impl RDBFileParser {
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
-                RDBType::ModulePreGA => {
-                    anyhow::bail!("unsupported type: ModulePreGA");
-                }
+                RDBType::ModulePreGA => bail!("not supported type: ModulePreGA"),
                 RDBType::Module2 => {
                     let (input, entrust) = Module2RecordParser::init(buffer.tell(), input)?;
                     buffer.consume_to(input.as_ptr());

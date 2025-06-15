@@ -12,6 +12,7 @@ pub mod trace;
 mod buffer;
 mod item;
 mod rdb_file;
+mod record_function;
 mod record_hash;
 mod record_list;
 mod record_module;

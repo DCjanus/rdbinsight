@@ -2,7 +2,11 @@ use std::{future::Future, path::PathBuf, pin::Pin};
 
 use anyhow::{Result, anyhow};
 use redis::{Client, aio::MultiplexedConnection as AsyncConnection};
-use testcontainers::{ContainerAsync, GenericImage, core::WaitFor, runners::AsyncRunner};
+use testcontainers::{
+    ContainerAsync, GenericImage,
+    core::{ImageExt, WaitFor},
+    runners::AsyncRunner,
+};
 
 pub mod trace;
 
@@ -101,6 +105,32 @@ impl RedisInstance {
         }
 
         Ok(local_rdb_path)
+    }
+
+    pub async fn new_with_cmd(
+        redis_version: &str,
+        cmd: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Result<Self> {
+        let wait_for = if redis_version.starts_with("2.") || redis_version.starts_with("3.") {
+            WaitFor::message_on_stdout("ready to accept connections")
+        } else {
+            WaitFor::message_on_stdout("Ready to accept connections")
+        };
+
+        let redis_image = GenericImage::new("redis", redis_version)
+            .with_wait_for(wait_for)
+            .with_cmd(cmd);
+
+        let container: ContainerAsync<GenericImage> = redis_image.start().await?;
+        let host = container.get_host().await?;
+        let port = container.get_host_port_ipv4(6379).await?;
+        let connection_string = format!("redis://{}:{}", host, port);
+
+        Ok(Self {
+            container,
+            connection_string,
+            redis_version: redis_version.to_string(),
+        })
     }
 }
 

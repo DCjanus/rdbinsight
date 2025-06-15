@@ -46,6 +46,20 @@ pub fn read_be_u64(input: &[u8]) -> AnyResult<(&[u8], u64)> {
     Ok((input, value))
 }
 
+pub fn read_le_u32(input: &[u8]) -> AnyResult<(&[u8], u32)> {
+    let (input, found) = read_exact(input, 4)?;
+    let value = u32::from_le_bytes([found[0], found[1], found[2], found[3]]);
+    Ok((input, value))
+}
+
+pub fn read_le_u64(input: &[u8]) -> AnyResult<(&[u8], u64)> {
+    let (input, found) = read_exact(input, 8)?;
+    let value = u64::from_le_bytes([
+        found[0], found[1], found[2], found[3], found[4], found[5], found[6], found[7],
+    ]);
+    Ok((input, value))
+}
+
 pub fn not_empty(input: &[u8]) -> AnyResult {
     if input.is_empty() {
         return Err(NotFinished.into());

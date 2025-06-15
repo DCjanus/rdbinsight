@@ -2,7 +2,10 @@
 //! to ensure the tracing subscriber remains active within the single thread that executes the parser.
 //! This avoids missing events when tasks hop between worker threads in Tokio's multi-thread runtime.
 
-use std::path::Path;
+use std::{
+    path::Path,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{Context, ensure};
 use bytes::Bytes;
@@ -747,7 +750,7 @@ async fn set_listpack_large_string_variants_test() -> AnyResult<()> {
                     pipe.sadd("lp_var_key", val).ignore();
                 }
 
-                pipe.query_async::<()>(&mut *conn).await?;
+                pipe.query_async::<()>(conn).await?;
                 Ok(())
             }
             .boxed()
@@ -1132,6 +1135,277 @@ async fn module2_encoding_test() -> AnyResult<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn expiry_time_ms_item_order_test() -> AnyResult<()> {
+    let redis = RedisInstance::new("8.0").await?;
+
+    let expected_expire_at = SystemTime::now()
+        .checked_add(Duration::from_secs(3600))
+        .expect("should not overflow");
+    let expected_expire_at_ms = expected_expire_at
+        .duration_since(UNIX_EPOCH)
+        .expect("should not overflow")
+        .as_millis() as u64;
+
+    let rdb_path = redis
+        .generate_rdb("expiry_time_ms_item_order_test", |conn| {
+            async move {
+                redis::cmd("SET")
+                    .arg("ms_key")
+                    .arg("foo")
+                    .query_async::<()>(conn)
+                    .await?;
+
+                redis::cmd("PEXPIREAT")
+                    .arg("ms_key")
+                    .arg(expected_expire_at_ms)
+                    .query_async::<()>(conn)
+                    .await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let guard = trace::capture();
+    let items = read_filtered_items(&rdb_path).await?;
+    assert!(
+        guard.hit("expiry.ms"),
+        "expected expiry.ms trace event; captured: {:?}",
+        guard.collected()
+    );
+
+    assert_eq!(items.len(), 2, "should emit ExpiryMs + StringRecord");
+
+    let Item::StringRecord { key, .. } = &items[1] else {
+        panic!("expected StringRecord after ExpiryMs");
+    };
+    assert_eq!(*key, RDBStr::Str(Bytes::from("ms_key")));
+
+    let actual_expire_at_ms = match &items[0] {
+        Item::ExpiryMs { expire_at_ms } => *expire_at_ms,
+        _ => panic!("first item should be ExpiryMs"),
+    };
+    assert_eq!(actual_expire_at_ms, expected_expire_at_ms);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn function2_encoding_test() -> AnyResult<()> {
+    let redis = RedisInstance::new("8.0").await?;
+
+    const LUA_LIB: &str =
+        "#!lua name=mylib\nredis.register_function('foo', function(keys, args) return 42 end)";
+
+    let rdb_path = redis
+        .generate_rdb("function2_encoding_test", |conn| {
+            async move {
+                redis::cmd("FUNCTION")
+                    .arg("LOAD")
+                    .arg("REPLACE")
+                    .arg(LUA_LIB)
+                    .query_async::<()>(conn)
+                    .await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    // Parse and filter items.
+    let items = read_filtered_items(&rdb_path).await?;
+
+    // Expect exactly one FunctionRecord item.
+    assert_eq!(items.len(), 1, "should emit exactly one FunctionRecord");
+    let item = &items[0];
+    match item {
+        Item::FunctionRecord { rdb_size } => {
+            assert!(*rdb_size > 0, "function library size should be positive");
+        }
+        other => panic!("expected FunctionRecord, got {:?}", other),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn idle_opcode_test() -> AnyResult<()> {
+    use std::time::Duration;
+
+    use futures_util::FutureExt;
+
+    let redis = RedisInstance::new("8.0").await?;
+
+    let rdb_path = redis
+        .generate_rdb("idle_opcode_test", |conn| {
+            async move {
+                // Enable LRU-based eviction so Redis stores the IDLE opcode.
+                config_set_many(conn, &[("maxmemory-policy", "allkeys-lru")]).await?;
+
+                // Create a key.
+                redis::cmd("SET")
+                    .arg("lru_key")
+                    .arg("lru_value")
+                    .query_async::<()>(conn)
+                    .await?;
+
+                // Wait a bit so the key gets some idle time > 0 seconds.
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let items = read_filtered_items(&rdb_path).await?;
+
+    // Expect exactly an Idle opcode followed by the StringRecord.
+    assert_eq!(items.len(), 2, "should emit Idle + StringRecord");
+
+    match &items[0] {
+        Item::Idle { idle_seconds } => {
+            assert!(
+                *idle_seconds >= 3 && *idle_seconds <= 7,
+                "idle seconds should be near 5, got {}",
+                idle_seconds
+            );
+        }
+        other => panic!("expected Idle opcode, got {:?}", other),
+    };
+
+    match &items[1] {
+        Item::StringRecord { key, .. } => {
+            assert_eq!(*key, RDBStr::Str(Bytes::from("lru_key")));
+        }
+        other => panic!("expected StringRecord after Idle, got {:?}", other),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn freq_opcode_test() -> AnyResult<()> {
+    use bytes::Bytes;
+    use futures_util::FutureExt;
+
+    let redis = RedisInstance::new("8.0").await?;
+
+    let rdb_path = redis
+        .generate_rdb("freq_opcode_test", |conn| {
+            async move {
+                // Enable LFU-based eviction so Redis stores the FREQ opcode.
+                config_set_many(conn, &[("maxmemory-policy", "allkeys-lfu")]).await?;
+
+                // Create a key and access it a few times to bump its LFU counter.
+                redis::cmd("SET")
+                    .arg("lfu_key")
+                    .arg("lfu_value")
+                    .query_async::<()>(conn)
+                    .await?;
+
+                for _ in 0..10 {
+                    let _: Bytes = redis::cmd("GET").arg("lfu_key").query_async(conn).await?;
+                }
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let items = read_filtered_items(&rdb_path).await?;
+
+    // Expect exactly a Freq opcode followed by the StringRecord.
+    assert_eq!(items.len(), 2, "should emit Freq + StringRecord");
+
+    match &items[0] {
+        Item::Freq { freq } => {
+            assert!(*freq > 0, "freq should be positive, got {}", freq);
+        }
+        other => panic!("expected Freq opcode, got {:?}", other),
+    };
+
+    match &items[1] {
+        Item::StringRecord { key, .. } => {
+            assert_eq!(*key, RDBStr::Str(Bytes::from("lfu_key")));
+        }
+        other => panic!("expected StringRecord after Freq, got {:?}", other),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn slot_info_opcode_test() -> AnyResult<()> {
+    let redis = common::RedisInstance::new_with_cmd("8.0", [
+        "redis-server",
+        "--cluster-enabled",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+    ])
+    .await?;
+
+    let rdb_path = redis
+        .generate_rdb("slot_info_opcode_test", |conn| {
+            async move {
+                const TOTAL_SLOTS: usize = 16_384;
+                const CHUNK: usize = 1024;
+
+                let mut slot = 0;
+                while slot < TOTAL_SLOTS {
+                    let upper = usize::min(slot + CHUNK, TOTAL_SLOTS);
+                    let mut cmd = redis::cmd("CLUSTER");
+                    cmd.arg("ADDSLOTS");
+                    for s in slot..upper {
+                        cmd.arg(s as usize);
+                    }
+                    cmd.query_async::<()>(&mut *conn).await?;
+                    slot = upper;
+                }
+
+                for _ in 0..20 {
+                    let info: String = redis::cmd("CLUSTER")
+                        .arg("INFO")
+                        .query_async(&mut *conn)
+                        .await?;
+                    if info.lines().any(|l| l.trim() == "cluster_state:ok") {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+
+                redis::cmd("SET")
+                    .arg("cluster_key")
+                    .arg("value")
+                    .query_async::<()>(conn)
+                    .await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let items = read_filtered_items(&rdb_path).await?;
+
+    assert!(
+        items.iter().any(|i| matches!(i, Item::SlotInfo { .. })),
+        "SlotInfo opcode not found in parsed items: {:?}",
+        items
+    );
+
+    assert!(
+        items.iter().any(|i| match i {
+            Item::StringRecord { key, .. } =>
+                *key == RDBStr::Str(Bytes::from_static(b"cluster_key")),
+            _ => false,
+        }),
+        "Expected StringRecord for 'cluster_key' not found"
+    );
+
+    Ok(())
+}
+
 fn collect_items(bytes: &[u8]) -> AnyResult<Vec<Item>> {
     let mut parser = RDBFileParser::default();
     let mut buffer = Buffer::new(1024 * 1024 * 64);
@@ -1154,6 +1428,7 @@ fn collect_items(bytes: &[u8]) -> AnyResult<Vec<Item>> {
             }
         }
     }
+    // TODO: make sure buffer has been consumed completely
     Ok(items)
 }
 

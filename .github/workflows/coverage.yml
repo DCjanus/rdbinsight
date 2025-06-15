@@ -1,13 +1,13 @@
-# NOTE: This workflow is manually triggered. After the repository is open-sourced, you can switch to automatic triggers such as `push` or `pull_request`. Example:
-# on:
-#   push:
-#     branches: [ main ]
-#   pull_request:
+# NOTE: This workflow is triggered on pushes to the master branch only.
+# TODO: Once the repository is open-sourced and GitHub Actions & Codecov are free,
+#       enable triggering on pull_request events so that coverage runs for every PR.
 
 name: Coverage
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - master
 
 jobs:
   coverage:

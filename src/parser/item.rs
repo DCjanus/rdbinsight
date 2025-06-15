@@ -108,6 +108,8 @@ pub enum SetEncoding {
 pub enum ZSetEncoding {
     SkipList,
     ZipList,
+    /// ListPack-based encoding introduced in Redis 7.0+
+    ListPack,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

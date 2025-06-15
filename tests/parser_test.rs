@@ -1406,6 +1406,111 @@ async fn slot_info_opcode_test() -> AnyResult<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn zset_listpack_encoding_test() -> AnyResult<()> {
+    // Insert <128 members so modern Redis stores ZSET as listpack (type id 17).
+    const MEMBER_COUNT: usize = 50;
+
+    let redis = RedisInstance::new("8.0").await?;
+    let guard = trace::capture();
+
+    let rdb_path = redis
+        .generate_rdb("zset_listpack_encoding_test", |conn| {
+            async move {
+                // Disable RDB compression so the listpack is stored uncompressed.
+                config_set_many(conn, &[("rdbcompression", "no")]).await?;
+                seed_zset(conn, "zsl_lp_key", MEMBER_COUNT).await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let items = read_filtered_items(&rdb_path).await?;
+
+    assert_eq!(items.len(), 1, "expected exactly one ZSetRecord");
+    let Item::ZSetRecord {
+        key,
+        encoding,
+        member_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected ZSetRecord");
+    };
+
+    assert_eq!(*key, RDBStr::Str(Bytes::from("zsl_lp_key")));
+    assert_eq!(*member_count as usize, MEMBER_COUNT);
+    assert_eq!(*encoding, ZSetEncoding::ListPack);
+    assert!(
+        guard.hit("zset.listpack.raw"),
+        "expected zset.listpack.raw trace event; captured: {:?}",
+        guard.collected()
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn zset_listpack_lzf_encoding_test() -> AnyResult<()> {
+    // Use near-threshold entry count and relatively long member names to trigger LZF compression.
+    const MEMBER_COUNT: usize = 120; // keep <128 to stay in listpack encoding
+
+    let redis = RedisInstance::new("8.0").await?;
+    let guard = trace::capture();
+
+    let rdb_path = redis
+        .generate_rdb("zset_listpack_lzf_encoding_test", |conn| {
+            async move {
+                // Ensure we stay within listpack limits while producing a sizeable, compressible blob.
+                config_set_many(conn, &[
+                    ("zset-max-listpack-entries", "128"),
+                    ("zset-max-listpack-value", "64"),
+                ])
+                .await?;
+
+                let mut pipe = redis::pipe();
+                for idx in 0..MEMBER_COUNT {
+                    // 60-byte value (within listpack value limit) to increase overall blob size.
+                    let member = format!("m{:0>58}", idx);
+                    pipe.cmd("ZADD")
+                        .arg("zsl_lp_lzf_key")
+                        .arg(idx as isize) // score
+                        .arg(member)
+                        .ignore();
+                }
+                pipe.query_async::<()>(&mut *conn).await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let items = read_filtered_items(&rdb_path).await?;
+
+    assert_eq!(items.len(), 1, "expected exactly one ZSetRecord");
+    let Item::ZSetRecord {
+        key,
+        encoding,
+        member_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected ZSetRecord");
+    };
+
+    assert_eq!(*key, RDBStr::Str(Bytes::from("zsl_lp_lzf_key")));
+    assert_eq!(*member_count as usize, MEMBER_COUNT);
+    assert_eq!(*encoding, ZSetEncoding::ListPack);
+    assert!(
+        guard.hit("zset.listpack.lzf"),
+        "expected zset.listpack.lzf trace event; captured: {:?}",
+        guard.collected()
+    );
+
+    Ok(())
+}
+
 fn collect_items(bytes: &[u8]) -> AnyResult<Vec<Item>> {
     let mut parser = RDBFileParser::default();
     let mut buffer = Buffer::new(1024 * 1024 * 64);

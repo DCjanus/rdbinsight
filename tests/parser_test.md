@@ -16,8 +16,10 @@
 | `module2.raw`           | `src/parser/record_module.rs:63`<br/>Module2 记录写入完成                               | `module2_encoding_test`                                           |
 | `expiry.ms`             | `src/parser/rdb_file.rs:186`<br/>解析 ExpiryMS (毫秒级过期时间) opcode                     | `expiry_time_ms_item_order_test`                                  |
 | `expiry.s`              | `src/parser/rdb_file.rs:196`<br/>解析 ExpiryS (秒级过期时间) opcode                       | –                                                                 |
+| `zset.listpack.raw`    | `src/parser/record_zset.rs:100`<br/>ZSet 解析 *listpack* 未压缩路径                         | `zset_listpack_encoding_test`                                     |
+| `zset.listpack.lzf`    | `src/parser/record_zset.rs:117`<br/>ZSet 解析 *listpack* LZF 解压路径                       | `zset_listpack_lzf_encoding_test`                                 |
 
-当前 `tests/parser_test.rs` 已覆盖除 `expiry.s` 外的所有追踪点（共 11/12 个）。若未来新增 `parser_trace!`
+当前 `tests/parser_test.rs` 已覆盖除 `expiry.s` 外的所有追踪点（共 13/14 个）。若未来新增 `parser_trace!`
 事件，请同时在此表补充并编写对应测试。
 
 # 支持的 RDB 类型与编码概览
@@ -42,7 +44,7 @@
 | 14 (`ListQuickList`)       | List (QuickList)          | QuickList-ZipList raw / LZF   | `record_list.rs` (`ListQuickListRecordParser`)  | `list_quicklist_encoding_test`<br/>`list_quicklist_lzf_compressed_test`<br/>`list_quicklist_ziplist_raw_node_test`                                              |
 | 15 (`StreamListPacks`)     | Stream (v1)               | –                             | –                                               | –                                                                                                                                                               |
 | 16 (`HashListPack`)        | Hash (ListPack)           | ListPack raw / LZF            | `record_hash.rs` (`HashListPackRecordParser`)   | `hash_listpack_encoding_test`                                                                                                                                   |
-| 17 (`ZSetListPack`)        | ZSet (ListPack)           | –                             | –                                               | –                                                                                                                                                               |
+| 17 (`ZSetListPack`)        | ZSet (ListPack)           | ListPack raw / LZF            | `record_zset.rs` (`ZSetListPackRecordParser`)    | `zset_listpack_encoding_test`<br/>`zset_listpack_lzf_encoding_test`                                                                                             |
 | 18 (`ListQuickList2`)      | List (QuickList2)         | Plain / ListPack raw / LZF    | `record_list.rs` (`ListQuickList2RecordParser`) | `list_quicklist2_encoding_test`<br/>`list_quicklist2_plain_node_test`<br/>`list_quicklist2_listpack_raw_node_test`<br/>`list_quicklist2_listpack_lzf_node_test` |
 | 19 (`StreamListPacks2`)    | Stream (v2)               | –                             | –                                               | –                                                                                                                                                               |
 | 20 (`SetListPack`)         | Set (ListPack)            | ListPack raw / LZF            | `record_set.rs` (`SetListPackRecordParser`)     | `set_listpack_encoding_test`<br/>`set_listpack_scan_path_test`<br/>`set_listpack_large_string_variants_test`<br/>`set_listpack_integer_variants_test`           |
@@ -68,11 +70,4 @@
 | 247 (`ModuleAux`)     | Module 附加信息               | `record_module.rs` (`ModuleAuxParser`)         | –                                |
 | 248 (`Idle`)          | 键空闲时长（秒）                  | `rdb_file.rs`                                  | `idle_opcode_test`               |
 | 249 (`Freq`)          | 键访问频度（LFU）                | `rdb_file.rs`                                  | `freq_opcode_test`               |
-| 250 (`Aux`)           | 文件级元信息 (AUX)              | `rdb_file.rs`                                  | `empty_rdb_test`                 |
-| 251 (`ResizeDB`)      | Hash-Table 预分配大小          | `rdb_file.rs`                                  | –                                |
-| 252 (`ExpireTimeMs`)  | 过期时间（毫秒）                  | `rdb_file.rs`                                  | `expiry_time_ms_item_order_test` |
-| 253 (`ExpireTime`)    | 过期时间（秒）                   | `rdb_file.rs`                                  | –                                |
-| 254 (`SelectDB`)      | 切换数据库                     | `rdb_file.rs`                                  | –                                |
-| 255 (`Eof`)           | 文件结束标识                    | `rdb_file.rs`                                  | –                                |
-
-说明：表中 "–" 表示当前尚未支持的解析逻辑或测试。
+| 250 (`Aux`)           | 文件级元信息 (AUX)              | `rdb_file.rs`                                  | `empty_rdb_test`

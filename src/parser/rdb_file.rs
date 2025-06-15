@@ -15,7 +15,7 @@ use super::{
     record_module::{Module2RecordParser, ModuleAuxParser},
     record_set::{SetIntSetRecordParser, SetListPackRecordParser, SetRecordParser},
     record_string::StringRecordParser,
-    record_zset::{ZSetRecordParser, ZSetZipListRecordParser},
+    record_zset::{ZSetListPackRecordParser, ZSetRecordParser, ZSetZipListRecordParser},
     record_zset2::ZSet2RecordParser,
     state_parser::StateParser,
 };
@@ -41,6 +41,7 @@ enum ItemParser {
     ZSetRecord(ZSetRecordParser),
     ZSetZipListRecord(ZSetZipListRecordParser),
     ZSet2Record(ZSet2RecordParser),
+    ZSetListPackRecord(ZSetListPackRecordParser),
     HashRecord(HashRecordParser),
     HashZipMapRecord(HashZipMapRecordParser),
     HashZipListRecord(HashZipListRecordParser),
@@ -276,6 +277,12 @@ impl RDBFileParser {
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
+                RDBType::ZSetListPack => {
+                    let (input, entrust) = ZSetListPackRecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
                 RDBType::Hash => {
                     let (input, entrust) = HashRecordParser::init(buffer.tell(), input)?;
                     buffer.consume_to(input.as_ptr());
@@ -307,7 +314,6 @@ impl RDBFileParser {
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
-                RDBType::ZSetListPack => todo!("unsupported type: ZSetListPack"),
                 RDBType::StreamListPacks => todo!("unsupported type: StreamListPacks"),
                 RDBType::StreamListPacks2 => todo!("unsupported type: StreamListPacks2"),
                 RDBType::StreamListPacks3 => todo!("unsupported type: StreamListPacks3"),

@@ -724,6 +724,129 @@ async fn list_quicklist_ziplist_raw_node_test() -> AnyResult<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn set_listpack_large_string_variants_test() -> AnyResult<()> {
+    // Exercises parser branches for 12-bit & 32-bit listpack strings (lp_len = 0xFFFF).
+
+    let redis = RedisInstance::new("7.2").await?;
+    const MEMBER_COUNT: usize = 66_000; // > 65 534 triggers 0xFFFF
+
+    // > 4095 bytes → 32-bit header
+    let big_str = "X".repeat(5_000);
+    // 100-byte template → 12-bit header
+    let small_template = "Y".repeat(100);
+
+    let rdb_path = redis
+        .generate_rdb("set_listpack_large_string_variants_test", |conn| {
+            async move {
+                // Keep listpack encoding and disable compression.
+                config_set_many(conn, &[
+                    ("set-max-listpack-entries", "70000"),
+                    ("set-max-listpack-value", "6000"),
+                    ("rdbcompression", "no"),
+                ])
+                .await?;
+
+                let mut pipe = redis::pipe();
+                pipe.sadd("lp_var_key", &big_str).ignore();
+
+                for idx in 0..MEMBER_COUNT {
+                    let val = format!("{small_template}{idx:0>5}");
+                    pipe.sadd("lp_var_key", val).ignore();
+                }
+
+                pipe.query_async::<()>(&mut *conn).await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let items = read_filtered_items(&rdb_path).await?;
+
+    assert_eq!(items.len(), 1);
+    let Item::SetRecord {
+        key,
+        encoding,
+        member_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected SetRecord");
+    };
+
+    assert_eq!(*key, RDBStr::Str(Bytes::from("lp_var_key")));
+    assert_eq!(*member_count as usize, MEMBER_COUNT + 1);
+    assert_eq!(*encoding, SetEncoding::ListPack);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_listpack_integer_variants_test() -> AnyResult<()> {
+    // Redis 7.2 encodes small sets with listpack. Insert crafted integer strings to exercise every integer flag path.
+    const FILLER_COUNT: usize = 66_000; // > 65_534 so Redis writes lp_len == 0xFFFF and the parser takes the slow scan path.
+    const SPECIAL_INTS: [&str; 6] = [
+        "63",                // 7-bit unsigned int (flag 0x00..0x7F)
+        "4095",              // 13-bit signed int (flag 0xC0..0xDF)
+        "32767",             // 16-bit signed int (flag 0xF1)
+        "8388607",           // 24-bit signed int (flag 0xF2)
+        "2147483647",        // 32-bit signed int (flag 0xF3)
+        "9223372036854775807", // 64-bit signed int (flag 0xF4)
+    ];
+
+    let redis = RedisInstance::new("7.2").await?;
+
+    let rdb_path = redis
+        .generate_rdb("set_listpack_integer_variants_test", |conn| {
+            async move {
+                // Ensure listpack encoding and disable RDB compression to keep raw listpack payloads.
+                config_set_many(conn, &[
+                    ("set-max-listpack-entries", "70000"),
+                    ("set-max-listpack-value", "64"),
+                    ("rdbcompression", "no"),
+                ])
+                .await?;
+
+                // Insert integer members that map to each listpack integer flag.
+                let mut pipe = redis::pipe();
+                for val in SPECIAL_INTS.iter() {
+                    pipe.sadd("lp_int_key", *val).ignore();
+                }
+
+                // Add many non-integer members so that member count is unknown (0xFFFF) to hit the slow counting path.
+                for idx in 0..FILLER_COUNT {
+                    pipe.sadd("lp_int_key", format!("m{}", idx)).ignore();
+                }
+                pipe.query_async::<()>(conn).await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let items = read_filtered_items(&rdb_path).await?;
+
+    // Expect exactly one SetRecord
+    assert_eq!(items.len(), 1);
+    let Item::SetRecord {
+        key,
+        encoding,
+        member_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected SetRecord");
+    };
+
+    let expected_count = FILLER_COUNT + SPECIAL_INTS.len();
+    assert_eq!(*key, RDBStr::Str(Bytes::from("lp_int_key")));
+    assert_eq!(*member_count as usize, expected_count);
+    assert_eq!(*encoding, SetEncoding::ListPack);
+
+    Ok(())
+}
+
 fn collect_items(bytes: &[u8]) -> AnyResult<Vec<Item>> {
     let mut parser = RDBFileParser::default();
     let mut buffer = Buffer::new(1024 * 1024 * 64);

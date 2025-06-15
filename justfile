@@ -27,3 +27,9 @@ prepare:
 
 clean:
 	rm -rf tests/dumps/*.rdb
+
+coverage:
+    mkdir -p target/coverage
+    CARGO_LLVM_COV_SETUP=yes cargo +nightly llvm-cov nextest --lcov --branch --mcdc --output-path target/coverage/lcov.info
+    grcov target/coverage/lcov.info --output-types html --source-dir . --branch --output-path target/coverage
+    @echo "Report ready: target/coverage/html/index.html"

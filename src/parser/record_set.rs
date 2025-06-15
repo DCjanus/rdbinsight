@@ -80,6 +80,7 @@ impl SetIntSetRecordParser {
     pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, blob_len) = read_rdb_len(input).context("read intset blob len")?;
+        // TODO: add test case when blob_len is not a simple number
         let blob_len = blob_len
             .as_simple()
             .context("intset blob len should be a simple number")?;

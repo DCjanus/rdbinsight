@@ -4,12 +4,18 @@ use spire_enum::prelude::{delegate_impl, delegated_enum};
 use super::{
     buffer::Buffer,
     item::Item,
+    record_hash::{
+        HashListPackRecordParser, HashRecordParser, HashZipListRecordParser, HashZipMapRecordParser,
+    },
     record_list::{
         ListQuickList2RecordParser, ListQuickListRecordParser, ListRecordParser,
         ListZipListRecordParser,
     },
+    record_module::{Module2RecordParser, ModuleAuxParser},
     record_set::{SetIntSetRecordParser, SetListPackRecordParser, SetRecordParser},
     record_string::StringRecordParser,
+    record_zset::{ZSetRecordParser, ZSetZipListRecordParser},
+    record_zset2::ZSet2RecordParser,
     state_parser::StateParser,
 };
 use crate::{
@@ -31,6 +37,15 @@ enum ItemParser {
     SetRecord(SetRecordParser),
     SetIntSetRecord(SetIntSetRecordParser),
     SetListPackRecord(SetListPackRecordParser),
+    ZSetRecord(ZSetRecordParser),
+    ZSetZipListRecord(ZSetZipListRecordParser),
+    ZSet2Record(ZSet2RecordParser),
+    HashRecord(HashRecordParser),
+    HashZipMapRecord(HashZipMapRecordParser),
+    HashZipListRecord(HashZipListRecordParser),
+    HashListPackRecord(HashListPackRecordParser),
+    Module2Record(Module2RecordParser),
+    ModuleAuxRecord(ModuleAuxParser),
 }
 
 #[delegate_impl]
@@ -136,7 +151,12 @@ impl RDBFileParser {
                 RDBOpcode::SlotInfo => todo!("unsupported opcode: SlotInfo"),
                 RDBOpcode::Function2 => todo!("unsupported opcode: Function2"),
                 RDBOpcode::FunctionPreGA => todo!("unsupported opcode: FunctionPreGA"),
-                RDBOpcode::ModuleAux => todo!("unsupported opcode: ModuleAux"),
+                RDBOpcode::ModuleAux => {
+                    let (input, entrust) = ModuleAuxParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
                 RDBOpcode::Idle => todo!("unsupported opcode: Idle"),
                 RDBOpcode::Freq => todo!("unsupported opcode: Freq"),
                 RDBOpcode::ExpireTimeMs => todo!("unsupported opcode: ExpireTimeMs"),
@@ -195,23 +215,65 @@ impl RDBFileParser {
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
-                RDBType::ZSet => todo!("unsupported type: ZSet"),
-                RDBType::Hash => todo!("unsupported type: Hash"),
-                RDBType::ZSet2 => todo!("unsupported type: ZSet2"),
-                RDBType::ModulePreGA => todo!("unsupported type: ModulePreGA"),
-                RDBType::Module2 => todo!("unsupported type: Module2"),
-                RDBType::HashZipMap => todo!("unsupported type: HashZipMap"),
-                RDBType::ZSetZipList => todo!("unsupported type: ZSetZipList"),
-                RDBType::HashZipList => todo!("unsupported type: HashZipList"),
-                RDBType::StreamListPacks => todo!("unsupported type: StreamListPacks"),
-                RDBType::HashListPack => todo!("unsupported type: HashListPack"),
+                RDBType::ZSet => {
+                    let (input, entrust) = ZSetRecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
+                RDBType::ZSet2 => {
+                    let (input, entrust) = ZSet2RecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
+                RDBType::Hash => {
+                    let (input, entrust) = HashRecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
+                RDBType::ModulePreGA => {
+                    anyhow::bail!("unsupported type: ModulePreGA");
+                }
+                RDBType::Module2 => {
+                    let (input, entrust) = Module2RecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
+                RDBType::HashZipMap => {
+                    let (input, entrust) = HashZipMapRecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
+                RDBType::HashZipList => {
+                    let (input, entrust) = HashZipListRecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
+                RDBType::HashListPack => {
+                    let (input, entrust) = HashListPackRecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
                 RDBType::ZSetListPack => todo!("unsupported type: ZSetListPack"),
+                RDBType::StreamListPacks => todo!("unsupported type: StreamListPacks"),
                 RDBType::StreamListPacks2 => todo!("unsupported type: StreamListPacks2"),
                 RDBType::StreamListPacks3 => todo!("unsupported type: StreamListPacks3"),
                 RDBType::HashMetadataPreGA => todo!("unsupported type: HashMetadataPreGA"),
                 RDBType::HashListPackExPreGA => todo!("unsupported type: HashListPackExPreGA"),
                 RDBType::HashMetadata => todo!("unsupported type: HashMetadata"),
                 RDBType::HashListPackEx => todo!("unsupported type: HashListPackEx"),
+                RDBType::ZSetZipList => {
+                    let (input, entrust) = ZSetZipListRecordParser::init(buffer.tell(), input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
             };
         }
 

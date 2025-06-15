@@ -7,6 +7,9 @@ pub enum Item {
         key: RDBStr,
         val: RDBStr,
     },
+    ModuleAux {
+        rdb_size: u64,
+    },
     SelectDB {
         db: u64,
     },
@@ -33,6 +36,33 @@ pub enum Item {
         encoding: SetEncoding,
         member_count: u64,
     },
+    ZSetRecord {
+        key: RDBStr,
+        /// Size of the record in bytes.
+        rdb_size: u64,
+        encoding: ZSetEncoding,
+        /// Number of elements (member / score pairs).
+        member_count: u64,
+    },
+    /// ZSet2 (double score) record.
+    ZSet2Record {
+        key: RDBStr,
+        /// Size of the record in bytes.
+        rdb_size: u64,
+        encoding: ZSetEncoding,
+        /// Number of elements (member / score pairs).
+        member_count: u64,
+    },
+    HashRecord {
+        key: RDBStr,
+        rdb_size: u64,
+        encoding: HashEncoding,
+        field_count: u64,
+    },
+    ModuleRecord {
+        key: RDBStr,
+        rdb_size: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,5 +84,19 @@ pub enum ListEncoding {
 pub enum SetEncoding {
     Raw,
     IntSet,
+    ListPack,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZSetEncoding {
+    SkipList,
+    ZipList,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HashEncoding {
+    Raw,
+    ZipMap,
+    ZipList,
     ListPack,
 }

@@ -64,15 +64,6 @@ pub enum RDBStr {
     Int(u64),
 }
 
-impl RDBStr {
-    pub fn mem_size(&self) -> usize {
-        match self {
-            RDBStr::Str(bytes) => bytes.len(),
-            RDBStr::Int(_) => 8, // FIXME: estimate memory size based on integer value range
-        }
-    }
-}
-
 pub fn read_rdb_str(input: &[u8]) -> AnyResult<(&[u8], RDBStr)> {
     let (input, len) = read_rdb_len(input)?;
     match len {

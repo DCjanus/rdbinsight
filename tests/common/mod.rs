@@ -15,10 +15,7 @@ pub struct RedisInstance {
 
 impl RedisInstance {
     pub async fn new(redis_version: &str) -> Result<Self> {
-        let wait_for = if redis_version.starts_with("2.")
-            || redis_version.starts_with("3.")
-            || redis_version.starts_with("4.")
-        {
+        let wait_for = if redis_version.starts_with("2.") || redis_version.starts_with("3.") {
             WaitFor::message_on_stdout("ready to accept connections")
         } else {
             WaitFor::message_on_stdout("Ready to accept connections")
@@ -35,6 +32,27 @@ impl RedisInstance {
             container,
             connection_string,
             redis_version: redis_version.to_string(),
+        })
+    }
+
+    /// Create a Redis instance based on `redis-stack-server` image (which includes official modules).
+    pub async fn new_stack(tag: &str) -> Result<Self> {
+        // The redis-stack server logs the same "Ready to accept connections" message as stock Redis >=5.
+        let wait_for = WaitFor::message_on_stdout("Ready to accept connections");
+
+        let redis_image =
+            GenericImage::new("redis/redis-stack-server", tag).with_wait_for(wait_for);
+
+        let container: ContainerAsync<GenericImage> = redis_image.start().await?;
+        let host = container.get_host().await?;
+        let port = container.get_host_port_ipv4(6379).await?;
+        let connection_string = format!("redis://{}:{}", host, port);
+
+        Ok(Self {
+            container,
+            connection_string,
+            // Mark version with stack prefix to avoid collision with vanilla versions.
+            redis_version: format!("stack-{}", tag),
         })
     }
 
@@ -104,10 +122,35 @@ pub async fn seed_set(conn: &mut AsyncConnection, key: &str, count: usize) -> Re
     Ok(())
 }
 
+pub async fn seed_hash(conn: &mut AsyncConnection, key: &str, count: usize) -> Result<()> {
+    let mut pipe = redis::pipe();
+    for idx in 0..count {
+        pipe.hset(key, format!("f{}", idx), format!("v{}", idx))
+            .ignore();
+    }
+    pipe.query_async::<()>(conn).await?;
+    Ok(())
+}
+
 pub async fn config_set_many(conn: &mut AsyncConnection, pairs: &[(&str, &str)]) -> Result<()> {
     let mut pipe = redis::pipe();
     for (key, value) in pairs {
         pipe.cmd("CONFIG").arg("SET").arg(*key).arg(*value).ignore();
+    }
+    pipe.query_async::<()>(&mut *conn).await?;
+    Ok(())
+}
+
+pub async fn seed_zset(conn: &mut AsyncConnection, key: &str, count: usize) -> Result<()> {
+    // Insert `count` members with score = idx as f64.
+    // Use pipeline to batch commands for performance.
+    let mut pipe = redis::pipe();
+    for idx in 0..count {
+        pipe.cmd("ZADD")
+            .arg(key)
+            .arg(idx as isize) // score
+            .arg(format!("m{}", idx))
+            .ignore();
     }
     pipe.query_async::<()>(&mut *conn).await?;
     Ok(())

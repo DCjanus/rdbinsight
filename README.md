@@ -40,3 +40,45 @@ RDBInsight 的核心理念不是预设要寻找的问题，而是赋予用户自
 *   `encoding`: 编码方式
 *   `expire_at`: 过期时间
 *   `members`: 集合类元素数量
+
+## 实际案例：1 TB 集群的前缀白名单校验
+
+假设某生产集群的 Redis 总内存已达到 **1 TB**，业务方提供了 5 个前缀作为"白名单"。他们希望快速确认：
+
+1. **是否有且只有这 5 个前缀**。若存在其它前缀，需要列出具体的 Key 以便后续排查。
+2. **统计每个合法前缀的 Key 数量**，用于评估预估清理收益或容量规划。
+
+传统做法往往要编写脚本，对集群所有实例执行 `SCAN`，不仅耗时且难以复用。  
+借助 **RDBInsight**，只需：
+
+1. 离线解析 RDB 并写入 ClickHouse 或其他 OLAP 数据库。  
+2. 运行几条标准 SQL 即可完成诊断：
+
+```sql
+-- 白名单，直接写成临时表或使用数组常量
+WITH ['bizA:', 'bizB:', 'bizC:', 'bizD:', 'bizE:'] AS whitelist
+
+-- 1. 找出不在白名单中的前缀
+SELECT
+    substring(key, 1, position(key, ':'))         AS prefix,
+    key
+FROM rdb_keys
+WHERE prefix NOT IN whitelist
+LIMIT 100;
+
+-- 2. 统计每个合法前缀的 Key 数量
+WITH
+    -- 正则仅保留白名单前缀（示例共 5 个）
+    '^(bizA:|bizB:|bizC:|bizD:|bizE:)' AS re
+
+SELECT
+    extract(key, re)         AS prefix,   -- 提取前缀
+    COUNT()                  AS key_cnt   -- 统计数量
+FROM rdb_keys
+WHERE cluster_name = 'your_cluster'        -- 可按需替换过滤条件
+  AND extract(key, re) != ''               -- 仅保留匹配到前缀的行
+GROUP BY prefix
+ORDER BY key_cnt DESC;
+```
+
+整个过程不依赖 Redis 在线命令，后续类似需求只需改改 SQL，**零开发成本**。

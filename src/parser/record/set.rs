@@ -1,16 +1,19 @@
 use anyhow::{Context, bail, ensure};
 
-use super::{
-    buffer::{Buffer, skip_bytes},
-    item::{Item, SetEncoding},
-    record_string::StringEncodingParser,
-    state_parser::StateParser,
-};
 use crate::{
     helper::AnyResult,
     parser::{
-        combinators::{read_exact, read_u8},
-        rdb_parsers::{RDBStr, read_rdb_len, read_rdb_str},
+        core::{
+            buffer::{Buffer, skip_bytes},
+            combinators::{read_exact, read_u8},
+            raw::{RDBStr, read_rdb_len, read_rdb_str},
+        },
+        model::{Item, SetEncoding},
+        record::string::StringEncodingParser,
+        state::{
+            combinators::RDBStrBox,
+            traits::{InitializableParser, StateParser},
+        },
     },
 };
 
@@ -27,8 +30,8 @@ impl SetRecordParser {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, member_count) = read_rdb_len(input).context("read set length")?;
         let member_count = member_count
-            .as_simple()
-            .context("set length should be a simple number")?;
+            .as_u64()
+            .context("set length should be a number")?;
         Ok((input, Self {
             started,
             key,
@@ -54,7 +57,7 @@ impl StateParser for SetRecordParser {
                 break;
             }
 
-            let (input, parser) = StringEncodingParser::init(buffer.as_ref())?;
+            let (input, parser) = StringEncodingParser::init(buffer, buffer.as_ref())?;
             buffer.consume_to(input.as_ptr());
             self.entrust = Some(parser);
         }
@@ -82,8 +85,8 @@ impl SetIntSetRecordParser {
         let (input, blob_len) = read_rdb_len(input).context("read intset blob len")?;
         // TODO: add test case when blob_len is not a simple number
         let blob_len = blob_len
-            .as_simple()
-            .context("intset blob len should be a simple number")?;
+            .as_u64()
+            .context("intset blob len should be a number")?;
         ensure!(
             blob_len >= 8,
             "intset blob should be at least 8 bytes (header)"
@@ -125,94 +128,18 @@ impl StateParser for SetIntSetRecordParser {
 pub struct SetListPackRecordParser {
     started: u64,
     key: RDBStr,
-    /// If `Some`, a raw listpack parser to count members.
-    entrust: Option<ListPackLengthParser>,
-    /// If `Some`, the member count was pre-computed (e.g., for LZF-compressed blobs).
-    precomputed_count: Option<u64>,
+    entrust: RDBStrBox<ListPackLengthParser>,
 }
 
-impl SetListPackRecordParser {
-    pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
-        use crate::parser::rdb_parsers::RDBLen;
-
-        let (mut input, key) = read_rdb_str(input).context("read key")?;
-
-        // Read the blob length indicator – could be raw (Simple / IntStr) or LZF-encoded.
-        let (after_len, blob_len_enc) = read_rdb_len(input).context("read listpack blob len")?;
-
-        match blob_len_enc {
-            RDBLen::Simple(raw_len) | RDBLen::IntStr(raw_len) => {
-                ensure!(
-                    raw_len >= 6,
-                    "listpack blob should be at least 6 bytes (header)"
-                );
-                let (after_blob_len, entrust) = ListPackLengthParser::init(after_len, raw_len)?;
-                input = after_blob_len;
-
-                Ok((input, Self {
-                    started,
-                    key,
-                    entrust: Some(entrust),
-                    precomputed_count: None,
-                }))
-            }
-            RDBLen::LZFStr => {
-                // ----------------- LZF compressed listpack -----------------
-                // <in_len> <out_len> <compressed payload>
-
-                let (input_l1, in_len_enc) =
-                    read_rdb_len(after_len).context("read compressed in_len")?;
-                let in_len = in_len_enc
-                    .as_simple()
-                    .context("compressed in_len must be simple")?;
-
-                let (input_l2, out_len_enc) =
-                    read_rdb_len(input_l1).context("read compressed out_len")?;
-                let out_len = out_len_enc
-                    .as_simple()
-                    .context("compressed out_len must be simple")?;
-
-                ensure!(
-                    out_len >= 6,
-                    "decompressed listpack should be at least 6 bytes (header)"
-                );
-
-                // Read compressed payload.
-                let (after_payload, compressed_raw) =
-                    read_exact(input_l2, in_len as usize).context("read compressed data")?;
-
-                // Clone into Vec to break borrow to `buffer`.
-                let compressed_vec = compressed_raw.to_vec();
-
-                // Perform decompression.
-                let decompressed = lzf::decompress(&compressed_vec, out_len as usize)
-                    .map_err(|e| anyhow::anyhow!("decompress listpack blob: {e}"))?;
-
-                // Count elements by running an in-memory parser.
-                let member_count = {
-                    let mut dec_buf = Buffer::new(decompressed.len());
-                    dec_buf.extend(&decompressed)?;
-                    let dec_input = dec_buf.as_ref();
-                    let (dec_input, mut lp_parser) =
-                        ListPackLengthParser::init(dec_input, out_len)?;
-                    dec_buf.consume_to(dec_input.as_ptr());
-                    let count = lp_parser.call(&mut dec_buf)?;
-                    ensure!(
-                        dec_buf.is_empty(),
-                        "decompressed listpack buffer should be fully consumed after parsing"
-                    );
-                    count
-                };
-
-                // Return parser with pre-computed count; parsing is finished.
-                Ok((after_payload, Self {
-                    started,
-                    key,
-                    entrust: None,
-                    precomputed_count: Some(member_count),
-                }))
-            }
-        }
+impl InitializableParser for SetListPackRecordParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        let (input, key) = read_rdb_str(input).context("read key")?;
+        let (input, entrust) = RDBStrBox::<ListPackLengthParser>::init(buffer, input)?;
+        Ok((input, Self {
+            started: buffer.tell(),
+            key,
+            entrust,
+        }))
     }
 }
 
@@ -220,14 +147,7 @@ impl StateParser for SetListPackRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-        // Determine member count (either by delegating to the raw parser or returning the pre-computed value).
-        let member_count = if let Some(parser) = self.entrust.as_mut() {
-            parser.call(buffer)?
-        } else if let Some(count) = self.precomputed_count {
-            count
-        } else {
-            unreachable!("SetListPackRecordParser: neither entrust nor precomputed_count available")
-        };
+        let member_count = self.entrust.call(buffer)?;
 
         Ok(Item::SetRecord {
             key: self.key.clone(),
@@ -238,33 +158,18 @@ impl StateParser for SetListPackRecordParser {
     }
 }
 
-pub enum ListPackLengthParser {
-    Fast {
-        to_skip: u64,
-        member_count: u64,
-    },
-    Slow {
-        entrust: Option<IsEndListPackEntryParser>,
-        counted: u64,
-    },
+pub struct ListPackLengthParser {
+    entrust: Option<IsEndListPackEntryParser>,
+    counted: u64,
 }
 
-impl ListPackLengthParser {
-    pub fn init(input: &[u8], raw_len: u64) -> AnyResult<(&[u8], Self)> {
-        let (input, header) = read_exact(input, 6).context("read listpack header")?;
-        let member_count = u16::from_le_bytes([header[4], header[5]]);
-
-        if member_count != u16::MAX {
-            Ok((input, Self::Fast {
-                to_skip: raw_len - 6,
-                member_count: member_count as u64,
-            }))
-        } else {
-            Ok((input, Self::Slow {
-                entrust: None,
-                counted: 0,
-            }))
-        }
+impl InitializableParser for ListPackLengthParser {
+    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        let (input, _header) = read_exact(input, 6).context("read listpack header")?;
+        Ok((input, Self {
+            entrust: None,
+            counted: 0,
+        }))
     }
 }
 
@@ -272,28 +177,18 @@ impl StateParser for ListPackLengthParser {
     type Output = u64;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-        match self {
-            Self::Fast {
-                to_skip,
-                member_count,
-            } => {
-                skip_bytes(buffer, to_skip)?;
-                Ok(*member_count)
-            }
-            Self::Slow { entrust, counted } => loop {
-                if let Some(parser) = entrust.as_mut() {
-                    if parser.call(buffer)? {
-                        return Ok(*counted);
-                    }
-                    *entrust = None;
-                    *counted += 1;
+        loop {
+            if let Some(parser) = self.entrust.as_mut() {
+                if parser.call(buffer)? {
+                    return Ok(self.counted);
                 }
+                self.entrust = None;
+                self.counted += 1;
+            }
 
-                let (input, parser) =
-                    IsEndListPackEntryParser::init(buffer.tell(), buffer.as_ref())?;
-                buffer.consume_to(input.as_ptr());
-                *entrust = Some(parser);
-            },
+            let (input, parser) = IsEndListPackEntryParser::init(buffer.tell(), buffer.as_ref())?;
+            buffer.consume_to(input.as_ptr());
+            self.entrust = Some(parser);
         }
     }
 }

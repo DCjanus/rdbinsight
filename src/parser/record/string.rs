@@ -2,16 +2,17 @@
 
 use anyhow::Context;
 
-use super::{
-    buffer::{Buffer, skip_bytes},
-    item::{Item, StringEncoding},
-    state_parser::StateParser,
-};
 use crate::{
     helper::AnyResult,
-    parser::rdb_parsers::{RDBLen, RDBStr, read_rdb_len, read_rdb_str},
+    parser::{
+        core::{
+            buffer::{Buffer, skip_bytes},
+            raw::{RDBLen, RDBStr, read_rdb_len, read_rdb_str},
+        },
+        model::{Item, StringEncoding},
+        state::traits::{InitializableParser, StateParser},
+    },
 };
-
 // --------------------------- StringEncoding ----------------------------
 
 pub struct StringEncodingParser {
@@ -19,8 +20,8 @@ pub struct StringEncodingParser {
     encoding: StringEncoding,
 }
 
-impl StringEncodingParser {
-    pub fn init(input: &[u8]) -> AnyResult<(&[u8], Self)> {
+impl InitializableParser for StringEncodingParser {
+    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, str_len) = read_rdb_len(input).context("read string length")?;
 
         let (input, to_skip, encoding) = match str_len {
@@ -29,10 +30,8 @@ impl StringEncodingParser {
             RDBLen::LZFStr => {
                 // LZF header := <compressed len> <uncompressed len>
                 let (input, in_len) = read_rdb_len(input).context("read lzf string length")?;
-                let in_len = in_len
-                    .as_simple()
-                    .context("in_len should be a simple number")?;
-                let (input, _) = read_rdb_len(input).context("read lzf string length")?;
+                let in_len = in_len.as_u64().context("in_len should be a number")?;
+                let (input, _out_len) = read_rdb_len(input).context("read lzf string length")?;
                 (input, in_len, StringEncoding::LZF)
             }
         };
@@ -58,12 +57,12 @@ pub struct StringRecordParser {
     entrust: StringEncodingParser,
 }
 
-impl StringRecordParser {
-    pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
+impl InitializableParser for StringRecordParser {
+    fn init<'a>(buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = StringEncodingParser::init(input)?;
+        let (input, entrust) = StringEncodingParser::init(buf, input)?;
         Ok((input, Self {
-            started,
+            started: buf.tell(),
             key,
             entrust,
         }))

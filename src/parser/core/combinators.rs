@@ -1,7 +1,6 @@
 use anyhow::ensure;
-use thiserror::Error;
 
-use crate::helper::AnyResult;
+use crate::{helper::AnyResult, parser::error::NotFinished};
 
 pub fn read_tag<'a>(input: &'a [u8], tag: &'static [u8]) -> AnyResult<&'a [u8]> {
     let (input, found) = read_exact(input, tag.len())?;
@@ -71,7 +70,3 @@ pub fn peek_u8(input: &[u8]) -> AnyResult<(&[u8], u8)> {
     not_empty(input)?;
     Ok((input, input[0]))
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[error("Not finished")]
-pub struct NotFinished;

@@ -1,26 +1,26 @@
 use anyhow::{Context, ensure};
 
-use super::{
-    buffer::{Buffer, skip_bytes},
-    item::{Item, ListEncoding},
-    record_set::ListPackLengthParser,
-    record_string::StringEncodingParser,
-    state_parser::StateParser,
-};
 use crate::{
     helper::AnyResult,
     parser::{
-        combinators::{read_be_u32, read_exact, read_u8},
-        rdb_parsers::{RDBLen, RDBStr, read_rdb_len, read_rdb_str},
+        core::{
+            buffer::{Buffer, skip_bytes},
+            combinators::{read_be_u32, read_exact, read_u8},
+            raw::{RDBLen, RDBStr, read_rdb_len, read_rdb_str},
+        },
+        model::{Item, ListEncoding, StringEncoding},
+        record::{set::ListPackLengthParser, string::StringEncodingParser},
+        state::{
+            combinators::ReduceParser,
+            traits::{InitializableParser, StateParser},
+        },
     },
 };
 
 pub struct ListRecordParser {
     started: u64,
     key: RDBStr,
-    member_count: u64,
-    remain: u64, // members still to skip
-    entrust: Option<StringEncodingParser>,
+    entrust: ReduceParser<StringEncodingParser, u64, fn(u64, StringEncoding) -> u64>,
 }
 
 impl ListRecordParser {
@@ -28,14 +28,14 @@ impl ListRecordParser {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, member_count) = read_rdb_len(input).context("read list length")?;
         let member_count = member_count
-            .as_simple()
-            .context("list length should be a simple number")?;
+            .as_u64()
+            .context("list length should be a number")?;
+        let entrust: ReduceParser<StringEncodingParser, u64, fn(u64, StringEncoding) -> u64> =
+            ReduceParser::new(member_count, 0, |acc, _item: StringEncoding| acc + 1);
         Ok((input, Self {
             started,
             key,
-            member_count,
-            remain: member_count,
-            entrust: None,
+            entrust,
         }))
     }
 }
@@ -44,27 +44,12 @@ impl StateParser for ListRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-        loop {
-            if let Some(entrust) = self.entrust.as_mut() {
-                let _ = entrust.call(buffer)?;
-                self.entrust = None;
-                self.remain -= 1;
-            }
-
-            if self.remain == 0 {
-                break;
-            }
-
-            let (input, entrust) = StringEncodingParser::init(buffer.as_ref())?;
-            buffer.consume_to(input.as_ptr());
-            self.entrust = Some(entrust);
-        }
-
+        let member_count = self.entrust.call(buffer)?;
         Ok(Item::ListRecord {
             key: self.key.clone(),
             rdb_size: buffer.tell() - self.started,
             encoding: ListEncoding::List,
-            member_count: self.member_count,
+            member_count,
         })
     }
 }
@@ -143,12 +128,12 @@ impl ZipListLengthParser {
         crate::parser_trace!("quicklist.ziplist.lzf");
         let (input, in_len) = read_rdb_len(input).context("read compressed in_len")?;
         let in_len = in_len
-            .as_simple()
-            .context("compressed in_len must be simple")?;
+            .as_u64()
+            .context("compressed in_len must be a number")?;
         let (input, out_len) = read_rdb_len(input).context("read compressed out_len")?;
         let out_len = out_len
-            .as_simple()
-            .context("compressed out_len must be simple")?;
+            .as_u64()
+            .context("compressed out_len must be a number")?;
 
         ensure!(
             out_len < 4 * 1024 * 1024 * 1024,
@@ -319,12 +304,10 @@ struct QuickListLengthParser {
 
 impl QuickListLengthParser {
     fn init(input: &[u8]) -> AnyResult<(&[u8], Self)> {
-        let (input, nodes_count) = read_rdb_len(input).context("read quicklist node count")?;
-        let nodes_count = nodes_count
-            .as_simple()
-            .context("quicklist node count must be simple")?;
+        let (input, len) = read_rdb_len(input).context("read quicklist len")?;
+        let len = len.as_u64().context("quicklist len should be a number")?;
         Ok((input, Self {
-            nodes_remain: nodes_count,
+            nodes_remain: len,
             count: 0,
             entrust: None,
         }))
@@ -420,10 +403,10 @@ struct QuickList2LengthParser {
 
 impl QuickList2LengthParser {
     fn init(input: &[u8]) -> AnyResult<(&[u8], Self)> {
-        let (input, nodes_count) = read_rdb_len(input).context("read quicklist2 node count")?;
+        let (input, nodes_count) = read_rdb_len(input).context("read quicklist node count")?;
         let nodes_count = nodes_count
-            .as_simple()
-            .context("quicklist2 node count must be simple")?;
+            .as_u64()
+            .context("quicklist node count should be a number")?;
         Ok((input, Self {
             nodes_remain: nodes_count,
             member_count: 0,
@@ -452,17 +435,17 @@ impl StateParser for QuickList2LengthParser {
             let (input, container_len) =
                 read_rdb_len(input).context("read quicklist2 container flag")?;
             let container = container_len
-                .as_simple()
-                .context("quicklist2 container flag must be simple")?;
+                .as_u64()
+                .context("quicklist2 container flag should be a number")?;
 
             // Build appropriate parser for the node.
             let (input_after_flag, node_parser) = match container {
                 1 => {
-                    let (input, entrust) = StringEncodingParser::init(input)?;
+                    let (input, entrust) = StringEncodingParser::init(buffer, input)?;
                     (input, QuickList2NodeParser::Plain(entrust))
                 }
                 2 => {
-                    use crate::parser::rdb_parsers::RDBLen;
+                    use crate::parser::core::raw::RDBLen;
                     // First, read the blob length indicator (may be simple, intstr or LZFStr).
                     let (mut input_after_len, blob_len_enc) =
                         read_rdb_len(input).context("read listpack blob len")?;
@@ -474,7 +457,7 @@ impl StateParser for QuickList2LengthParser {
                                 "listpack blob should be at least 6 bytes (header)"
                             );
                             let (input, entrust) =
-                                ListPackLengthParser::init(input_after_len, raw_len)?;
+                                ListPackLengthParser::init(buffer, input_after_len)?;
                             input_after_len = input;
                             (input_after_len, QuickList2NodeParser::Packed(entrust))
                         }
@@ -487,14 +470,14 @@ impl StateParser for QuickList2LengthParser {
                                 let (input_l1, in_len_enc) = read_rdb_len(input_after_len)
                                     .context("read compressed in_len")?;
                                 let in_len = in_len_enc
-                                    .as_simple()
-                                    .context("compressed in_len must be simple")?;
+                                    .as_u64()
+                                    .context("compressed in_len must be a number")?;
 
                                 let (input_l2, out_len_enc) =
                                     read_rdb_len(input_l1).context("read compressed out_len")?;
                                 let out_len = out_len_enc
-                                    .as_simple()
-                                    .context("compressed out_len must be simple")?;
+                                    .as_u64()
+                                    .context("compressed out_len must be a number")?;
 
                                 ensure!(
                                     out_len >= 6,
@@ -518,9 +501,9 @@ impl StateParser for QuickList2LengthParser {
                                 // Count elements.
                                 let mut dec_buf = Buffer::new(decompressed.len());
                                 dec_buf.extend(&decompressed)?;
-                                let dec_input = dec_buf.as_ref();
+
                                 let (dec_input, mut lp_parser) =
-                                    ListPackLengthParser::init(dec_input, out_len)?;
+                                    ListPackLengthParser::init(&dec_buf, dec_buf.as_ref())?;
                                 dec_buf.consume_to(dec_input.as_ptr());
                                 let count = lp_parser.call(&mut dec_buf)?;
                                 ensure!(

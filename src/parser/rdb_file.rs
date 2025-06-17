@@ -1,30 +1,34 @@
 use anyhow::{Context, bail, ensure};
 use spire_enum::prelude::{delegate_impl, delegated_enum};
 
-use super::{
-    buffer::Buffer,
-    item::Item,
-    record_function::Function2RecordParser,
-    record_hash::{
-        HashListPackRecordParser, HashRecordParser, HashZipListRecordParser, HashZipMapRecordParser,
-    },
-    record_list::{
-        ListQuickList2RecordParser, ListQuickListRecordParser, ListRecordParser,
-        ListZipListRecordParser,
-    },
-    record_module::{Module2RecordParser, ModuleAuxParser},
-    record_set::{SetIntSetRecordParser, SetListPackRecordParser, SetRecordParser},
-    record_string::StringRecordParser,
-    record_zset::{ZSetListPackRecordParser, ZSetRecordParser, ZSetZipListRecordParser},
-    record_zset2::ZSet2RecordParser,
-    state_parser::StateParser,
-};
 use crate::{
     helper::AnyResult,
     parser::{
-        combinators::{read_exact, read_le_u32, read_le_u64, read_tag, read_u8},
-        definitions::{RDBOpcode, RDBType},
-        rdb_parsers::{read_rdb_len, read_rdb_str},
+        core::{
+            buffer::Buffer,
+            combinators::{read_exact, read_le_u32, read_le_u64, read_tag, read_u8},
+            raw::{read_rdb_len, read_rdb_str},
+        },
+        model::{Item, RDBOpcode, RDBType},
+        record::{
+            function::Function2RecordParser,
+            hash::{
+                HashListPackRecordParser, HashRecordParser, HashZipListRecordParser,
+                HashZipMapRecordParser,
+            },
+            list::{
+                ListQuickList2RecordParser, ListQuickListRecordParser, ListRecordParser,
+                ListZipListRecordParser,
+            },
+            module::{Module2RecordParser, ModuleAuxParser},
+            set::{SetIntSetRecordParser, SetListPackRecordParser, SetRecordParser},
+            string::StringRecordParser,
+            zset::{
+                ZSet2RecordParser, ZSetListPackRecordParser, ZSetRecordParser,
+                ZSetZipListRecordParser,
+            },
+        },
+        state::traits::{InitializableParser, StateParser},
     },
 };
 
@@ -124,7 +128,7 @@ impl RDBFileParser {
                 }
                 RDBOpcode::SelectDB => {
                     let (input, db) = read_rdb_len(input).context("read select db number")?;
-                    let db = db.as_simple().context("db should be a simple number")?;
+                    let db = db.as_u64().context("db should be a number")?;
                     buffer.consume_to(input.as_ptr());
                     Ok(Some(Item::SelectDB { db }))
                 }
@@ -136,11 +140,11 @@ impl RDBFileParser {
                     buffer.consume_to(input.as_ptr());
                     Ok(Some(Item::ResizeDB {
                         table_size: table_size
-                            .as_simple()
-                            .context("table size should be a simple number")?,
+                            .as_u64()
+                            .context("table size should be a number")?,
                         ttl_table_size: ttl_table_size
-                            .as_simple()
-                            .context("ttl table size should be a simple number")?,
+                            .as_u64()
+                            .context("ttl table size should be a number")?,
                     }))
                 }
                 RDBOpcode::Eof => {
@@ -149,18 +153,14 @@ impl RDBFileParser {
                 }
                 RDBOpcode::SlotInfo => {
                     let (input, slot_id) = read_rdb_len(input).context("read slot count")?;
-                    let slot_id = slot_id
-                        .as_simple()
-                        .context("slot id should be a simple number")?;
+                    let slot_id = slot_id.as_u64().context("slot id should be a number")?;
                     let (input, slot_size) = read_rdb_len(input).context("read slot size")?;
-                    let slot_size = slot_size
-                        .as_simple()
-                        .context("slot size should be a simple number")?;
+                    let slot_size = slot_size.as_u64().context("slot size should be a number")?;
                     let (input, expires_slot_size) =
                         read_rdb_len(input).context("read expires slot size")?;
                     let expires_slot_size = expires_slot_size
-                        .as_simple()
-                        .context("expires slot size should be a simple number")?;
+                        .as_u64()
+                        .context("expires slot size should be a number")?;
                     buffer.consume_to(input.as_ptr());
                     Ok(Some(Item::SlotInfo {
                         slot_id,
@@ -184,8 +184,8 @@ impl RDBFileParser {
                 RDBOpcode::Idle => {
                     let (input, idle_seconds) = read_rdb_len(input).context("read idle seconds")?;
                     let idle_seconds = idle_seconds
-                        .as_simple()
-                        .context("idle seconds should be a simple number")?;
+                        .as_u64()
+                        .context("idle seconds should be a number")?;
                     buffer.consume_to(input.as_ptr());
                     Ok(Some(Item::Idle { idle_seconds }))
                 }
@@ -218,7 +218,7 @@ impl RDBFileParser {
         if let Ok(type_id) = RDBType::try_from(flag) {
             return match type_id {
                 RDBType::String => {
-                    let (input, entrust) = StringRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = StringRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
@@ -260,7 +260,7 @@ impl RDBFileParser {
                     Ok(Some(item))
                 }
                 RDBType::SetListPack => {
-                    let (input, entrust) = SetListPackRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = SetListPackRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
@@ -278,7 +278,7 @@ impl RDBFileParser {
                     Ok(Some(item))
                 }
                 RDBType::ZSetListPack => {
-                    let (input, entrust) = ZSetListPackRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = ZSetListPackRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
@@ -309,7 +309,7 @@ impl RDBFileParser {
                     Ok(Some(item))
                 }
                 RDBType::HashListPack => {
-                    let (input, entrust) = HashListPackRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = HashListPackRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))

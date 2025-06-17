@@ -1,13 +1,15 @@
 use anyhow::{Context, ensure};
 
-use super::{
-    buffer::{Buffer, skip_bytes},
-    item::Item,
-    state_parser::StateParser,
-};
 use crate::{
     helper::AnyResult,
-    parser::rdb_parsers::{RDBStr, read_rdb_len, read_rdb_str},
+    parser::{
+        core::{
+            buffer::{Buffer, skip_bytes},
+            raw::{RDBStr, read_rdb_len, read_rdb_str},
+        },
+        model::Item,
+        state::traits::StateParser,
+    },
 };
 
 pub struct Function2RecordParser {
@@ -19,9 +21,7 @@ pub struct Function2RecordParser {
 impl Function2RecordParser {
     pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
         let (input, size) = read_rdb_len(input)?;
-        let total = size
-            .as_simple()
-            .context("function size should be a simple number")?;
+        let total = size.as_u64().context("function size should be a number")?;
 
         Ok((input, Self {
             started,

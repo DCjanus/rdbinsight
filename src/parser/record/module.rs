@@ -4,14 +4,17 @@ use std::convert::TryFrom;
 
 use anyhow::{Context, ensure};
 
-use super::{buffer::Buffer, item::Item, state_parser::StateParser};
 use crate::{
     helper::AnyResult,
     parser::{
-        combinators::read_exact,
-        definitions::RDBModuleOpcode,
-        rdb_parsers::{RDBStr, read_rdb_len, read_rdb_str},
-        record_string::StringEncodingParser,
+        core::{
+            buffer::Buffer,
+            combinators::read_exact,
+            raw::{RDBStr, read_rdb_len, read_rdb_str},
+        },
+        model::{Item, RDBModuleOpcode},
+        record::string::StringEncodingParser,
+        state::traits::{InitializableParser, StateParser},
     },
 };
 
@@ -37,8 +40,8 @@ impl Module2RecordParser {
     fn read_module_opcode(input: &[u8]) -> AnyResult<(&[u8], RDBModuleOpcode)> {
         let (input, opcode) = read_rdb_len(input)?;
         let opcode = opcode
-            .as_simple()
-            .ok_or_else(|| anyhow::anyhow!("module opcode should be simple len"))?;
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("module opcode should be a number"))?;
         let opcode = RDBModuleOpcode::try_from(opcode as u8)
             .map_err(|_| anyhow::anyhow!("unknown module opcode: {}", opcode))?;
         Ok((input, opcode))
@@ -80,7 +83,7 @@ impl StateParser for Module2RecordParser {
                     buffer.consume_to(input.as_ptr());
                 }
                 RDBModuleOpcode::String => {
-                    let (input, entrust) = StringEncodingParser::init(input)?;
+                    let (input, entrust) = StringEncodingParser::init(buffer, input)?;
                     self.entrust = Some(entrust);
                     buffer.consume_to(input.as_ptr());
                 }
@@ -110,8 +113,8 @@ impl ModuleAuxParser {
     fn read_module_opcode(input: &[u8]) -> AnyResult<(&[u8], RDBModuleOpcode)> {
         let (input, opcode) = read_rdb_len(input)?;
         let opcode = opcode
-            .as_simple()
-            .ok_or_else(|| anyhow::anyhow!("module aux opcode should be simple len"))?;
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("module aux opcode should be a number"))?;
         let opcode = RDBModuleOpcode::try_from(opcode as u8)
             .map_err(|_| anyhow::anyhow!("unknown module aux opcode: {}", opcode))?;
         Ok((input, opcode))
@@ -154,7 +157,7 @@ impl StateParser for ModuleAuxParser {
                     buffer.consume_to(input.as_ptr());
                 }
                 RDBModuleOpcode::String => {
-                    let (input, entrust) = StringEncodingParser::init(input)?;
+                    let (input, entrust) = StringEncodingParser::init(buffer, input)?;
                     self.entrust = Some(entrust);
                     buffer.consume_to(input.as_ptr());
                 }

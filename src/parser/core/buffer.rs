@@ -3,7 +3,7 @@ use bytes::{Buf, BytesMut};
 
 use crate::{
     helper::{AnyResult, wrapping_to_usize},
-    parser::combinators::{NotFinished, read_at_most_but_at_least_one},
+    parser::{core::combinators::read_at_most_but_at_least_one, error::NotFinished},
 };
 
 #[derive(Debug)]
@@ -31,7 +31,7 @@ impl Buffer {
     pub fn consume_to(&mut self, ptr: *const u8) {
         let buf_range = self.buf.as_ptr_range();
         assert!(
-            buf_range.contains(&ptr) || buf_range.end == ptr,
+            buf_range.start <= ptr && ptr <= buf_range.end,
             "pointer out of buffer range",
         );
 
@@ -45,6 +45,18 @@ impl Buffer {
 
     pub fn tell(&self) -> u64 {
         self.pos
+    }
+
+    pub fn tell_to(&self, ptr: *const u8) -> u64 {
+        let buf_range = self.buf.as_ptr_range();
+        assert!(
+            buf_range.start <= ptr && ptr <= buf_range.end,
+            "pointer out of buffer range",
+        );
+
+        // Safety: ptr is inside the current buffer; offset is therefore non-negative.
+        let delta = ptr as u64 - buf_range.start as u64;
+        self.pos + delta
     }
 
     pub fn len(&self) -> usize {

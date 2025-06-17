@@ -1,18 +1,21 @@
 use anyhow::{Context, ensure};
 
-use super::{
-    buffer::Buffer,
-    item::{HashEncoding, Item},
-    record_list::ZipListLengthParser,
-    record_set::ListPackLengthParser,
-    record_string::StringEncodingParser,
-    state_parser::StateParser,
-};
 use crate::{
     helper::AnyResult,
     parser::{
-        combinators::read_exact,
-        rdb_parsers::{RDBStr, read_rdb_len, read_rdb_str},
+        core::{
+            buffer::Buffer,
+            combinators::read_exact,
+            raw::{RDBStr, read_rdb_len, read_rdb_str},
+        },
+        model::{HashEncoding, Item},
+        record::{
+            list::ZipListLengthParser, set::ListPackLengthParser, string::StringEncodingParser,
+        },
+        state::{
+            combinators::RDBStrBox,
+            traits::{InitializableParser, StateParser},
+        },
     },
 };
 
@@ -29,8 +32,8 @@ impl HashRecordParser {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, field_count) = read_rdb_len(input).context("read hash length")?;
         let field_count = field_count
-            .as_simple()
-            .context("hash length should be simple number")?;
+            .as_u64()
+            .context("hash length should be a number")?;
         Ok((input, Self {
             started,
             key,
@@ -96,7 +99,7 @@ impl StateParser for HashFieldParser {
             if self.remain == 0 {
                 return Ok(());
             }
-            let (input, entrust) = StringEncodingParser::init(buffer.as_ref())?;
+            let (input, entrust) = StringEncodingParser::init(buffer, buffer.as_ref())?;
             buffer.consume_to(input.as_ptr());
             self.entrust = Some(entrust);
         }
@@ -148,83 +151,18 @@ impl StateParser for HashZipListRecordParser {
 pub struct HashListPackRecordParser {
     started: u64,
     key: RDBStr,
-    /// Either a parser for raw listpack, or None if count pre-computed (e.g., LZF compressed).
-    entrust: Option<ListPackLengthParser>,
-    precomputed_count: Option<u64>,
+    entrust: RDBStrBox<ListPackLengthParser>,
 }
 
-impl HashListPackRecordParser {
-    pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
-        use crate::parser::rdb_parsers::RDBLen;
-
-        let (mut input, key) = read_rdb_str(input).context("read key")?;
-
-        // Read blob length indicator (raw or LZF).
-        let (after_len, blob_len_enc) = read_rdb_len(input).context("read listpack blob len")?;
-
-        match blob_len_enc {
-            RDBLen::Simple(raw_len) | RDBLen::IntStr(raw_len) => {
-                ensure!(raw_len >= 6, "listpack blob should be at least 6 bytes");
-                let (after_blob, entrust) = ListPackLengthParser::init(after_len, raw_len)?;
-                input = after_blob;
-                Ok((input, Self {
-                    started,
-                    key,
-                    entrust: Some(entrust),
-                    precomputed_count: None,
-                }))
-            }
-            RDBLen::LZFStr => {
-                // LZF header: <in_len> <out_len> <compressed payload>
-                let (input_l1, in_len_enc) =
-                    read_rdb_len(after_len).context("read compressed in_len")?;
-                let in_len = in_len_enc
-                    .as_simple()
-                    .context("compressed in_len must be simple")?;
-
-                let (input_l2, out_len_enc) =
-                    read_rdb_len(input_l1).context("read compressed out_len")?;
-                let out_len = out_len_enc
-                    .as_simple()
-                    .context("compressed out_len must be simple")?;
-
-                ensure!(
-                    out_len >= 6,
-                    "decompressed listpack should be at least 6 bytes"
-                );
-
-                let (after_payload, compressed_raw) =
-                    read_exact(input_l2, in_len as usize).context("read compressed data")?;
-                let decompressed = lzf::decompress(compressed_raw, out_len as usize)
-                    .map_err(|e| anyhow::anyhow!("decompress listpack blob: {e}"))?;
-
-                // Count entries.
-                let field_count = {
-                    let mut dec_buf = Buffer::new(decompressed.len());
-                    dec_buf.extend(&decompressed)?;
-                    let dec_input = dec_buf.as_ref();
-                    let (dec_input, mut parser) = ListPackLengthParser::init(dec_input, out_len)?;
-                    dec_buf.consume_to(dec_input.as_ptr());
-                    let entry_count = parser.call(&mut dec_buf)?;
-                    ensure!(
-                        dec_buf.is_empty(),
-                        "decompressed listpack buffer not fully consumed"
-                    );
-                    ensure!(
-                        entry_count % 2 == 0,
-                        "listpack entry count should be even for hash"
-                    );
-                    entry_count / 2
-                };
-
-                Ok((after_payload, Self {
-                    started,
-                    key,
-                    entrust: None,
-                    precomputed_count: Some(field_count),
-                }))
-            }
-        }
+impl InitializableParser for HashListPackRecordParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        let (input, key) = read_rdb_str(input).context("read key")?;
+        let (input, entrust) = RDBStrBox::<ListPackLengthParser>::init(buffer, input)?;
+        Ok((input, Self {
+            started: buffer.tell(),
+            key,
+            entrust,
+        }))
     }
 }
 
@@ -232,18 +170,12 @@ impl StateParser for HashListPackRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-        let field_count = if let Some(parser) = self.entrust.as_mut() {
-            let entry_count = parser.call(buffer)?;
-            ensure!(
-                entry_count % 2 == 0,
-                "listpack entry count should be even for hash"
-            );
-            entry_count / 2
-        } else if let Some(count) = self.precomputed_count {
-            count
-        } else {
-            unreachable!("HashListPackRecordParser: missing parser and precomputed count")
-        };
+        let entry_count = self.entrust.call(buffer)?;
+        ensure!(
+            entry_count % 2 == 0,
+            "listpack entry count should be even for hash"
+        );
+        let field_count = entry_count / 2;
 
         Ok(Item::HashRecord {
             key: self.key.clone(),
@@ -264,46 +196,43 @@ pub struct HashZipMapRecordParser {
 
 impl HashZipMapRecordParser {
     pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
-        use crate::parser::rdb_parsers::RDBLen;
-        let (input, key) = read_rdb_str(input).context("read key")?;
+        use crate::parser::core::raw::RDBLen;
 
-        // Read blob length indicator (raw or LZF string).
+        let (mut input, key) = read_rdb_str(input).context("read key")?;
         let (after_len, blob_len_enc) = read_rdb_len(input).context("read zipmap blob len")?;
 
-        let (after_blob, field_count) = match blob_len_enc {
+        let (field_count, after_blob) = match blob_len_enc {
             RDBLen::Simple(raw_len) | RDBLen::IntStr(raw_len) => {
-                let (after_blob, raw_bytes) =
-                    read_exact(after_len, raw_len as usize).context("read zipmap raw bytes")?;
-                let count = count_zipmap_pairs(raw_bytes)?;
-                (after_blob, count)
+                let (after_blob, blob) = read_exact(after_len, raw_len as usize)?;
+                let count = count_zipmap_pairs(blob)?;
+                (count, after_blob)
             }
             RDBLen::LZFStr => {
-                // LZF header: <in_len> <out_len> <compressed payload>
                 let (input_l1, in_len_enc) =
                     read_rdb_len(after_len).context("read compressed in_len")?;
                 let in_len = in_len_enc
-                    .as_simple()
-                    .context("compressed in_len must be simple")?;
+                    .as_u64()
+                    .context("compressed in_len must be a number")?;
 
                 let (input_l2, out_len_enc) =
                     read_rdb_len(input_l1).context("read compressed out_len")?;
                 let out_len = out_len_enc
-                    .as_simple()
-                    .context("compressed out_len must be simple")?;
+                    .as_u64()
+                    .context("compressed out_len must be a number")?;
 
                 let (after_payload, compressed_raw) =
                     read_exact(input_l2, in_len as usize).context("read compressed payload")?;
                 let decompressed = lzf::decompress(compressed_raw, out_len as usize)
-                    .map_err(|e| anyhow::anyhow!("decompress zipmap blob: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("decompress zipmap blob: {}", e))?;
                 let count = count_zipmap_pairs(&decompressed)?;
-                (after_payload, count)
+                (count, after_payload)
             }
         };
 
-        // Trace point for ZipMap raw path (regardless of compression)
         crate::parser_trace!("hash.zipmap.raw");
 
-        Ok((after_blob, Self {
+        input = after_blob;
+        Ok((input, Self {
             started,
             key,
             field_count,
@@ -328,13 +257,13 @@ impl StateParser for HashZipMapRecordParser {
 // --------------------------- ZipMap helper -----------------------------------
 
 fn read_zipmap_len(input: &[u8]) -> AnyResult<(&[u8], usize)> {
-    use crate::parser::combinators::read_u8;
+    use crate::parser::core::combinators::read_u8;
     let (input, len_byte) = read_u8(input)?;
     if len_byte < 254 {
         Ok((input, len_byte as usize))
     } else {
         // 4-byte big endian length follows.
-        use crate::parser::combinators::read_exact as read_exact_bytes;
+        use crate::parser::core::combinators::read_exact as read_exact_bytes;
         let (input, len_bytes) = read_exact_bytes(input, 4)?;
         let len =
             u32::from_be_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]) as usize;
@@ -343,7 +272,7 @@ fn read_zipmap_len(input: &[u8]) -> AnyResult<(&[u8], usize)> {
 }
 
 fn count_zipmap_pairs(bytes: &[u8]) -> AnyResult<u64> {
-    use crate::parser::combinators::read_u8;
+    use crate::parser::core::combinators::read_u8;
 
     if bytes.is_empty() {
         return Ok(0);

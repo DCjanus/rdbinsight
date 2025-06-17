@@ -3,7 +3,7 @@ use bytes::Bytes;
 
 use crate::{
     helper::AnyResult,
-    parser::combinators::{read_be_u16, read_be_u32, read_be_u64, read_exact, read_u8},
+    parser::core::combinators::{read_be_u16, read_be_u32, read_be_u64, read_exact, read_u8},
 };
 
 #[derive(Clone, Hash, Debug)]
@@ -14,9 +14,10 @@ pub enum RDBLen {
 }
 
 impl RDBLen {
-    pub fn as_simple(&self) -> Option<u64> {
+    pub fn as_u64(&self) -> Option<u64> {
         match self {
             RDBLen::Simple(len) => Some(*len),
+            RDBLen::IntStr(len) => Some(*len),
             _ => None,
         }
     }
@@ -74,12 +75,12 @@ pub fn read_rdb_str(input: &[u8]) -> AnyResult<(&[u8], RDBStr)> {
         RDBLen::IntStr(len) => Ok((input, RDBStr::Int(len))),
         RDBLen::LZFStr => {
             let (input, in_len) = read_rdb_len(input)?;
-            let in_len = in_len.as_simple().ok_or_else(|| {
-                anyhow!("Invalid input length for LZFStr, expected simple length")
+            let in_len = in_len.as_u64().ok_or_else(|| {
+                anyhow!("Invalid input length for LZFStr, expected simple or integer length")
             })?;
             let (input, out_len) = read_rdb_len(input)?;
-            let out_len = out_len.as_simple().ok_or_else(|| {
-                anyhow!("Invalid output length for LZFStr, expected simple length")
+            let out_len = out_len.as_u64().ok_or_else(|| {
+                anyhow!("Invalid output length for LZFStr, expected simple or integer length")
             })?;
 
             let (input, compressed) = read_exact(input, in_len as usize)?;

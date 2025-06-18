@@ -242,7 +242,7 @@ impl RDBFileParser {
                     Ok(Some(item))
                 }
                 RDBType::ListQuickList2 => {
-                    let (input, entrust) = ListQuickList2RecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = ListQuickList2RecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))

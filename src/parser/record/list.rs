@@ -1,4 +1,5 @@
 use anyhow::{Context, ensure};
+use futures_util::future::Either;
 
 use crate::{
     helper::AnyResult,
@@ -11,7 +12,7 @@ use crate::{
         model::{Item, ListEncoding, StringEncoding},
         record::{set::ListPackLengthParser, string::StringEncodingParser},
         state::{
-            combinators::ReduceParser,
+            combinators::{RDBStrBox, ReduceParser},
             traits::{InitializableParser, StateParser},
         },
     },
@@ -335,19 +336,25 @@ impl StateParser for QuickListLengthParser {
     }
 }
 
-// ---------------------- QuickList2 (Redis 7.0+) ----------------------
-
-/// Parser for `RDB_TYPE_LIST_QUICKLIST_2` records (Redis ≥ 7.0).
 pub struct ListQuickList2RecordParser {
     started: u64,
     key: RDBStr,
-    entrust: QuickList2LengthParser,
+    entrust: ReduceParser<ListQuickList2NodeLengthParser, u64>,
 }
 
-impl ListQuickList2RecordParser {
-    pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = QuickList2LengthParser::init(input)?;
+impl InitializableParser for ListQuickList2RecordParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        let started = buffer.tell();
+        let (input, key) = read_rdb_str(input)?;
+        let (input, node_count) = read_rdb_len(input)?;
+        let node_count = node_count
+            .as_u64()
+            .context("node count should be a number")?;
+        let entrust = ReduceParser::<ListQuickList2NodeLengthParser, _>::new(
+            node_count,
+            0,
+            |acc, item: u64| acc + item,
+        );
         Ok((input, Self {
             started,
             key,
@@ -370,168 +377,48 @@ impl StateParser for ListQuickList2RecordParser {
     }
 }
 
-// --------------------------- node counter ---------------------------
-
-enum QuickList2NodeParser {
-    Plain(StringEncodingParser),
-    Packed(ListPackLengthParser),
+pub struct ListQuickList2NodeLengthParser {
+    entrust: Either<StringEncodingParser, RDBStrBox<ListPackLengthParser>>,
 }
 
-impl StateParser for QuickList2NodeParser {
-    type Output = u64; // element count produced by this node
-
-    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-        match self {
-            Self::Plain(parser) => {
+impl InitializableParser for ListQuickList2NodeLengthParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        let (input, flag) = read_u8(input)?;
+        match flag {
+            1 => {
                 crate::parser_trace!("quicklist2.plain");
-                let _ = parser.call(buffer)?;
-                Ok(1)
+                let (input, entrust) = StringEncodingParser::init(buffer, input)?;
+                Ok((input, Self {
+                    entrust: Either::Left(entrust),
+                }))
             }
-            Self::Packed(parser) => {
-                crate::parser_trace!("quicklist2.packed.raw");
-                parser.call(buffer)
+            2 => {
+                let (input, entrust) = RDBStrBox::<ListPackLengthParser>::init(buffer, input)?;
+                if entrust.is_lzf() {
+                    crate::parser_trace!("quicklist2.packed.lzf");
+                } else {
+                    crate::parser_trace!("quicklist2.packed.raw");
+                }
+                Ok((input, Self {
+                    entrust: Either::Right(entrust),
+                }))
             }
+            _ => anyhow::bail!("unknown quicklist2 node flag: {:#04x}", flag),
         }
     }
 }
 
-struct QuickList2LengthParser {
-    nodes_remain: u64,
-    member_count: u64,
-    entrust: Option<QuickList2NodeParser>,
-}
-
-impl QuickList2LengthParser {
-    fn init(input: &[u8]) -> AnyResult<(&[u8], Self)> {
-        let (input, nodes_count) = read_rdb_len(input).context("read quicklist node count")?;
-        let nodes_count = nodes_count
-            .as_u64()
-            .context("quicklist node count should be a number")?;
-        Ok((input, Self {
-            nodes_remain: nodes_count,
-            member_count: 0,
-            entrust: None,
-        }))
-    }
-}
-
-impl StateParser for QuickList2LengthParser {
+impl StateParser for ListQuickList2NodeLengthParser {
     type Output = u64;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-        loop {
-            // If we are currently delegated to a node parser, drive it first.
-            if let Some(parser) = self.entrust.as_mut() {
-                self.member_count += parser.call(buffer)?;
-                self.nodes_remain -= 1;
-                self.entrust = None;
+        match &mut self.entrust {
+            Either::Left(parser) => {
+                // plain node always contains only one element
+                let _ = parser.call(buffer)?;
+                Ok(1)
             }
-
-            if self.nodes_remain == 0 {
-                return Ok(self.member_count);
-            }
-
-            let input = buffer.as_ref();
-            let (input, container_len) =
-                read_rdb_len(input).context("read quicklist2 container flag")?;
-            let container = container_len
-                .as_u64()
-                .context("quicklist2 container flag should be a number")?;
-
-            // Build appropriate parser for the node.
-            let (input_after_flag, node_parser) = match container {
-                1 => {
-                    let (input, entrust) = StringEncodingParser::init(buffer, input)?;
-                    (input, QuickList2NodeParser::Plain(entrust))
-                }
-                2 => {
-                    use crate::parser::core::raw::RDBLen;
-                    // First, read the blob length indicator (may be simple, intstr or LZFStr).
-                    let (mut input_after_len, blob_len_enc) =
-                        read_rdb_len(input).context("read listpack blob len")?;
-
-                    match blob_len_enc {
-                        RDBLen::Simple(raw_len) | RDBLen::IntStr(raw_len) => {
-                            ensure!(
-                                raw_len >= 6,
-                                "listpack blob should be at least 6 bytes (header)"
-                            );
-                            let (input, entrust) =
-                                ListPackLengthParser::init(buffer, input_after_len)?;
-                            input_after_len = input;
-                            (input_after_len, QuickList2NodeParser::Packed(entrust))
-                        }
-                        RDBLen::LZFStr => {
-                            crate::parser_trace!("quicklist2.packed.lzf");
-                            // ----------------- LZF compressed listpack -----------------
-                            // <in_len> <out_len> <compressed payload>
-                            let (end_ptr, node_count) = {
-                                // Borrow input slice immutably within this block.
-                                let (input_l1, in_len_enc) = read_rdb_len(input_after_len)
-                                    .context("read compressed in_len")?;
-                                let in_len = in_len_enc
-                                    .as_u64()
-                                    .context("compressed in_len must be a number")?;
-
-                                let (input_l2, out_len_enc) =
-                                    read_rdb_len(input_l1).context("read compressed out_len")?;
-                                let out_len = out_len_enc
-                                    .as_u64()
-                                    .context("compressed out_len must be a number")?;
-
-                                ensure!(
-                                    out_len >= 6,
-                                    "decompressed listpack should be at least 6 bytes (header)"
-                                );
-
-                                // Read compressed payload.
-                                let (after_payload, compressed_raw) =
-                                    read_exact(input_l2, in_len as usize)
-                                        .context("read compressed data")?;
-
-                                // Clone into Vec to break borrow to `buffer`.
-                                let compressed_vec = compressed_raw.to_vec();
-
-                                // Perform decompression.
-                                let decompressed =
-                                    lzf::decompress(&compressed_vec, out_len as usize).map_err(
-                                        |e| anyhow::anyhow!("decompress listpack node: {e}"),
-                                    )?;
-
-                                // Count elements.
-                                let mut dec_buf = Buffer::new(decompressed.len());
-                                dec_buf.extend(&decompressed)?;
-
-                                let (dec_input, mut lp_parser) =
-                                    ListPackLengthParser::init(&dec_buf, dec_buf.as_ref())?;
-                                dec_buf.consume_to(dec_input.as_ptr());
-                                let count = lp_parser.call(&mut dec_buf)?;
-                                ensure!(
-                                    dec_buf.is_empty(),
-                                    "decompressed listpack buffer should be fully consumed after parsing"
-                                );
-
-                                (after_payload.as_ptr(), count)
-                            };
-
-                            // Mutably advance buffer after immutable borrows are dropped.
-                            buffer.consume_to(end_ptr);
-
-                            // Update counters.
-                            self.member_count += node_count;
-                            self.nodes_remain -= 1;
-
-                            // Continue to next iteration, skipping the standard entrust path.
-                            continue;
-                        }
-                    }
-                }
-                _ => anyhow::bail!("unknown quicklist2 container type: {}", container),
-            };
-
-            // Advance buffer to the position returned by above parser creation.
-            buffer.consume_to(input_after_flag.as_ptr());
-            self.entrust = Some(node_parser);
+            Either::Right(parser) => parser.call(buffer),
         }
     }
 }

@@ -214,13 +214,10 @@ async fn list_ziplist_scan_path_test() -> AnyResult<()> {
         .generate_rdb("list_ziplist_scan_path_test", |conn| {
             async move {
                 // Allow very large ziplist nodes (entries < 70_000 & val length <= 64)
-                config_set_many(
-                    conn,
-                    &[
-                        ("list-max-ziplist-entries", "70000"),
-                        ("list-max-ziplist-value", "64"),
-                    ],
-                )
+                config_set_many(conn, &[
+                    ("list-max-ziplist-entries", "70000"),
+                    ("list-max-ziplist-value", "64"),
+                ])
                 .await?;
 
                 common::seed_list(conn, "zl_ff_key", ELEMENT_COUNT).await?;
@@ -446,13 +443,10 @@ async fn set_listpack_scan_path_test() -> AnyResult<()> {
         .generate_rdb("set_listpack_scan_path_test", |conn| {
             async move {
                 // Allow very large listpack (entries < 70_000 & val length <= 64)
-                config_set_many(
-                    conn,
-                    &[
-                        ("set-max-listpack-entries", "70000"),
-                        ("rdbcompression", "no"),
-                    ],
-                )
+                config_set_many(conn, &[
+                    ("set-max-listpack-entries", "70000"),
+                    ("rdbcompression", "no"),
+                ])
                 .await?;
 
                 // TODO(perf): this test is slow—the majority of the runtime
@@ -539,14 +533,11 @@ async fn list_quicklist2_plain_node_test() -> AnyResult<()> {
         .generate_rdb("list_quicklist2_plain_node_test", |conn| {
             async move {
                 // Ensure deterministic quicklist behaviour.
-                config_set_many(
-                    conn,
-                    &[
-                        ("list-max-listpack-size", "-2"),
-                        ("list-compress-depth", "0"),
-                        ("rdbcompression", "no"),
-                    ],
-                )
+                config_set_many(conn, &[
+                    ("list-max-listpack-size", "-2"),
+                    ("list-compress-depth", "0"),
+                    ("rdbcompression", "no"),
+                ])
                 .await?;
 
                 redis::cmd("RPUSH")
@@ -598,14 +589,11 @@ async fn list_quicklist2_listpack_raw_node_test() -> AnyResult<()> {
         .generate_rdb("list_quicklist2_listpack_raw_node_test", |conn| {
             async move {
                 // Ensure deterministic quicklist behaviour.
-                config_set_many(
-                    conn,
-                    &[
-                        ("rdbcompression", "no"),
-                        ("list-max-listpack-size", "-2"),
-                        ("list-compress-depth", "0"),
-                    ],
-                )
+                config_set_many(conn, &[
+                    ("rdbcompression", "no"),
+                    ("list-max-listpack-size", "-2"),
+                    ("list-compress-depth", "0"),
+                ])
                 .await?;
 
                 common::seed_list(conn, "ql2_lp_raw_key", ELEMENTS).await?;
@@ -653,13 +641,10 @@ async fn list_quicklist2_listpack_lzf_node_test() -> AnyResult<()> {
         .generate_rdb("list_quicklist2_listpack_lzf_node_test", |conn| {
             async move {
                 // Ensure deterministic quicklist behaviour (compression enabled by default)
-                config_set_many(
-                    conn,
-                    &[
-                        ("list-max-listpack-size", "-3"),
-                        ("list-compress-depth", "1"),
-                    ],
-                )
+                config_set_many(conn, &[
+                    ("list-max-listpack-size", "-3"),
+                    ("list-compress-depth", "1"),
+                ])
                 .await?;
 
                 common::seed_list(conn, "ql2_lp_lzf_key", ELEMENTS).await?;
@@ -752,14 +737,11 @@ async fn set_listpack_large_string_variants_test() -> AnyResult<()> {
         .generate_rdb("set_listpack_large_string_variants_test", |conn| {
             async move {
                 // Keep listpack encoding and disable compression.
-                config_set_many(
-                    conn,
-                    &[
-                        ("set-max-listpack-entries", "70000"),
-                        ("set-max-listpack-value", "6000"),
-                        ("rdbcompression", "no"),
-                    ],
-                )
+                config_set_many(conn, &[
+                    ("set-max-listpack-entries", "70000"),
+                    ("set-max-listpack-value", "6000"),
+                    ("rdbcompression", "no"),
+                ])
                 .await?;
 
                 let mut pipe = redis::pipe();
@@ -815,14 +797,11 @@ async fn set_listpack_integer_variants_test() -> AnyResult<()> {
         .generate_rdb("set_listpack_integer_variants_test", |conn| {
             async move {
                 // Ensure listpack encoding and disable RDB compression to keep raw listpack payloads.
-                config_set_many(
-                    conn,
-                    &[
-                        ("set-max-listpack-entries", "70000"),
-                        ("set-max-listpack-value", "64"),
-                        ("rdbcompression", "no"),
-                    ],
-                )
+                config_set_many(conn, &[
+                    ("set-max-listpack-entries", "70000"),
+                    ("set-max-listpack-value", "64"),
+                    ("rdbcompression", "no"),
+                ])
                 .await?;
 
                 // Insert integer members that map to each listpack integer flag.
@@ -1360,16 +1339,13 @@ async fn freq_opcode_test() -> AnyResult<()> {
 
 #[tokio::test]
 async fn slot_info_opcode_test() -> AnyResult<()> {
-    let redis = common::RedisInstance::new_with_cmd(
-        "8.0",
-        [
-            "redis-server",
-            "--cluster-enabled",
-            "yes",
-            "--cluster-config-file",
-            "nodes.conf",
-        ],
-    )
+    let redis = common::RedisInstance::new_with_cmd("8.0", [
+        "redis-server",
+        "--cluster-enabled",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+    ])
     .await?;
 
     let rdb_path = redis
@@ -1489,13 +1465,10 @@ async fn zset_listpack_lzf_encoding_test() -> AnyResult<()> {
         .generate_rdb("zset_listpack_lzf_encoding_test", |conn| {
             async move {
                 // Ensure we stay within listpack limits while producing a sizeable, compressible blob.
-                config_set_many(
-                    conn,
-                    &[
-                        ("zset-max-listpack-entries", "128"),
-                        ("zset-max-listpack-value", "64"),
-                    ],
-                )
+                config_set_many(conn, &[
+                    ("zset-max-listpack-entries", "128"),
+                    ("zset-max-listpack-value", "64"),
+                ])
                 .await?;
 
                 let mut pipe = redis::pipe();
@@ -1573,9 +1546,7 @@ fn collect_items(bytes: &[u8]) -> AnyResult<Vec<Item>> {
 }
 
 async fn read_filtered_items<P>(path: P) -> AnyResult<Vec<Item>>
-where
-    P: AsRef<Path>,
-{
+where P: AsRef<Path> {
     let bytes = tokio::fs::read(path.as_ref()).await?;
     let items = collect_items(&bytes)?;
     Ok(items

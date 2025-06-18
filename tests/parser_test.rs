@@ -1065,11 +1065,22 @@ async fn hash_zipmap_fixture_raw_test() -> AnyResult<()> {
 
     // Expect exactly one HashRecord encoded as ZipMap.
     assert_eq!(items.len(), 1, "expected exactly one HashRecord");
-    let Item::HashRecord { encoding, .. } = &items[0] else {
+    let Item::HashRecord {
+        key,
+        encoding,
+        field_count,
+        ..
+    } = &items[0]
+    else {
         panic!("expected HashRecord");
     };
 
+    assert_eq!(
+        *key,
+        RDBStr::Str(Bytes::copy_from_slice(b"zimap_doesnt_compress"))
+    );
     assert_eq!(*encoding, HashEncoding::ZipMap);
+    assert_eq!(*field_count, 2);
     assert!(
         guard.hit("hash.zipmap.raw"),
         "expected hash.zipmap.raw trace event; captured: {:?}",
@@ -1089,14 +1100,25 @@ async fn hash_zipmap_fixture_lzf_test() -> AnyResult<()> {
     let items = read_filtered_items(path).await?;
 
     assert_eq!(items.len(), 1, "expected exactly one HashRecord");
-    let Item::HashRecord { encoding, .. } = &items[0] else {
+    let Item::HashRecord {
+        key,
+        encoding,
+        field_count,
+        ..
+    } = &items[0]
+    else {
         panic!("expected HashRecord");
     };
 
+    assert_eq!(
+        *key,
+        RDBStr::Str(Bytes::copy_from_slice(b"zipmap_compresses_easily"))
+    );
+    assert_eq!(*field_count, 3);
     assert_eq!(*encoding, HashEncoding::ZipMap);
     assert!(
-        guard.hit("hash.zipmap.raw"),
-        "expected hash.zipmap.raw trace event; captured: {:?}",
+        guard.hit("hash.zipmap.lzf"),
+        "expected hash.zipmap.lzf trace event; captured: {:?}",
         guard.collected()
     );
 

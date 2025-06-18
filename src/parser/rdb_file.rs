@@ -297,7 +297,7 @@ impl RDBFileParser {
                     Ok(Some(item))
                 }
                 RDBType::HashZipMap => {
-                    let (input, entrust) = HashZipMapRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = HashZipMapRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))

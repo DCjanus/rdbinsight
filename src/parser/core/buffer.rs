@@ -3,7 +3,7 @@ use bytes::{Buf, BytesMut};
 
 use crate::{
     helper::{AnyResult, wrapping_to_usize},
-    parser::{core::combinators::read_at_most_but_at_least_one, error::NotFinished},
+    parser::{core::combinators::read_at_most_but_at_least_one, error::NeedMoreData},
 };
 
 #[derive(Debug)]
@@ -11,6 +11,7 @@ pub struct Buffer {
     buf: BytesMut,
     max: usize,
     pos: u64,
+    finished: bool,
 }
 
 impl Buffer {
@@ -19,6 +20,7 @@ impl Buffer {
             buf: BytesMut::new(),
             max,
             pos: 0,
+            finished: false,
         }
     }
 
@@ -66,6 +68,14 @@ impl Buffer {
     pub fn is_empty(&self) -> bool {
         self.buf.is_empty()
     }
+
+    pub fn is_finished(&self) -> bool {
+        self.finished
+    }
+
+    pub fn set_finished(&mut self) {
+        self.finished = true;
+    }
 }
 
 impl AsRef<[u8]> for Buffer {
@@ -86,7 +96,7 @@ pub(crate) fn skip_bytes(buffer: &mut Buffer, remain: &mut u64) -> AnyResult<()>
     buffer.consume_to(input.as_ptr());
 
     if *remain > 0 {
-        return Err(NotFinished.into());
+        return Err(NeedMoreData.into());
     }
     Ok(())
 }

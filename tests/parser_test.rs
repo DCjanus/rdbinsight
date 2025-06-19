@@ -7,7 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, ensure};
+use anyhow::{Context, bail, ensure};
 use bytes::Bytes;
 use futures_util::FutureExt;
 use rdbinsight::{
@@ -15,7 +15,7 @@ use rdbinsight::{
     parser::{
         RDBFileParser,
         core::{buffer::Buffer, raw::RDBStr},
-        error::NotFinished,
+        error::NeedMoreData,
         model::{HashEncoding, Item, ListEncoding, SetEncoding, StringEncoding, ZSetEncoding},
     },
 };
@@ -1538,32 +1538,50 @@ async fn zset_listpack_lzf_encoding_test() -> AnyResult<()> {
 fn collect_items(bytes: &[u8]) -> AnyResult<Vec<Item>> {
     let mut parser = RDBFileParser::default();
     let mut buffer = Buffer::new(1024 * 1024 * 64);
-    buffer.extend(bytes)?;
     let mut items = Vec::new();
-    let mut pending = 0;
+
+    let mut offset = 0usize;
+
     loop {
         match parser.poll_next(&mut buffer) {
             Ok(Some(item)) => {
-                pending = 0;
                 items.push(item);
             }
             Ok(None) => break,
-            Err(e) if e.is::<NotFinished>() => {
-                pending += 1;
-                ensure!(pending < 1000000, "pending items: {}", pending);
+            Err(e) if e.is::<NeedMoreData>() && buffer.is_finished() => {
+                bail!(
+                    "buffer is finished but not all input bytes were consumed: {}/{} bytes remaining",
+                    buffer.len(),
+                    bytes.len()
+                );
             }
-            Err(e) => {
-                return Err(e);
+            Err(e) if e.is::<NeedMoreData>() => {
+                buffer.extend(&bytes[offset..offset + 1])?;
+                offset += 1;
+
+                if offset >= bytes.len() {
+                    buffer.set_finished();
+                }
             }
+            Err(e) => return Err(e),
         }
     }
 
     let remaining = buffer.len();
     ensure!(
-        remaining <= 8,
+        remaining == 0,
         "buffer has too much remaining data after parsing: {} bytes (expected at most 8 bytes for checksum)",
         remaining
     );
+
+    // 8 bytes for checksum
+    ensure!(
+        offset == bytes.len(),
+        "not all input bytes were consumed: {}/{} bytes remaining",
+        bytes.len() - offset,
+        bytes.len()
+    );
+
     Ok(items)
 }
 

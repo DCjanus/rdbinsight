@@ -8,7 +8,7 @@ use crate::{
             combinators::read_exact,
             raw::{RDBLen, read_rdb_len},
         },
-        error::NotFinished,
+        error::NeedMoreData,
         state::traits::{InitializableParser, StateParser},
     },
 };
@@ -91,7 +91,7 @@ where P: InitializableParser + StateParser
             Err(e) => e,
         };
 
-        if buffer.tell() >= expect_end && e.is::<NotFinished>() {
+        if buffer.tell() >= expect_end && e.is::<NeedMoreData>() {
             bail!("all RDB string should be consumed, parser not finished: {e}");
         }
 
@@ -107,6 +107,7 @@ where P: InitializableParser + StateParser
 
         let mut decompressed_buffer = Buffer::new(decompressed.len());
         decompressed_buffer.extend(&decompressed)?;
+        decompressed_buffer.set_finished();
 
         let output = full_parser::<P>(&mut decompressed_buffer)?;
         buffer.consume_to(input.as_ptr());
@@ -228,7 +229,7 @@ where P: InitializableParser + StateParser + Sized {
     let input = buffer.as_ref();
     let (input, mut entrust) = match P::init(buffer, input) {
         Ok((input, entrust)) => (input, entrust),
-        Err(e) if e.is::<NotFinished>() => {
+        Err(e) if e.is::<NeedMoreData>() => {
             bail!("full_parser meet NotFinished error: {e}")
         }
         Err(e) => return Err(e),
@@ -240,7 +241,7 @@ where P: InitializableParser + StateParser + Sized {
             ensure!(buffer.is_empty(), "buffer should be empty after parsing");
             Ok(output)
         }
-        Err(e) if e.is::<NotFinished>() => {
+        Err(e) if e.is::<NeedMoreData>() => {
             bail!("full_parser meet NotFinished error: {e}")
         }
         Err(e) => Err(e),

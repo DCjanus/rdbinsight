@@ -148,6 +148,13 @@ impl RDBFileParser {
                     }))
                 }
                 RDBOpcode::Eof => {
+                    if buffer.is_finished() && input.is_empty() {
+                        buffer.consume_to(input.as_ptr());
+                        return Ok(None);
+                    }
+
+                    let (input, _checksum) = read_exact(input, 8)?;
+                    // TODO: check checksum
                     buffer.consume_to(input.as_ptr());
                     Ok(None)
                 }

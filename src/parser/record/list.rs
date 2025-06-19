@@ -148,6 +148,7 @@ impl ZipListLengthParser {
 
         let mut decompressed_buffer = Buffer::new(decompressed.len());
         decompressed_buffer.extend(&decompressed)?;
+        decompressed_buffer.set_finished();
         let decompress_input = decompressed_buffer.as_ref();
 
         let (decompress_input, mut entrust) = Self::raw_init(decompress_input, out_len)?;

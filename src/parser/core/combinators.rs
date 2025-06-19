@@ -1,6 +1,6 @@
 use anyhow::ensure;
 
-use crate::{helper::AnyResult, parser::error::NotFinished};
+use crate::{helper::AnyResult, parser::error::NeedMoreData};
 
 pub fn read_tag<'a>(input: &'a [u8], tag: &'static [u8]) -> AnyResult<&'a [u8]> {
     let (input, found) = read_exact(input, tag.len())?;
@@ -10,7 +10,7 @@ pub fn read_tag<'a>(input: &'a [u8], tag: &'static [u8]) -> AnyResult<&'a [u8]> 
 
 pub fn read_exact(input: &[u8], len: usize) -> AnyResult<(&[u8], &[u8])> {
     if input.len() < len {
-        return Err(NotFinished.into());
+        return Err(NeedMoreData.into());
     }
     Ok((&input[len..], &input[..len]))
 }
@@ -61,7 +61,7 @@ pub fn read_le_u64(input: &[u8]) -> AnyResult<(&[u8], u64)> {
 
 pub fn not_empty(input: &[u8]) -> AnyResult {
     if input.is_empty() {
-        return Err(NotFinished.into());
+        return Err(NeedMoreData.into());
     }
     Ok(())
 }

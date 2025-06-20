@@ -86,7 +86,9 @@ impl RDBFileParser {
 
     // Execute a child parser immediately if possible, otherwise stash it for later.
     fn set_entrust<E>(&mut self, mut entrust: E, buffer: &mut Buffer) -> AnyResult<Item>
-    where E: StateParser<Output = Item> + Into<ItemParser> {
+    where
+        E: StateParser<Output = Item> + Into<ItemParser>,
+    {
         debug_assert!(self.entrust.is_none());
         match entrust.call(buffer) {
             Ok(item) => Ok(item),
@@ -324,8 +326,8 @@ impl RDBFileParser {
                 RDBType::StreamListPacks => todo!("unsupported type: StreamListPacks"),
                 RDBType::StreamListPacks2 => todo!("unsupported type: StreamListPacks2"),
                 RDBType::StreamListPacks3 => todo!("unsupported type: StreamListPacks3"),
-                RDBType::HashMetadataPreGA => todo!("unsupported type: HashMetadataPreGA"),
-                RDBType::HashListPackExPreGA => todo!("unsupported type: HashListPackExPreGA"),
+                RDBType::HashMetadataPreGA => bail!("unsupported type: HashMetadataPreGA"),
+                RDBType::HashListPackExPreGA => bail!("unsupported type: HashListPackExPreGA"),
                 RDBType::HashMetadata => todo!("unsupported type: HashMetadata"),
                 RDBType::HashListPackEx => todo!("unsupported type: HashListPackEx"),
                 RDBType::ZSetZipList => {

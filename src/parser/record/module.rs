@@ -24,18 +24,20 @@ pub struct Module2RecordParser {
     entrust: Option<StringEncodingParser>,
 }
 
-impl Module2RecordParser {
-    pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
+impl InitializableParser for Module2RecordParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, _module_id) = read_rdb_len(input).context("read module id")?;
 
         Ok((input, Self {
-            started,
+            started: buffer.tell(),
             key,
             entrust: None,
         }))
     }
+}
 
+impl Module2RecordParser {
     #[inline]
     fn read_module_opcode(input: &[u8]) -> AnyResult<(&[u8], RDBModuleOpcode)> {
         let (input, opcode) = read_rdb_len(input)?;
@@ -98,18 +100,20 @@ pub struct ModuleAuxParser {
     entrust: Option<StringEncodingParser>,
 }
 
-impl ModuleAuxParser {
-    pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
+impl InitializableParser for ModuleAuxParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, _module_id) = read_rdb_len(input)?;
         let (input, opcode) = Self::read_module_opcode(input)?;
         ensure!(opcode == RDBModuleOpcode::UInt);
         let (input, _when) = read_rdb_len(input)?;
         Ok((input, Self {
-            started,
+            started: buffer.tell(),
             entrust: None,
         }))
     }
+}
 
+impl ModuleAuxParser {
     fn read_module_opcode(input: &[u8]) -> AnyResult<(&[u8], RDBModuleOpcode)> {
         let (input, opcode) = read_rdb_len(input)?;
         let opcode = opcode

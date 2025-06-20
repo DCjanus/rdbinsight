@@ -3,6 +3,7 @@ use anyhow::{Context, anyhow, ensure};
 use crate::{
     helper::AnyResult,
     parser::{
+        StringEncoding,
         core::{
             buffer::{Buffer, skip_bytes},
             combinators::{read_be_u32, read_u8},
@@ -13,7 +14,7 @@ use crate::{
             list::ZipListLengthParser, set::ListPackLengthParser, string::StringEncodingParser,
         },
         state::{
-            combinators::RDBStrBox,
+            combinators::{RDBStrBox, ReduceParser},
             traits::{InitializableParser, StateParser},
         },
     },
@@ -22,24 +23,26 @@ use crate::{
 pub struct HashRecordParser {
     started: u64,
     key: RDBStr,
-    field_count: u64,
-    remain: u64,
-    entrust: Option<HashFieldParser>,
+    entrust: ReduceParser<StringEncodingParser, u64>,
 }
 
-impl HashRecordParser {
-    pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
+impl InitializableParser for HashRecordParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, field_count) = read_rdb_len(input).context("read hash length")?;
-        let field_count = field_count
+        let (input, pair_count) = read_rdb_len(input).context("read hash length")?;
+        let pair_count = pair_count
             .as_u64()
             .context("hash length should be a number")?;
+        let entrust = ReduceParser::<StringEncodingParser, u64>::new(
+            pair_count * 2,
+            0,
+            |acc, _: StringEncoding| acc + 1,
+        );
+
         Ok((input, Self {
-            started,
+            started: buffer.tell(),
             key,
-            field_count,
-            remain: field_count,
-            entrust: None,
+            entrust,
         }))
     }
 }
@@ -48,65 +51,17 @@ impl StateParser for HashRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-        loop {
-            if let Some(parser) = self.entrust.as_mut() {
-                parser.call(buffer)?;
-                self.entrust = None;
-                self.remain -= 1;
-            }
-            if self.remain == 0 {
-                break;
-            }
-            let (input, entrust) = HashFieldParser::init(buffer.as_ref())?;
-            buffer.consume_to(input.as_ptr());
-            self.entrust = Some(entrust);
-        }
+        let field_count = self.entrust.call(buffer)?;
+        let pair_count = field_count / 2;
 
         Ok(Item::HashRecord {
             key: self.key.clone(),
             rdb_size: buffer.tell() - self.started,
             encoding: HashEncoding::Raw,
-            field_count: self.field_count,
+            pair_count,
         })
     }
 }
-
-// Parser for a single field/value pair inside a raw hash table.
-struct HashFieldParser {
-    remain: u8, // 2 components: field and value strings
-    entrust: Option<StringEncodingParser>,
-}
-
-impl HashFieldParser {
-    fn init(input: &[u8]) -> AnyResult<(&[u8], Self)> {
-        Ok((input, Self {
-            remain: 2,
-            entrust: None,
-        }))
-    }
-}
-
-impl StateParser for HashFieldParser {
-    type Output = ();
-
-    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-        loop {
-            if let Some(parser) = self.entrust.as_mut() {
-                let _ = parser.call(buffer)?;
-                self.remain -= 1;
-                self.entrust = None;
-            }
-            if self.remain == 0 {
-                return Ok(());
-            }
-            let (input, entrust) = StringEncodingParser::init(buffer, buffer.as_ref())?;
-            buffer.consume_to(input.as_ptr());
-            self.entrust = Some(entrust);
-        }
-    }
-}
-
-// ------------------------- ZipList Encoding (id = 13) ------------------------
 
 pub struct HashZipListRecordParser {
     started: u64,
@@ -141,7 +96,7 @@ impl StateParser for HashZipListRecordParser {
             key: self.key.clone(),
             rdb_size: buffer.tell() - self.started,
             encoding: HashEncoding::ZipList,
-            field_count,
+            pair_count: field_count,
         })
     }
 }
@@ -181,7 +136,7 @@ impl StateParser for HashListPackRecordParser {
             key: self.key.clone(),
             rdb_size: buffer.tell() - self.started,
             encoding: HashEncoding::ListPack,
-            field_count,
+            pair_count: field_count,
         })
     }
 }
@@ -218,7 +173,7 @@ impl StateParser for HashZipMapRecordParser {
             key: self.key.clone(),
             rdb_size: buffer.tell() - self.started,
             encoding: HashEncoding::ZipMap,
-            field_count,
+            pair_count: field_count,
         })
     }
 }

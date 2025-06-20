@@ -59,7 +59,7 @@ pub enum Item {
         key: RDBStr,
         rdb_size: u64,
         encoding: HashEncoding,
-        field_count: u64,
+        pair_count: u64,
     },
     ModuleRecord {
         key: RDBStr,

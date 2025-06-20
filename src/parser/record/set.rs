@@ -3,6 +3,7 @@ use anyhow::{Context, bail, ensure};
 use crate::{
     helper::AnyResult,
     parser::{
+        StringEncoding,
         core::{
             buffer::{Buffer, skip_bytes},
             combinators::{read_exact, read_u8},
@@ -11,7 +12,7 @@ use crate::{
         model::{Item, SetEncoding},
         record::string::StringEncodingParser,
         state::{
-            combinators::RDBStrBox,
+            combinators::{RDBStrBox, ReduceParser},
             traits::{InitializableParser, StateParser},
         },
     },
@@ -20,24 +21,23 @@ use crate::{
 pub struct SetRecordParser {
     started: u64,
     key: RDBStr,
-    member_count: u64,
-    remain: u64,
-    entrust: Option<StringEncodingParser>,
+    entrust: ReduceParser<StringEncodingParser, u64>,
 }
 
-impl SetRecordParser {
-    pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
+impl InitializableParser for SetRecordParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, member_count) = read_rdb_len(input).context("read set length")?;
         let member_count = member_count
             .as_u64()
             .context("set length should be a number")?;
+
+        let entrust: ReduceParser<StringEncodingParser, u64> =
+            ReduceParser::new(member_count, 0, |acc, _: StringEncoding| acc + 1);
         Ok((input, Self {
-            started,
+            started: buffer.tell(),
             key,
-            member_count,
-            remain: member_count,
-            entrust: None,
+            entrust,
         }))
     }
 }
@@ -46,27 +46,13 @@ impl StateParser for SetRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-        loop {
-            if let Some(parser) = self.entrust.as_mut() {
-                let _ = parser.call(buffer)?;
-                self.entrust = None;
-                self.remain -= 1;
-            }
-
-            if self.remain == 0 {
-                break;
-            }
-
-            let (input, parser) = StringEncodingParser::init(buffer, buffer.as_ref())?;
-            buffer.consume_to(input.as_ptr());
-            self.entrust = Some(parser);
-        }
+        let member_count = self.entrust.call(buffer)?;
 
         Ok(Item::SetRecord {
             key: self.key.clone(),
             rdb_size: buffer.tell() - self.started,
             encoding: SetEncoding::Raw,
-            member_count: self.member_count,
+            member_count,
         })
     }
 }
@@ -75,15 +61,13 @@ pub struct SetIntSetRecordParser {
     started: u64,
     key: RDBStr,
     to_skip: u64,
-    header_read: bool,
     member_count: u64,
 }
 
-impl SetIntSetRecordParser {
-    pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
+impl InitializableParser for SetIntSetRecordParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, blob_len) = read_rdb_len(input).context("read intset blob len")?;
-        // TODO: add test case when blob_len is not a simple number
         let blob_len = blob_len
             .as_u64()
             .context("intset blob len should be a number")?;
@@ -91,12 +75,13 @@ impl SetIntSetRecordParser {
             blob_len >= 8,
             "intset blob should be at least 8 bytes (header)"
         );
+        let (input, header) = read_exact(input, 8)?;
+        let member_count = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as u64;
         Ok((input, Self {
-            started,
+            started: buffer.tell(),
             key,
-            to_skip: blob_len,
-            header_read: false,
-            member_count: 0,
+            to_skip: blob_len - 8,
+            member_count,
         }))
     }
 }
@@ -105,14 +90,7 @@ impl StateParser for SetIntSetRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-        if !self.header_read {
-            crate::parser_trace!("intset.raw");
-            let (_input, header) = read_exact(buffer.as_ref(), 8)?;
-            // bytes 0..=3: encoding (unused), 4..=7: length (little endian u32)
-            self.member_count =
-                u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as u64;
-            self.header_read = true;
-        }
+        crate::parser_trace!("intset.raw");
 
         skip_bytes(buffer, &mut self.to_skip)?;
 

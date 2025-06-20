@@ -21,20 +21,20 @@ use crate::{
 pub struct ListRecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ReduceParser<StringEncodingParser, u64, fn(u64, StringEncoding) -> u64>,
+    entrust: ReduceParser<StringEncodingParser, u64>,
 }
 
-impl ListRecordParser {
-    pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
+impl InitializableParser for ListRecordParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, member_count) = read_rdb_len(input).context("read list length")?;
         let member_count = member_count
             .as_u64()
             .context("list length should be a number")?;
-        let entrust: ReduceParser<StringEncodingParser, u64, fn(u64, StringEncoding) -> u64> =
-            ReduceParser::new(member_count, 0, |acc, _item: StringEncoding| acc + 1);
+        let entrust: ReduceParser<StringEncodingParser, u64> =
+            ReduceParser::new(member_count, 0, |acc, _: StringEncoding| acc + 1);
         Ok((input, Self {
-            started,
+            started: buffer.tell(),
             key,
             entrust,
         }))

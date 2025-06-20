@@ -959,13 +959,13 @@ async fn zset2_skiplist_encoding_test() -> AnyResult<()> {
 #[tokio::test]
 async fn hash_raw_encoding_test() -> AnyResult<()> {
     // Redis 2.8 writes large hashes using raw hash table (type id = 4)
-    const FIELD_COUNT: usize = 600; // > hash-max-ziplist-entries (512)
+    const PAIR_COUNT: usize = 600; // > hash-max-ziplist-entries (512)
 
     let redis = RedisInstance::new("2.8").await?;
 
     let rdb_path = redis
         .generate_rdb("hash_raw_encoding_test", |conn| {
-            async move { seed_hash(conn, "hash_raw_key", FIELD_COUNT).await }.boxed()
+            async move { seed_hash(conn, "hash_raw_key", PAIR_COUNT).await }.boxed()
         })
         .await?;
 
@@ -975,7 +975,7 @@ async fn hash_raw_encoding_test() -> AnyResult<()> {
     let Item::HashRecord {
         key,
         encoding,
-        field_count,
+        pair_count,
         ..
     } = &items[0]
     else {
@@ -983,7 +983,7 @@ async fn hash_raw_encoding_test() -> AnyResult<()> {
     };
 
     assert_eq!(*key, RDBStr::Str(Bytes::from("hash_raw_key")));
-    assert_eq!(*field_count as usize, FIELD_COUNT);
+    assert_eq!(*pair_count as usize, PAIR_COUNT);
     assert_eq!(*encoding, HashEncoding::Raw);
 
     Ok(())
@@ -992,13 +992,13 @@ async fn hash_raw_encoding_test() -> AnyResult<()> {
 #[tokio::test]
 async fn hash_ziplist_encoding_test() -> AnyResult<()> {
     // Redis 2.8 stores small hashes (≤512 fields) as ziplist (type id = 13)
-    const FIELD_COUNT: usize = 50;
+    const PAIR_COUNT: usize = 50;
 
     let redis = RedisInstance::new("2.8").await?;
 
     let rdb_path = redis
         .generate_rdb("hash_ziplist_encoding_test", |conn| {
-            async move { seed_hash(conn, "hm_zl_key", FIELD_COUNT).await }.boxed()
+            async move { seed_hash(conn, "hm_zl_key", PAIR_COUNT).await }.boxed()
         })
         .await?;
 
@@ -1008,7 +1008,7 @@ async fn hash_ziplist_encoding_test() -> AnyResult<()> {
     let Item::HashRecord {
         key,
         encoding,
-        field_count,
+        pair_count,
         ..
     } = &items[0]
     else {
@@ -1016,7 +1016,7 @@ async fn hash_ziplist_encoding_test() -> AnyResult<()> {
     };
 
     assert_eq!(*key, RDBStr::Str(Bytes::from("hm_zl_key")));
-    assert_eq!(*field_count as usize, FIELD_COUNT);
+    assert_eq!(*pair_count as usize, PAIR_COUNT);
     assert_eq!(*encoding, HashEncoding::ZipList);
 
     Ok(())
@@ -1040,7 +1040,7 @@ async fn hash_listpack_encoding_test() -> AnyResult<()> {
     let Item::HashRecord {
         key,
         encoding,
-        field_count,
+        pair_count,
         ..
     } = &items[0]
     else {
@@ -1048,7 +1048,7 @@ async fn hash_listpack_encoding_test() -> AnyResult<()> {
     };
 
     assert_eq!(*key, RDBStr::Str(Bytes::from("hm_lp_key")));
-    assert_eq!(*field_count as usize, FIELD_COUNT);
+    assert_eq!(*pair_count as usize, FIELD_COUNT);
     assert_eq!(*encoding, HashEncoding::ListPack);
 
     Ok(())
@@ -1068,7 +1068,7 @@ async fn hash_zipmap_fixture_raw_test() -> AnyResult<()> {
     let Item::HashRecord {
         key,
         encoding,
-        field_count,
+        pair_count,
         ..
     } = &items[0]
     else {
@@ -1080,7 +1080,7 @@ async fn hash_zipmap_fixture_raw_test() -> AnyResult<()> {
         RDBStr::Str(Bytes::copy_from_slice(b"zimap_doesnt_compress"))
     );
     assert_eq!(*encoding, HashEncoding::ZipMap);
-    assert_eq!(*field_count, 2);
+    assert_eq!(*pair_count, 2);
     assert!(
         guard.hit("hash.zipmap.raw"),
         "expected hash.zipmap.raw trace event; captured: {:?}",
@@ -1103,7 +1103,7 @@ async fn hash_zipmap_fixture_lzf_test() -> AnyResult<()> {
     let Item::HashRecord {
         key,
         encoding,
-        field_count,
+        pair_count,
         ..
     } = &items[0]
     else {
@@ -1114,7 +1114,7 @@ async fn hash_zipmap_fixture_lzf_test() -> AnyResult<()> {
         *key,
         RDBStr::Str(Bytes::copy_from_slice(b"zipmap_compresses_easily"))
     );
-    assert_eq!(*field_count, 3);
+    assert_eq!(*pair_count, 3);
     assert_eq!(*encoding, HashEncoding::ZipMap);
     assert!(
         guard.hit("hash.zipmap.lzf"),

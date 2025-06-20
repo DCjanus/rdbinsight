@@ -176,14 +176,14 @@ impl RDBFileParser {
                     }))
                 }
                 RDBOpcode::Function2 => {
-                    let (input, entrust) = Function2RecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = Function2RecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
                 RDBOpcode::FunctionPreGA => bail!("not supported opcode: FunctionPreGA"),
                 RDBOpcode::ModuleAux => {
-                    let (input, entrust) = ModuleAuxParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = ModuleAuxParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
@@ -231,7 +231,7 @@ impl RDBFileParser {
                     Ok(Some(item))
                 }
                 RDBType::List => {
-                    let (input, entrust) = ListRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = ListRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
@@ -255,13 +255,13 @@ impl RDBFileParser {
                     Ok(Some(item))
                 }
                 RDBType::Set => {
-                    let (input, entrust) = SetRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = SetRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
                 RDBType::SetIntSet => {
-                    let (input, entrust) = SetIntSetRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = SetIntSetRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
@@ -273,13 +273,13 @@ impl RDBFileParser {
                     Ok(Some(item))
                 }
                 RDBType::ZSet => {
-                    let (input, entrust) = ZSetRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = ZSetRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
                 RDBType::ZSet2 => {
-                    let (input, entrust) = ZSet2RecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = ZSet2RecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
@@ -291,14 +291,14 @@ impl RDBFileParser {
                     Ok(Some(item))
                 }
                 RDBType::Hash => {
-                    let (input, entrust) = HashRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = HashRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
                 RDBType::ModulePreGA => bail!("not supported type: ModulePreGA"),
                 RDBType::Module2 => {
-                    let (input, entrust) = Module2RecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = Module2RecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))

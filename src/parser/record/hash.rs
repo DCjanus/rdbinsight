@@ -111,15 +111,15 @@ impl StateParser for HashFieldParser {
 pub struct HashZipListRecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ZipListLengthParser,
+    entrust: RDBStrBox<ZipListLengthParser>,
 }
 
-impl HashZipListRecordParser {
-    pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
+impl InitializableParser for HashZipListRecordParser {
+    fn init<'a>(buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = ZipListLengthParser::init(input).context("init ziplist parser")?;
+        let (input, entrust) = RDBStrBox::<ZipListLengthParser>::init(buf, input)?;
         Ok((input, Self {
-            started,
+            started: buf.tell(),
             key,
             entrust,
         }))

@@ -1558,7 +1558,6 @@ fn collect_items(bytes: &[u8]) -> AnyResult<Vec<Item>> {
             Err(e) if e.is::<NeedMoreData>() => {
                 buffer.extend(&bytes[offset..offset + 1])?;
                 offset += 1;
-
                 if offset >= bytes.len() {
                     buffer.set_finished();
                 }

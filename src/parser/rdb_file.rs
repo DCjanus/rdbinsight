@@ -237,13 +237,13 @@ impl RDBFileParser {
                     Ok(Some(item))
                 }
                 RDBType::ListZipList => {
-                    let (input, entrust) = ListZipListRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = ListZipListRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
                 RDBType::ListQuickList => {
-                    let (input, entrust) = ListQuickListRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = ListQuickListRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
@@ -310,7 +310,7 @@ impl RDBFileParser {
                     Ok(Some(item))
                 }
                 RDBType::HashZipList => {
-                    let (input, entrust) = HashZipListRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = HashZipListRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
@@ -329,7 +329,7 @@ impl RDBFileParser {
                 RDBType::HashMetadata => todo!("unsupported type: HashMetadata"),
                 RDBType::HashListPackEx => todo!("unsupported type: HashListPackEx"),
                 RDBType::ZSetZipList => {
-                    let (input, entrust) = ZSetZipListRecordParser::init(buffer.tell(), input)?;
+                    let (input, entrust) = ZSetZipListRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))

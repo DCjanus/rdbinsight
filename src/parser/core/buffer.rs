@@ -1,5 +1,5 @@
 use anyhow::ensure;
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 
 use crate::{
     helper::{AnyResult, wrapping_to_usize},
@@ -25,23 +25,21 @@ impl Buffer {
     }
 
     pub fn extend(&mut self, data: &[u8]) -> AnyResult {
-        ensure!(self.buf.len() + data.len() <= self.max, "buffer overflow");
+        ensure!(self.remain_capacity() >= data.len(), "buffer overflow");
         self.buf.extend_from_slice(data);
         Ok(())
     }
 
+    pub fn push_u8(&mut self, byte: u8) -> AnyResult {
+        ensure!(self.remain_capacity() >= 1, "buffer overflow");
+        self.buf.put_u8(byte);
+        Ok(())
+    }
+
     pub fn consume_to(&mut self, ptr: *const u8) {
-        let buf_range = self.buf.as_ptr_range();
-        assert!(
-            buf_range.start <= ptr && ptr <= buf_range.end,
-            "pointer out of buffer range",
-        );
-
-        // Safety: ptr is inside the current buffer; offset is therefore non-negative.
-        let delta = ptr as usize - buf_range.start as usize;
-
-        self.pos += delta as u64;
-        self.buf.advance(delta);
+        let delta = self.distance_to(ptr);
+        self.pos += delta;
+        self.buf.advance(delta as usize);
         debug_assert_eq!(self.buf.as_ptr(), ptr);
     }
 
@@ -50,15 +48,16 @@ impl Buffer {
     }
 
     pub fn tell_to(&self, ptr: *const u8) -> u64 {
+        self.pos + self.distance_to(ptr)
+    }
+
+    pub fn distance_to(&self, ptr: *const u8) -> u64 {
         let buf_range = self.buf.as_ptr_range();
         assert!(
             buf_range.start <= ptr && ptr <= buf_range.end,
             "pointer out of buffer range",
         );
-
-        // Safety: ptr is inside the current buffer; offset is therefore non-negative.
-        let delta = ptr as u64 - buf_range.start as u64;
-        self.pos + delta
+        ptr as u64 - buf_range.start as u64
     }
 
     pub fn len(&self) -> usize {
@@ -67,6 +66,10 @@ impl Buffer {
 
     pub fn is_empty(&self) -> bool {
         self.buf.is_empty()
+    }
+
+    pub fn remain_capacity(&self) -> usize {
+        self.max - self.buf.len()
     }
 
     pub fn is_finished(&self) -> bool {

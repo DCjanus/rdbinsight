@@ -79,15 +79,15 @@ impl StateParser for ZSetRecordParser {
 pub struct ZSetZipListRecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ZipListLengthParser,
+    entrust: RDBStrBox<ZipListLengthParser>,
 }
 
 impl ZSetZipListRecordParser {
-    pub fn init(started: u64, input: &[u8]) -> AnyResult<(&[u8], Self)> {
+    pub fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = ZipListLengthParser::init(input).context("init ziplist parser")?;
+        let (input, entrust) = RDBStrBox::<ZipListLengthParser>::init(buffer, input)?;
         Ok((input, Self {
-            started,
+            started: buffer.tell(),
             key,
             entrust,
         }))

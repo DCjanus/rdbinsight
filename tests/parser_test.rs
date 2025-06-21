@@ -16,7 +16,10 @@ use rdbinsight::{
         RDBFileParser,
         core::{buffer::Buffer, raw::RDBStr},
         error::NeedMoreData,
-        model::{HashEncoding, Item, ListEncoding, SetEncoding, StringEncoding, ZSetEncoding},
+        model::{
+            HashEncoding, Item, ListEncoding, SetEncoding, StreamEncoding, StringEncoding,
+            ZSetEncoding,
+        },
     },
 };
 
@@ -1531,6 +1534,62 @@ async fn zset_listpack_lzf_encoding_test() -> AnyResult<()> {
         "expected zset.listpack.lzf trace event; captured: {:?}",
         guard.collected()
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn stream_v1_listpack_test() -> AnyResult<()> {
+    run_stream_listpack_test("6.0", StreamEncoding::ListPacks).await
+}
+
+#[tokio::test]
+async fn stream_v2_listpack_test() -> AnyResult<()> {
+    run_stream_listpack_test("7.0", StreamEncoding::ListPacks2).await
+}
+
+#[tokio::test]
+async fn stream_v3_listpack_test() -> AnyResult<()> {
+    run_stream_listpack_test("8.0", StreamEncoding::ListPacks3).await
+}
+
+async fn run_stream_listpack_test(version: &str, expect_encoding: StreamEncoding) -> AnyResult<()> {
+    use common::{create_stream_groups, seed_stream};
+    const MESSAGE_COUNT: usize = 500;
+
+    let redis = RedisInstance::new(version).await?;
+
+    let rdb_path = redis
+        .generate_rdb(
+            &format!("stream_{}_listpack_test", version.replace('.', "_")),
+            |conn| {
+                async move {
+                    seed_stream(conn, "mystream", MESSAGE_COUNT).await?;
+                    // TODO: test with consumer groups
+                    // create_stream_groups(conn, "mystream", &["cg_alpha", "cg_beta", "cg_gamma"])
+                    //     .await?;
+                    Ok(())
+                }
+                .boxed()
+            },
+        )
+        .await?;
+
+    let items = read_filtered_items(&rdb_path).await?;
+
+    assert_eq!(items.len(), 1, "expected exactly one StreamRecord");
+    let Item::StreamRecord {
+        key,
+        message_count,
+        encoding,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected StreamRecord");
+    };
+    assert_eq!(*key, RDBStr::Str(Bytes::from("mystream")));
+    assert_eq!(*message_count as usize, MESSAGE_COUNT);
+    assert_eq!(*encoding, expect_encoding);
 
     Ok(())
 }

@@ -9,7 +9,7 @@ use crate::{
             combinators::{read_exact, read_le_u32, read_le_u64, read_tag, read_u8},
             raw::{read_rdb_len, read_rdb_str},
         },
-        model::{Item, RDBOpcode, RDBType},
+        model::{Item, RDBOpcode, RDBType, StreamEncoding},
         record::{
             function::Function2RecordParser,
             hash::{
@@ -22,6 +22,7 @@ use crate::{
             },
             module::{Module2RecordParser, ModuleAuxParser},
             set::{SetIntSetRecordParser, SetListPackRecordParser, SetRecordParser},
+            stream::StreamListPackRecordParser,
             string::StringRecordParser,
             zset::{
                 ZSet2RecordParser, ZSetListPackRecordParser, ZSetRecordParser,
@@ -39,6 +40,9 @@ enum ItemParser {
     ListZipListRecord(ListZipListRecordParser),
     ListQuickListRecord(ListQuickListRecordParser),
     ListQuickList2Record(ListQuickList2RecordParser),
+    StreamListPackRecord(StreamListPackRecordParser<{ StreamEncoding::ListPacks }>),
+    StreamListPack2Record(StreamListPackRecordParser<{ StreamEncoding::ListPacks2 }>),
+    StreamListPack3Record(StreamListPackRecordParser<{ StreamEncoding::ListPacks3 }>),
     SetRecord(SetRecordParser),
     SetIntSetRecord(SetIntSetRecordParser),
     SetListPackRecord(SetListPackRecordParser),
@@ -86,9 +90,7 @@ impl RDBFileParser {
 
     // Execute a child parser immediately if possible, otherwise stash it for later.
     fn set_entrust<E>(&mut self, mut entrust: E, buffer: &mut Buffer) -> AnyResult<Item>
-    where
-        E: StateParser<Output = Item> + Into<ItemParser>,
-    {
+    where E: StateParser<Output = Item> + Into<ItemParser> {
         debug_assert!(self.entrust.is_none());
         match entrust.call(buffer) {
             Ok(item) => Ok(item),
@@ -323,9 +325,30 @@ impl RDBFileParser {
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
-                RDBType::StreamListPacks => todo!("unsupported type: StreamListPacks"),
-                RDBType::StreamListPacks2 => todo!("unsupported type: StreamListPacks2"),
-                RDBType::StreamListPacks3 => todo!("unsupported type: StreamListPacks3"),
+                RDBType::StreamListPacks => {
+                    let (input, entrust) = StreamListPackRecordParser::<
+                        { StreamEncoding::ListPacks },
+                    >::init(buffer, input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
+                RDBType::StreamListPacks2 => {
+                    let (input, entrust) = StreamListPackRecordParser::<
+                        { StreamEncoding::ListPacks2 },
+                    >::init(buffer, input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
+                RDBType::StreamListPacks3 => {
+                    let (input, entrust) = StreamListPackRecordParser::<
+                        { StreamEncoding::ListPacks3 },
+                    >::init(buffer, input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
                 RDBType::HashMetadataPreGA => bail!("unsupported type: HashMetadataPreGA"),
                 RDBType::HashListPackExPreGA => bail!("unsupported type: HashListPackExPreGA"),
                 RDBType::HashMetadata => todo!("unsupported type: HashMetadata"),

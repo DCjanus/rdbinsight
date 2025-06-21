@@ -185,3 +185,39 @@ pub async fn seed_zset(conn: &mut AsyncConnection, key: &str, count: usize) -> R
     pipe.query_async::<()>(&mut *conn).await?;
     Ok(())
 }
+
+pub async fn seed_stream(conn: &mut AsyncConnection, key: &str, count: usize) -> Result<()> {
+    // Insert `count` messages into a Redis stream using XADD.
+    let mut pipe = redis::pipe();
+    for idx in 0..count {
+        // Each entry will have a field "f" with value idx as string.
+        // Use * to let Redis assign the ID.
+        pipe.cmd("XADD")
+            .arg(key)
+            .arg("*")
+            .arg("f")
+            .arg(idx.to_string())
+            .ignore();
+    }
+    pipe.query_async::<()>(&mut *conn).await?;
+    Ok(())
+}
+
+pub async fn create_stream_groups(
+    conn: &mut AsyncConnection,
+    key: &str,
+    groups: &[&str],
+) -> Result<()> {
+    for group in groups {
+        // Create consumer group starting from the beginning (ID 0) and ensure the stream exists.
+        redis::cmd("XGROUP")
+            .arg("CREATE")
+            .arg(key)
+            .arg(*group)
+            .arg("0")
+            .arg("MKSTREAM")
+            .query_async::<()>(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}

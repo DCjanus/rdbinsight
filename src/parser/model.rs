@@ -1,3 +1,5 @@
+use std::marker::ConstParamTy;
+
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::parser::core::raw::RDBStr;
@@ -54,6 +56,16 @@ pub enum Item {
         encoding: ZSetEncoding,
         /// Number of elements (member / score pairs).
         member_count: u64,
+    },
+    /// Stream record backed by listpacks.
+    StreamRecord {
+        key: RDBStr,
+        /// Size of the record in bytes.
+        rdb_size: u64,
+        /// Encoding variant.
+        encoding: StreamEncoding,
+        /// Number of messages contained in the stream.
+        message_count: u64,
     },
     HashRecord {
         key: RDBStr,
@@ -120,6 +132,13 @@ pub enum HashEncoding {
     ZipMap,
     ZipList,
     ListPack,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ConstParamTy)]
+pub enum StreamEncoding {
+    ListPacks,
+    ListPacks2,
+    ListPacks3,
 }
 
 /// Opcode of RDB, ref: https://github.com/redis/redis/blob/2ba81b70957691a6a010e785225672e6657e53e8/src/rdb.h#L93

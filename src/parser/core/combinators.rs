@@ -65,8 +65,3 @@ pub fn not_empty(input: &[u8]) -> AnyResult {
     }
     Ok(())
 }
-
-pub fn peek_u8(input: &[u8]) -> AnyResult<(&[u8], u8)> {
-    not_empty(input)?;
-    Ok((input, input[0]))
-}

@@ -49,8 +49,6 @@ impl StateParser for StringEncodingParser {
     }
 }
 
-// ----------------------------- StringRecord -----------------------------
-
 pub struct StringRecordParser {
     started: u64,
     key: RDBStr,

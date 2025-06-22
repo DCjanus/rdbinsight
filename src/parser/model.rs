@@ -133,6 +133,7 @@ pub enum HashEncoding {
     ZipList,
     ListPack,
     Metadata,
+    ListPackEx,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ConstParamTy)]

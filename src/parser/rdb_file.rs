@@ -13,8 +13,8 @@ use crate::{
         record::{
             function::Function2RecordParser,
             hash::{
-                HashListPackRecordParser, HashMetadataRecordParser, HashRecordParser,
-                HashZipListRecordParser, HashZipMapRecordParser,
+                HashListPackExRecordParser, HashListPackRecordParser, HashMetadataRecordParser,
+                HashRecordParser, HashZipListRecordParser, HashZipMapRecordParser,
             },
             list::{
                 ListQuickList2RecordParser, ListQuickListRecordParser, ListRecordParser,
@@ -54,6 +54,7 @@ enum ItemParser {
     HashZipMapRecord(HashZipMapRecordParser),
     HashZipListRecord(HashZipListRecordParser),
     HashListPackRecord(HashListPackRecordParser),
+    HashListPackExRecord(HashListPackExRecordParser),
     Module2Record(Module2RecordParser),
     ModuleAuxRecord(ModuleAuxParser),
     Function2Record(Function2RecordParser),
@@ -326,6 +327,12 @@ impl RDBFileParser {
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
+                RDBType::HashListPackEx => {
+                    let (input, entrust) = HashListPackExRecordParser::init(buffer, input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
                 RDBType::HashMetadata => {
                     let (input, entrust) = HashMetadataRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
@@ -358,7 +365,6 @@ impl RDBFileParser {
                 }
                 RDBType::HashMetadataPreGA => bail!("unsupported type: HashMetadataPreGA"),
                 RDBType::HashListPackExPreGA => bail!("unsupported type: HashListPackExPreGA"),
-                RDBType::HashListPackEx => todo!("unsupported type: HashListPackEx"),
                 RDBType::ZSetZipList => {
                     let (input, entrust) = ZSetZipListRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());

@@ -139,6 +139,46 @@ impl StateParser for HashListPackRecordParser {
     }
 }
 
+pub struct HashListPackExRecordParser {
+    started: u64,
+    key: RDBStr,
+    entrust: RDBStrBox<ListPackLengthParser>,
+}
+
+impl InitializableParser for HashListPackExRecordParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        let (input, key) = read_rdb_str(input).context("read key")?;
+        let (input, _min_expire) = read_le_u64(input).context("read minExpire")?;
+        let (input, entrust) = RDBStrBox::<ListPackLengthParser>::init(buffer, input)?;
+
+        Ok((input, Self {
+            started: buffer.tell(),
+            key,
+            entrust,
+        }))
+    }
+}
+
+impl StateParser for HashListPackExRecordParser {
+    type Output = Item;
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        let entry_count = self.entrust.call(buffer)?;
+        ensure!(
+            entry_count % 3 == 0,
+            "listpack entry count should be divisible by 3 for hash listpack-ex (field, value, ttl)"
+        );
+        let pair_count = entry_count / 3;
+
+        Ok(Item::HashRecord {
+            key: self.key.clone(),
+            rdb_size: buffer.tell() - self.started,
+            encoding: HashEncoding::ListPackEx,
+            pair_count,
+        })
+    }
+}
+
 pub struct HashZipMapRecordParser {
     started: u64,
     key: RDBStr,

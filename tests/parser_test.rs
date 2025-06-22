@@ -1650,6 +1650,69 @@ async fn hash_metadata_encoding_test() -> AnyResult<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn hash_listpack_ex_encoding_test() -> AnyResult<()> {
+    // Number of field/value pairs to create in the hash.
+    const PAIR_COUNT: usize = 40;
+
+    // Spin up a Redis 8.0 container (>=7.4 with HEXPIRE support)
+    let redis = RedisInstance::new("8.0").await?;
+
+    // Seed data and generate RDB file via helper.
+    let rdb_path = redis
+        .generate_rdb("hash_listpack_ex_encoding_test", |conn| {
+            async move {
+                // Insert the hash pairs first.
+                seed_hash(conn, "hm_lpe_key", PAIR_COUNT).await?;
+
+                // Apply per-field TTLs using HEXPIRE (1 hour) and then persist one field
+                for idx in 0..PAIR_COUNT {
+                    let field = format!("f{}", idx);
+                    // 3600 seconds TTL for each field
+                    redis::cmd("HEXPIRE")
+                        .arg("hm_lpe_key")
+                        .arg(3600u64)
+                        .arg("FIELDS")
+                        .arg(1u8)
+                        .arg(&field)
+                        .query_async::<()>(conn)
+                        .await?;
+                }
+                // Remove TTL of first field to ensure HPERSIST is parsed as well.
+                redis::cmd("HPERSIST")
+                    .arg("hm_lpe_key")
+                    .arg("FIELDS")
+                    .arg(1u8)
+                    .arg("f0")
+                    .query_async::<()>(conn)
+                    .await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let items = read_filtered_items(&rdb_path).await?;
+
+    assert_eq!(items.len(), 1, "expected exactly one HashRecord");
+
+    let Item::HashRecord {
+        key,
+        encoding,
+        pair_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected HashRecord");
+    };
+
+    assert_eq!(*key, RDBStr::Str(Bytes::from("hm_lpe_key")));
+    assert_eq!(*encoding, HashEncoding::ListPackEx);
+    assert_eq!(*pair_count as usize, PAIR_COUNT);
+
+    Ok(())
+}
+
 fn collect_items(bytes: &[u8]) -> AnyResult<Vec<Item>> {
     let mut parser = RDBFileParser::default();
     let mut buffer = Buffer::new(1024 * 1024 * 64);

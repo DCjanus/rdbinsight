@@ -1594,6 +1594,62 @@ async fn run_stream_listpack_test(version: &str, expect_encoding: StreamEncoding
     Ok(())
 }
 
+#[tokio::test]
+async fn hash_metadata_encoding_test() -> AnyResult<()> {
+    use bytes::Bytes;
+    use futures_util::FutureExt;
+
+    // Use Redis 8.0 which supports hash field TTLs (metadata encoding).
+    const PAIR_COUNT: usize = 600; // > default listpack entry threshold to force HT encoding.
+
+    let redis = RedisInstance::new("8.0").await?;
+
+    let rdb_path = redis
+        .generate_rdb("hash_metadata_encoding_test", |conn| {
+            async move {
+                // Seed a hash where each field has its own TTL so Redis will
+                // serialize it using HashMetadata encoding.
+                let mut pipe = redis::pipe();
+                for idx in 0..PAIR_COUNT {
+                    pipe.cmd("HSETEX")
+                        .arg("hm_meta_key")
+                        .arg("EX")
+                        .arg(3600) // 1-hour TTL for all fields
+                        .arg("FIELDS")
+                        .arg(1)
+                        .arg(format!("f{}", idx))
+                        .arg(format!("v{}", idx))
+                        .ignore();
+                }
+                pipe.query_async::<()>(&mut *conn).await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    // Parse items from the generated RDB.
+    let items = read_filtered_items(&rdb_path).await?;
+
+    // Expect exactly one HashRecord encoded as Metadata.
+    assert_eq!(items.len(), 1, "expected exactly one HashRecord");
+    let Item::HashRecord {
+        key,
+        encoding,
+        pair_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected HashRecord");
+    };
+
+    assert_eq!(*key, RDBStr::Str(Bytes::from("hm_meta_key")));
+    assert_eq!(*pair_count as usize, PAIR_COUNT);
+    assert_eq!(*encoding, HashEncoding::Metadata);
+
+    Ok(())
+}
+
 fn collect_items(bytes: &[u8]) -> AnyResult<Vec<Item>> {
     let mut parser = RDBFileParser::default();
     let mut buffer = Buffer::new(1024 * 1024 * 64);

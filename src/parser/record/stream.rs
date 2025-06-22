@@ -11,7 +11,7 @@ use crate::{
         record::string::StringEncodingParser,
         state::{
             combinators::{
-                ReduceParser, Seq2Parser, Seq4Parser, Seq5Parser, SkipBytesParser, VarIntParser,
+                RDBLenParser, ReduceParser, Seq2Parser, Seq4Parser, Seq5Parser, SkipBytesParser,
             },
             traits::{InitializableParser, StateParser},
         },
@@ -23,7 +23,7 @@ pub struct StreamListPackRecordParser<const ENC: StreamEncoding> {
     started: u64,
     entrust: Seq4Parser<
         ListPackEntriesParser,
-        VarIntParser,
+        RDBLenParser,
         StreamMetaParser<ENC>,
         StreamGroupsParser<ENC>,
     >,
@@ -34,7 +34,7 @@ impl<const ENC: StreamEncoding> InitializableParser for StreamListPackRecordPars
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, entrust) = <Seq4Parser<
             ListPackEntriesParser,
-            VarIntParser,
+            RDBLenParser,
             StreamMetaParser<ENC>,
             StreamGroupsParser<ENC>,
         > as InitializableParser>::init(buffer, input)?;
@@ -64,7 +64,7 @@ impl<const ENC: StreamEncoding> StateParser for StreamListPackRecordParser<ENC> 
 }
 
 struct EntriesReadParser<const ENC: StreamEncoding> {
-    inner: Option<VarIntParser>,
+    inner: Option<RDBLenParser>,
 }
 
 impl<const ENC: StreamEncoding> InitializableParser for EntriesReadParser<ENC> {
@@ -73,7 +73,7 @@ impl<const ENC: StreamEncoding> InitializableParser for EntriesReadParser<ENC> {
         match ENC {
             StreamEncoding::ListPacks => Ok((input, Self { inner: None })),
             StreamEncoding::ListPacks2 | StreamEncoding::ListPacks3 => {
-                let (input, parser) = VarIntParser::init(buf, input)?;
+                let (input, parser) = RDBLenParser::init(buf, input)?;
                 Ok((input, Self {
                     inner: Some(parser),
                 }))
@@ -122,7 +122,7 @@ impl StateParser for StreamConsumersParser {
 
 type StreamGroupParser<const ENC: StreamEncoding> = Seq5Parser<
     StringEncodingParser,
-    Seq2Parser<VarIntParser, VarIntParser>,
+    Seq2Parser<RDBLenParser, RDBLenParser>,
     EntriesReadParser<ENC>,
     StreamPELParser<true>,
     StreamConsumersParser,
@@ -223,7 +223,7 @@ impl StateParser for ListPackEntriesParser {
 }
 
 struct StreamMetaParser<const ENC: StreamEncoding> {
-    entrust: ReduceParser<VarIntParser, ()>,
+    entrust: ReduceParser<RDBLenParser, ()>,
 }
 
 impl<const ENC: StreamEncoding> InitializableParser for StreamMetaParser<ENC> {
@@ -233,7 +233,7 @@ impl<const ENC: StreamEncoding> InitializableParser for StreamMetaParser<ENC> {
             StreamEncoding::ListPacks2 => 7, /* last_id + first_id + max_deleted_id (each 2 varints) */
             StreamEncoding::ListPacks3 => 7, // v2 meta + entries_added
         };
-        let entrust: ReduceParser<VarIntParser, ()> = ReduceParser::new(remain, (), |_, _| ());
+        let entrust: ReduceParser<RDBLenParser, ()> = ReduceParser::new(remain, (), |_, _| ());
         Ok((input, Self { entrust }))
     }
 }

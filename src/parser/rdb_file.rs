@@ -13,8 +13,8 @@ use crate::{
         record::{
             function::Function2RecordParser,
             hash::{
-                HashListPackRecordParser, HashRecordParser, HashZipListRecordParser,
-                HashZipMapRecordParser,
+                HashListPackRecordParser, HashMetadataRecordParser, HashRecordParser,
+                HashZipListRecordParser, HashZipMapRecordParser,
             },
             list::{
                 ListQuickList2RecordParser, ListQuickListRecordParser, ListRecordParser,
@@ -57,6 +57,7 @@ enum ItemParser {
     Module2Record(Module2RecordParser),
     ModuleAuxRecord(ModuleAuxParser),
     Function2Record(Function2RecordParser),
+    HashMetadataRecord(HashMetadataRecordParser),
 }
 
 #[delegate_impl]
@@ -325,6 +326,12 @@ impl RDBFileParser {
                     let item = self.set_entrust(entrust, buffer)?;
                     Ok(Some(item))
                 }
+                RDBType::HashMetadata => {
+                    let (input, entrust) = HashMetadataRecordParser::init(buffer, input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    Ok(Some(item))
+                }
                 RDBType::StreamListPacks => {
                     let (input, entrust) = StreamListPackRecordParser::<
                         { StreamEncoding::ListPacks },
@@ -351,7 +358,6 @@ impl RDBFileParser {
                 }
                 RDBType::HashMetadataPreGA => bail!("unsupported type: HashMetadataPreGA"),
                 RDBType::HashListPackExPreGA => bail!("unsupported type: HashListPackExPreGA"),
-                RDBType::HashMetadata => todo!("unsupported type: HashMetadata"),
                 RDBType::HashListPackEx => todo!("unsupported type: HashListPackEx"),
                 RDBType::ZSetZipList => {
                     let (input, entrust) = ZSetZipListRecordParser::init(buffer, input)?;

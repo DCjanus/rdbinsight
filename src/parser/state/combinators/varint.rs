@@ -9,9 +9,9 @@ use crate::{
     },
 };
 
-pub struct VarIntParser;
+pub struct RDBLenParser;
 
-impl StateParser for VarIntParser {
+impl StateParser for RDBLenParser {
     type Output = RDBLen;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -21,7 +21,7 @@ impl StateParser for VarIntParser {
     }
 }
 
-impl InitializableParser for VarIntParser {
+impl InitializableParser for RDBLenParser {
     fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         Ok((input, Self))
     }

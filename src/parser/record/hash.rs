@@ -6,7 +6,7 @@ use crate::{
         StringEncoding,
         core::{
             buffer::{Buffer, skip_bytes},
-            combinators::{read_be_u32, read_u8},
+            combinators::{read_be_u32, read_le_u64, read_u8},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
         },
         model::{HashEncoding, Item},
@@ -14,7 +14,7 @@ use crate::{
             list::ZipListLengthParser, set::ListPackLengthParser, string::StringEncodingParser,
         },
         state::{
-            combinators::{RDBStrBox, ReduceParser},
+            combinators::{RDBLenParser, RDBStrBox, ReduceParser, Seq3Parser},
             traits::{InitializableParser, StateParser},
         },
     },
@@ -176,7 +176,6 @@ impl StateParser for HashZipMapRecordParser {
     }
 }
 
-// TODO: replace with ReduceParser but in condition
 struct ZipMapPairCountParser {
     entrust: Option<IsEndZipMapPairParser>,
     member_count: u64,
@@ -211,7 +210,6 @@ impl StateParser for ZipMapPairCountParser {
     }
 }
 
-// TODO: replace with SeqParser
 enum IsEndZipMapPairParser {
     ReadingKey { remain: u64 },
     ReadingValue { remain: u64 },
@@ -271,3 +269,46 @@ impl StateParser for IsEndZipMapPairParser {
         }
     }
 }
+
+pub struct HashMetadataRecordParser {
+    started: u64,
+    key: RDBStr,
+    entrust: ReduceParser<HashMetadataFieldParser, u64>,
+}
+
+impl InitializableParser for HashMetadataRecordParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        let (input, key) = read_rdb_str(input).context("read key")?;
+        let (input, _min_expire) = read_le_u64(input).context("read minExpire")?;
+        let (input, pair_len) = read_rdb_len(input).context("read field-value pair count")?;
+        let pair_total = pair_len
+            .as_u64()
+            .context("hash pair count should be a number")?;
+
+        let entrust =
+            ReduceParser::<HashMetadataFieldParser, u64>::new(pair_total, 0, |acc, _| acc + 1);
+
+        Ok((input, Self {
+            started: buffer.tell(),
+            key,
+            entrust,
+        }))
+    }
+}
+
+impl StateParser for HashMetadataRecordParser {
+    type Output = Item;
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        let pair_count = self.entrust.call(buffer)?;
+
+        Ok(Item::HashRecord {
+            key: self.key.clone(),
+            rdb_size: buffer.tell() - self.started,
+            encoding: HashEncoding::Metadata,
+            pair_count,
+        })
+    }
+}
+
+type HashMetadataFieldParser = Seq3Parser<RDBLenParser, StringEncodingParser, StringEncodingParser>;

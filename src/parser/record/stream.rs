@@ -11,7 +11,7 @@ use crate::{
         record::string::StringEncodingParser,
         state::{
             combinators::{
-                RDBLenParser, ReduceParser, Seq2Parser, Seq4Parser, Seq5Parser, SkipBytesParser,
+                RDBLenParser, ReduceParser, Seq2Parser, Seq3Parser, Seq4Parser, Seq5Parser,
             },
             traits::{InitializableParser, StateParser},
         },
@@ -94,24 +94,24 @@ impl<const ENC: StreamEncoding> StateParser for EntriesReadParser<ENC> {
     }
 }
 
-struct StreamConsumersParser {
-    entrust: ReduceParser<StreamConsumerParser, ()>,
+struct StreamConsumersParser<const ENC: StreamEncoding> {
+    entrust: ReduceParser<StreamConsumerParser<ENC>, ()>,
 }
 
-impl InitializableParser for StreamConsumersParser {
+impl<const ENC: StreamEncoding> InitializableParser for StreamConsumersParser<ENC> {
     fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         // Read the consumer count first.
         let (input, count) = read_rdb_len(input)?;
         let count = count.as_u64().context("consumer count should be numeric")?;
 
-        let entrust: ReduceParser<StreamConsumerParser, ()> =
+        let entrust: ReduceParser<StreamConsumerParser<ENC>, ()> =
             ReduceParser::new(count, (), |_, _| ());
 
         Ok((input, Self { entrust }))
     }
 }
 
-impl StateParser for StreamConsumersParser {
+impl<const ENC: StreamEncoding> StateParser for StreamConsumersParser<ENC> {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -125,15 +125,36 @@ type StreamGroupParser<const ENC: StreamEncoding> = Seq5Parser<
     Seq2Parser<RDBLenParser, RDBLenParser>,
     EntriesReadParser<ENC>,
     StreamPELParser<true>,
-    StreamConsumersParser,
+    StreamConsumersParser<ENC>,
 >;
 
-type StreamConsumerParser = Seq4Parser<
-    StringEncodingParser,
-    SkipBytesParser<8>,
-    SkipBytesParser<8>,
-    StreamPELParser<false>,
->;
+// helper parser that skips seen_time(8 bytes) and optionally active_time(8 bytes)
+struct ConsumerTimeParser<const ENC: StreamEncoding> {
+    remain: u64,
+}
+
+impl<const ENC: StreamEncoding> InitializableParser for ConsumerTimeParser<ENC> {
+    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        Ok((input, Self {
+            remain: match ENC {
+                StreamEncoding::ListPacks3 => 16, // seen_time + active_time
+                StreamEncoding::ListPacks | StreamEncoding::ListPacks2 => 8, // only seen_time
+            },
+        }))
+    }
+}
+
+impl<const ENC: StreamEncoding> StateParser for ConsumerTimeParser<ENC> {
+    type Output = ();
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        skip_bytes(buffer, &mut self.remain)?;
+        Ok(())
+    }
+}
+
+type StreamConsumerParser<const ENC: StreamEncoding> =
+    Seq3Parser<StringEncodingParser, ConsumerTimeParser<ENC>, StreamPELParser<false>>;
 
 struct StreamPELParser<const WITH_NACK: bool> {
     entrust: ReduceParser<PELEntryParser<WITH_NACK>, ()>,
@@ -167,16 +188,13 @@ struct PELEntryParser<const WITH_NACK: bool> {
 
 impl<const WITH_NACK: bool> InitializableParser for PELEntryParser<WITH_NACK> {
     fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, entry_count) = read_rdb_len(input)?;
-        let entry_count = entry_count
-            .as_u64()
-            .context("PEL length should be numeric")?;
-
-        let remain = entry_count * 16 + if WITH_NACK { 8 } else { 0 };
+        // Each PEL entry is represented individually by StreamPELParser, so here we only
+        // need to consume the bytes of **one** entry (id + optional nack fields).
+        let remain = 16 + if WITH_NACK { 8 } else { 0 }; // id + delivery_time
 
         Ok((input, Self {
             remain,
-            need_read_varint: WITH_NACK,
+            need_read_varint: WITH_NACK, // delivery_count (varint) when WITH_NACK
         }))
     }
 }

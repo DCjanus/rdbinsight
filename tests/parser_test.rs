@@ -1566,8 +1566,24 @@ async fn run_stream_listpack_test(version: &str, expect_encoding: StreamEncoding
                 async move {
                     seed_stream(conn, "mystream", MESSAGE_COUNT).await?;
 
-                    create_stream_groups(conn, "mystream", &["cg_alpha", "cg_beta", "cg_gamma"])
-                        .await?;
+                    let groups = ["cg_alpha", "cg_beta", "cg_gamma"];
+                    create_stream_groups(conn, "mystream", &groups).await?;
+
+                    for (idx, group) in groups.iter().enumerate() {
+                        let consumer = format!("c{}", idx + 1);
+                        let _: redis::Value = redis::cmd("XREADGROUP")
+                            .arg("GROUP")
+                            .arg(*group)
+                            .arg(&consumer)
+                            .arg("COUNT")
+                            .arg(10)
+                            .arg("STREAMS")
+                            .arg("mystream")
+                            .arg(">")
+                            .query_async(conn)
+                            .await?;
+                    }
+
                     Ok(())
                 }
                 .boxed()
@@ -1652,20 +1668,14 @@ async fn hash_metadata_encoding_test() -> AnyResult<()> {
 
 #[tokio::test]
 async fn hash_listpack_ex_encoding_test() -> AnyResult<()> {
-    // Number of field/value pairs to create in the hash.
     const PAIR_COUNT: usize = 40;
-
-    // Spin up a Redis 8.0 container (>=7.4 with HEXPIRE support)
     let redis = RedisInstance::new("8.0").await?;
 
-    // Seed data and generate RDB file via helper.
     let rdb_path = redis
         .generate_rdb("hash_listpack_ex_encoding_test", |conn| {
             async move {
-                // Insert the hash pairs first.
                 seed_hash(conn, "hm_lpe_key", PAIR_COUNT).await?;
 
-                // Apply per-field TTLs using HEXPIRE (1 hour) and then persist one field
                 for idx in 0..PAIR_COUNT {
                     let field = format!("f{}", idx);
                     // 3600 seconds TTL for each field

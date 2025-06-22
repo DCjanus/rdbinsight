@@ -51,7 +51,7 @@ where P: StateParser + InitializableParser
 }
 
 // === Macro helpers =========================================================
-/// 定义顺序解析器 (`Seq{N}Parser`) 的生成宏。
+/// Defines the generator macro for sequential parsers (`Seq{N}Parser`).
 macro_rules! seq_parser {
     (
         $name:ident,
@@ -83,12 +83,12 @@ macro_rules! seq_parser {
     };
 }
 
-// 公共导出：生成 Seq2~Seq5 解析器。
 seq_parser!(Seq2Parser, P1:0, P2:1);
 seq_parser!(Seq3Parser, P1:0, P2:1, P3:2);
 seq_parser!(Seq4Parser, P1:0, P2:1, P3:2, P4:3);
 seq_parser!(Seq5Parser, P1:0, P2:1, P3:2, P4:3, P5:4);
-
+seq_parser!(Seq6Parser, P1:0, P2:1, P3:2, P4:3, P5:4, P6:5);
+seq_parser!(Seq7Parser, P1:0, P2:1, P3:2, P4:3, P5:4, P6:5, P7:6);
 // ============================ Tests ========================================
 #[cfg(test)]
 mod tests {

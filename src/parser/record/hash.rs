@@ -101,8 +101,6 @@ impl StateParser for HashZipListRecordParser {
     }
 }
 
-// ------------------------ ListPack Encoding (id = 16) ------------------------
-
 pub struct HashListPackRecordParser {
     started: u64,
     key: RDBStr,

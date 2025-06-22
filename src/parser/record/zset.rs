@@ -13,7 +13,7 @@ use crate::{
             list::ZipListLengthParser, set::ListPackLengthParser, string::StringEncodingParser,
         },
         state::{
-            combinators::{RDBStrBox, ReduceParser},
+            combinators::{RDBStrBox, ReduceParser, Seq2Parser, skip_bytes::SkipBytesParser},
             traits::{InitializableParser, StateParser},
         },
     },
@@ -143,8 +143,6 @@ impl StateParser for ZSetListPackRecordParser {
     }
 }
 
-// ZSet2 (double score) parsers
-
 pub struct ZSet2RecordParser {
     started: u64,
     key: RDBStr,
@@ -162,7 +160,7 @@ impl InitializableParser for ZSet2RecordParser {
         crate::parser_trace!("zset2.skiplist");
 
         let entrust: ReduceParser<ZSet2SkipListEntryParser, u64> =
-            ReduceParser::new(member_count, 0, |acc, _: ()| acc + 1);
+            ReduceParser::new(member_count, 0, |acc, _: _| acc + 1);
 
         Ok((input, Self {
             started: buffer.tell(),
@@ -187,33 +185,4 @@ impl StateParser for ZSet2RecordParser {
     }
 }
 
-enum ZSet2SkipListEntryParser {
-    Member(StringEncodingParser),
-    Score { to_skip: u64 },
-}
-
-impl InitializableParser for ZSet2SkipListEntryParser {
-    fn init<'a>(buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, member_parser) = StringEncodingParser::init(buf, input)?;
-        Ok((input, Self::Member(member_parser)))
-    }
-}
-
-impl StateParser for ZSet2SkipListEntryParser {
-    type Output = ();
-
-    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-        loop {
-            match self {
-                Self::Member(parser) => {
-                    let _ = parser.call(buffer)?;
-                    *self = Self::Score { to_skip: 8 };
-                }
-                Self::Score { to_skip } => {
-                    crate::parser::core::buffer::skip_bytes(buffer, to_skip)?;
-                    return Ok(());
-                }
-            }
-        }
-    }
-}
+type ZSet2SkipListEntryParser = Seq2Parser<StringEncodingParser, SkipBytesParser<8>>;

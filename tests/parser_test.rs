@@ -1565,9 +1565,9 @@ async fn run_stream_listpack_test(version: &str, expect_encoding: StreamEncoding
             |conn| {
                 async move {
                     seed_stream(conn, "mystream", MESSAGE_COUNT).await?;
-                    // TODO: test with consumer groups
-                    // create_stream_groups(conn, "mystream", &["cg_alpha", "cg_beta", "cg_gamma"])
-                    //     .await?;
+
+                    create_stream_groups(conn, "mystream", &["cg_alpha", "cg_beta", "cg_gamma"])
+                        .await?;
                     Ok(())
                 }
                 .boxed()

@@ -29,7 +29,7 @@ where P: StateParser + InitializableParser
         loop {
             match self {
                 Self::Init => {
-                    let (input, p) = P::init(buffer, buffer.as_ref())?;
+                    let (input, p) = P::init(buffer, buffer.as_slice())?;
                     buffer.consume_to(input.as_ptr());
                     *self = Self::Call(p);
                 }
@@ -106,7 +106,7 @@ mod tests {
         type Output = u8;
 
         fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-            let input = buffer.as_ref();
+            let input = buffer.as_slice();
             if input.is_empty() {
                 return Err(NeedMoreData.into());
             }
@@ -130,7 +130,7 @@ mod tests {
         type Output = u16;
 
         fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
-            let input = buffer.as_ref();
+            let input = buffer.as_slice();
             if input.len() < 2 {
                 return Err(NeedMoreData.into());
             }
@@ -154,7 +154,7 @@ mod tests {
         let (input, mut parser) =
             <Seq2Parser<ByteParser, U16LeParser> as InitializableParser>::init(
                 &buffer,
-                buffer.as_ref(),
+                buffer.as_slice(),
             )?;
         buffer.consume_to(input.as_ptr());
 
@@ -173,7 +173,7 @@ mod tests {
         let (input, mut parser) =
             <Seq2Parser<ByteParser, U16LeParser> as InitializableParser>::init(
                 &buffer,
-                buffer.as_ref(),
+                buffer.as_slice(),
             )?;
         buffer.consume_to(input.as_ptr());
 

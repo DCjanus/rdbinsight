@@ -164,7 +164,7 @@ impl StateParser for ListPackLengthParser {
                 self.counted += 1;
             }
 
-            let (input, parser) = IsEndListPackEntryParser::init(buffer.tell(), buffer.as_ref())?;
+            let (input, parser) = IsEndListPackEntryParser::init(buffer.tell(), buffer.as_slice())?;
             buffer.consume_to(input.as_ptr());
             self.entrust = Some(parser);
         }
@@ -275,7 +275,7 @@ impl StateParser for IsEndListPackEntryParser {
             to_skip += 1;
         }
 
-        let (input, _) = read_exact(buffer.as_ref(), to_skip)?;
+        let (input, _) = read_exact(buffer.as_slice(), to_skip)?;
         buffer.consume_to(input.as_ptr());
 
         Ok(self.is_eol)

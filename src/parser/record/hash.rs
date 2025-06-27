@@ -243,7 +243,7 @@ impl StateParser for ZipMapPairCountParser {
                 self.entrust = None;
             }
 
-            let (input, entrust) = IsEndZipMapPairParser::init(buffer, buffer.as_ref())?;
+            let (input, entrust) = IsEndZipMapPairParser::init(buffer, buffer.as_slice())?;
             buffer.consume_to(input.as_ptr());
             self.entrust = Some(entrust);
         }
@@ -288,7 +288,7 @@ impl StateParser for IsEndZipMapPairParser {
                 IsEndZipMapPairParser::ReadingKey { remain } => {
                     skip_bytes(buffer, remain)?;
 
-                    let input = buffer.as_ref();
+                    let input = buffer.as_slice();
                     let (input, value_size) = read_zipmap_size(input)?;
                     let value_size = value_size.ok_or_else(|| anyhow!("value size not found"))?;
 

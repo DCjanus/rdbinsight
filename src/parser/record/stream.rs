@@ -205,7 +205,7 @@ impl<const WITH_NACK: bool> StateParser for PELEntryParser<WITH_NACK> {
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
         skip_bytes(buffer, &mut self.remain)?;
         if self.need_read_varint {
-            let (input, _) = read_rdb_len(buffer.as_ref())?;
+            let (input, _) = read_rdb_len(buffer.as_slice())?;
             buffer.consume_to(input.as_ptr());
             self.need_read_varint = false;
         }

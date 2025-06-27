@@ -5,19 +5,25 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.98"
-async-trait = "0.1.88"
+async_async_io = "0.2.3"
 bytes = "1.10.1"
 futures-util = "0.3.31"
 lzf = "1.0.0"
+memchr = "2.7.5"
 num_enum = "0.7.3"
+redis-protocol = { version = "6.0.0", features = ["codec"] }
 serde = { version = "1.0.219", features = ["derive"] }
 spire_enum = "0.6.0"
 thiserror = "2.0.12"
 tokio = { version = "1.45.1", features = ["full"] }
+tokio-util = { version = "0.7.15", features = ["time"] }
 tracing = "0.1.41"
 
 [dev-dependencies]
 redis = { version = "0.32.0", features = ["tokio-comp"] }
 testcontainers = "0.24.0"
 toml = "0.8.23"
-tracing-subscriber = "0.3.19"
+tracing-subscriber = { version = "0.3.19", features = [
+    "local-time",
+    "env-filter",
+] }

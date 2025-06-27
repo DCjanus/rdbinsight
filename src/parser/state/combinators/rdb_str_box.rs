@@ -121,7 +121,7 @@ where P: InitializableParser + StateParser
         out_buffer: &mut Buffer,
         entrust: &mut Option<P>,
     ) -> AnyResult<<P as StateParser>::Output> {
-        let input = out_buffer.as_ref();
+        let input = out_buffer.as_slice();
 
         if entrust.is_none() {
             let (input, parser) = P::init(out_buffer, input)?;

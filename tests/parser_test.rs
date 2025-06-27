@@ -2,20 +2,23 @@
 //! to ensure the tracing subscriber remains active within the single thread that executes the parser.
 //! This avoids missing events when tasks hop between worker threads in Tokio's multi-thread runtime.
 
+// TODO: The current test setup generates RDB files by first writing them to disk and then
+// reading them back. This should be refactored to stream the RDB directly from Redis using the
+// `StandaloneSource` from `src/source/redis_standalone.rs`. Note that Redis may introduce a
+// `repl-diskless-sync-delay` which should be set to 0 in tests to avoid slowdowns.
+
 use std::{
     path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, bail, ensure};
+use anyhow::Context;
 use bytes::Bytes;
 use futures_util::FutureExt;
 use rdbinsight::{
     helper::AnyResult,
     parser::{
-        RDBFileParser,
-        core::{buffer::Buffer, raw::RDBStr},
-        error::NeedMoreData,
+        core::raw::RDBStr,
         model::{
             HashEncoding, Item, ListEncoding, SetEncoding, StreamEncoding, StringEncoding,
             ZSetEncoding,
@@ -25,11 +28,17 @@ use rdbinsight::{
 
 mod common;
 
-use common::{RedisInstance, config_set_many, seed_hash, seed_zset, trace};
+use common::{
+    config_set_many, seed_hash, seed_zset,
+    setup::{RedisConfig, RedisVariant},
+    trace, utils,
+};
 
 #[tokio::test]
 async fn empty_rdb_test() -> AnyResult<()> {
-    let redis_instance = RedisInstance::new("8.0")
+    let redis_instance = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
         .await
         .context("create redis instance")?;
 
@@ -38,8 +47,8 @@ async fn empty_rdb_test() -> AnyResult<()> {
         .await
         .context("generate rdb file")?;
 
-    let rdb_data = tokio::fs::read(&rdb_path).await.context("read rdb file")?;
-    let items = collect_items(&rdb_data)?;
+    let file = tokio::fs::File::open(&rdb_path).await?;
+    let items = utils::collect_items(file).await?;
     assert_eq!(items.len(), 5);
     assert!(items.iter().all(|item| matches!(item, Item::Aux { .. })));
 
@@ -48,7 +57,10 @@ async fn empty_rdb_test() -> AnyResult<()> {
 
 #[tokio::test]
 async fn string_raw_encoding_test() -> AnyResult<()> {
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("string_raw_encoding_test", |conn| {
@@ -78,7 +90,10 @@ async fn string_raw_encoding_test() -> AnyResult<()> {
 
 #[tokio::test]
 async fn string_int_encoding_test() -> AnyResult<()> {
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("string_int_encoding_test", |conn| {
@@ -108,7 +123,10 @@ async fn string_int_encoding_test() -> AnyResult<()> {
 
 #[tokio::test]
 async fn string_lzf_encoding_test() -> AnyResult<()> {
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let long_text = "a".repeat(10_000);
 
@@ -141,7 +159,10 @@ async fn string_lzf_encoding_test() -> AnyResult<()> {
 #[tokio::test]
 async fn list_raw_encoding_test() -> AnyResult<()> {
     // Redis 2.8 still produces the legacy LIST encoding (type id = 1)
-    let redis = RedisInstance::new("2.8").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_8)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("list_raw_encoding_test", |conn| {
@@ -174,7 +195,10 @@ async fn list_raw_encoding_test() -> AnyResult<()> {
 #[tokio::test]
 async fn list_ziplist_encoding_test() -> AnyResult<()> {
     // Redis 2.8 encodes small lists as ziplist (RDB type id = 10)
-    let redis = RedisInstance::new("2.8").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_8)
+        .build()
+        .await?;
 
     // Seed a small list (300 elements) which will stay within ziplist thresholds
     let rdb_path = redis
@@ -209,7 +233,10 @@ async fn list_ziplist_encoding_test() -> AnyResult<()> {
 #[tokio::test]
 async fn list_ziplist_scan_path_test() -> AnyResult<()> {
     // Redis 2.8 + tweaked ziplist thresholds to trigger zllen == 0xFFFF
-    let redis = RedisInstance::new("2.8").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_8)
+        .build()
+        .await?;
 
     const ELEMENT_COUNT: usize = 66_000; // > 65_534 so Redis writes 0xFFFF
 
@@ -252,7 +279,10 @@ async fn list_ziplist_scan_path_test() -> AnyResult<()> {
 
 #[tokio::test]
 async fn list_quicklist_encoding_test() -> AnyResult<()> {
-    let redis = RedisInstance::new("6.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis6_0)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("list_quicklist_encoding_test", |conn| {
@@ -283,7 +313,10 @@ async fn list_quicklist_encoding_test() -> AnyResult<()> {
 async fn list_quicklist_lzf_compressed_test() -> AnyResult<()> {
     const ELEMENTS: usize = 4000;
 
-    let redis = RedisInstance::new("6.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis6_0)
+        .build()
+        .await?;
     let guard = trace::capture();
 
     let rdb_path = redis
@@ -327,7 +360,10 @@ async fn set_raw_encoding_test() -> AnyResult<()> {
     // Redis 2.8 encodes large integer sets as raw hash table (type id = 2)
     const MEMBER_COUNT: usize = 3_000;
 
-    let redis = RedisInstance::new("2.8").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_8)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("set_raw_encoding_test", |conn| {
@@ -361,7 +397,10 @@ async fn set_intset_encoding_test() -> AnyResult<()> {
     // Redis 2.8 encodes small integer-only sets as intset (type id = 11)
     const MEMBER_COUNT: usize = 50;
 
-    let redis = RedisInstance::new("2.8").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_8)
+        .build()
+        .await?;
     let guard = trace::capture();
 
     let rdb_path = redis
@@ -400,7 +439,10 @@ async fn set_intset_encoding_test() -> AnyResult<()> {
 async fn set_listpack_encoding_test() -> AnyResult<()> {
     const MEMBER_COUNT: usize = 30;
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("set_listpack_encoding_test", |conn| {
@@ -440,7 +482,10 @@ async fn set_listpack_encoding_test() -> AnyResult<()> {
 async fn set_listpack_scan_path_test() -> AnyResult<()> {
     const MEMBER_COUNT: usize = 66_000; // > 65_534 so Redis writes 0xFFFF
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("set_listpack_scan_path_test", |conn| {
@@ -493,7 +538,10 @@ async fn set_listpack_scan_path_test() -> AnyResult<()> {
 async fn list_quicklist2_encoding_test() -> AnyResult<()> {
     const MEMBER_COUNT: usize = 2000;
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("list_quicklist2_encoding_test", |conn| {
@@ -526,7 +574,10 @@ async fn list_quicklist2_encoding_test() -> AnyResult<()> {
 #[tokio::test(flavor = "current_thread")]
 async fn list_quicklist2_plain_node_test() -> AnyResult<()> {
     // Plain node is produced when an element exceeds list-max-listpack-size (8 KiB by default).
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
     let guard = trace::capture();
 
     const LARGE_TEXT_SIZE: usize = 10_000; // > 8 KiB
@@ -585,7 +636,10 @@ async fn list_quicklist2_listpack_raw_node_test() -> AnyResult<()> {
     // Disable RDB compression to force raw listpack serialization for each node.
     const ELEMENTS: usize = 2000;
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
     let guard = trace::capture();
 
     let rdb_path = redis
@@ -637,7 +691,10 @@ async fn list_quicklist2_listpack_lzf_node_test() -> AnyResult<()> {
     // With rdbcompression=yes (default) and many elements, Redis will LZF-compress each listpack node.
     const ELEMENTS: usize = 8000;
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
     let guard = trace::capture();
 
     let rdb_path = redis
@@ -687,7 +744,10 @@ async fn list_quicklist2_listpack_lzf_node_test() -> AnyResult<()> {
 async fn list_quicklist_ziplist_raw_node_test() -> AnyResult<()> {
     const ELEMENTS: usize = 4000;
 
-    let redis = RedisInstance::new("6.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis6_0)
+        .build()
+        .await?;
     let guard = trace::capture();
 
     let rdb_path = redis
@@ -728,7 +788,10 @@ async fn list_quicklist_ziplist_raw_node_test() -> AnyResult<()> {
 
 #[tokio::test]
 async fn set_listpack_large_string_variants_test() -> AnyResult<()> {
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
     const MEMBER_COUNT: usize = 66_000; // > 65 534 triggers 0xFFFF
 
     // > 4095 bytes → 32-bit header
@@ -794,7 +857,10 @@ async fn set_listpack_integer_variants_test() -> AnyResult<()> {
         "9223372036854775807", // 64-bit signed int (flag 0xF4)
     ];
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("set_listpack_integer_variants_test", |conn| {
@@ -853,7 +919,10 @@ async fn zset_skiplist_encoding_test() -> AnyResult<()> {
     // Insert >128 members so Redis 2.8 stores ZSET as raw skiplist (type id 3).
     const MEMBER_COUNT: usize = 300;
 
-    let redis = RedisInstance::new("2.8").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_8)
+        .build()
+        .await?;
     let guard = trace::capture();
 
     let rdb_path = redis
@@ -892,7 +961,10 @@ async fn zset_ziplist_encoding_test() -> AnyResult<()> {
     // Insert <128 members so Redis 2.8 stores ZSET as ziplist (type id 12).
     const MEMBER_COUNT: usize = 50;
 
-    let redis = RedisInstance::new("2.8").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_8)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("zset_ziplist_encoding_test", |conn| {
@@ -925,7 +997,10 @@ async fn zset2_skiplist_encoding_test() -> AnyResult<()> {
     // Insert >128 members so modern Redis stores ZSET as ZSet2 skiplist (type id = 5).
     const MEMBER_COUNT: usize = 300;
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
     let guard = trace::capture();
 
     let rdb_path = redis
@@ -964,7 +1039,10 @@ async fn hash_raw_encoding_test() -> AnyResult<()> {
     // Redis 2.8 writes large hashes using raw hash table (type id = 4)
     const PAIR_COUNT: usize = 600; // > hash-max-ziplist-entries (512)
 
-    let redis = RedisInstance::new("2.8").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_8)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("hash_raw_encoding_test", |conn| {
@@ -997,7 +1075,10 @@ async fn hash_ziplist_encoding_test() -> AnyResult<()> {
     // Redis 2.8 stores small hashes (≤512 fields) as ziplist (type id = 13)
     const PAIR_COUNT: usize = 50;
 
-    let redis = RedisInstance::new("2.8").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_8)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("hash_ziplist_encoding_test", |conn| {
@@ -1029,7 +1110,10 @@ async fn hash_ziplist_encoding_test() -> AnyResult<()> {
 async fn hash_listpack_encoding_test() -> AnyResult<()> {
     const FIELD_COUNT: usize = 40;
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("hash_listpack_encoding_test", |conn| {
@@ -1131,7 +1215,10 @@ async fn hash_zipmap_fixture_lzf_test() -> AnyResult<()> {
 #[tokio::test]
 async fn module2_encoding_test() -> AnyResult<()> {
     // Use redis-stack image that ships with official modules; encoding will be Module2 (type id = 7).
-    let redis = RedisInstance::new_stack("latest").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::StackLatest)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("module2_encoding_test", |conn| {
@@ -1164,7 +1251,10 @@ async fn module2_encoding_test() -> AnyResult<()> {
 
 #[tokio::test]
 async fn expiry_time_ms_item_order_test() -> AnyResult<()> {
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let expected_expire_at = SystemTime::now()
         .checked_add(Duration::from_secs(3600))
@@ -1220,7 +1310,10 @@ async fn expiry_time_ms_item_order_test() -> AnyResult<()> {
 
 #[tokio::test]
 async fn function2_encoding_test() -> AnyResult<()> {
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     const LUA_LIB: &str =
         "#!lua name=mylib\nredis.register_function('foo', function(keys, args) return 42 end)";
@@ -1262,7 +1355,10 @@ async fn idle_opcode_test() -> AnyResult<()> {
 
     use futures_util::FutureExt;
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("idle_opcode_test", |conn| {
@@ -1316,7 +1412,10 @@ async fn freq_opcode_test() -> AnyResult<()> {
     use bytes::Bytes;
     use futures_util::FutureExt;
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("freq_opcode_test", |conn| {
@@ -1364,14 +1463,11 @@ async fn freq_opcode_test() -> AnyResult<()> {
 
 #[tokio::test]
 async fn slot_info_opcode_test() -> AnyResult<()> {
-    let redis = common::RedisInstance::new_with_cmd("8.0", [
-        "redis-server",
-        "--cluster-enabled",
-        "yes",
-        "--cluster-config-file",
-        "nodes.conf",
-    ])
-    .await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .with_cluster_enabled("nodes.conf")
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("slot_info_opcode_test", |conn| {
@@ -1438,7 +1534,10 @@ async fn zset_listpack_encoding_test() -> AnyResult<()> {
     // Insert <128 members so modern Redis stores ZSET as listpack (type id 17).
     const MEMBER_COUNT: usize = 50;
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
     let guard = trace::capture();
 
     let rdb_path = redis
@@ -1483,7 +1582,10 @@ async fn zset_listpack_lzf_encoding_test() -> AnyResult<()> {
     // Use near-threshold entry count and relatively long member names to trigger LZF compression.
     const MEMBER_COUNT: usize = 120; // keep <128 to stay in listpack encoding
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
     let guard = trace::capture();
 
     let rdb_path = redis
@@ -1557,7 +1659,15 @@ async fn run_stream_listpack_test(version: &str, expect_encoding: StreamEncoding
     use common::{create_stream_groups, seed_stream};
     const MESSAGE_COUNT: usize = 500;
 
-    let redis = RedisInstance::new(version).await?;
+    let redis = RedisConfig::default()
+        .with_version(match version {
+            "6.0" => RedisVariant::Redis6_0,
+            "7.0" => RedisVariant::Redis7_0,
+            "8.0" => RedisVariant::Redis8_0,
+            _ => unreachable!("unsupported Redis version: {}", version),
+        })
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb(
@@ -1618,7 +1728,10 @@ async fn hash_metadata_encoding_test() -> AnyResult<()> {
     // Use Redis 8.0 which supports hash field TTLs (metadata encoding).
     const PAIR_COUNT: usize = 600; // > default listpack entry threshold to force HT encoding.
 
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("hash_metadata_encoding_test", |conn| {
@@ -1669,7 +1782,10 @@ async fn hash_metadata_encoding_test() -> AnyResult<()> {
 #[tokio::test]
 async fn hash_listpack_ex_encoding_test() -> AnyResult<()> {
     const PAIR_COUNT: usize = 40;
-    let redis = RedisInstance::new("8.0").await?;
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_0)
+        .build()
+        .await?;
 
     let rdb_path = redis
         .generate_rdb("hash_listpack_ex_encoding_test", |conn| {
@@ -1723,64 +1839,9 @@ async fn hash_listpack_ex_encoding_test() -> AnyResult<()> {
     Ok(())
 }
 
-fn collect_items(bytes: &[u8]) -> AnyResult<Vec<Item>> {
-    let mut parser = RDBFileParser::default();
-    let mut buffer = Buffer::new(1024 * 1024 * 64);
-    let mut items = Vec::new();
-
-    let mut offset = 0usize;
-
-    loop {
-        match parser.poll_next(&mut buffer) {
-            Ok(Some(item)) => {
-                items.push(item);
-            }
-            Ok(None) => break,
-            Err(e) if e.is::<NeedMoreData>() && buffer.is_finished() => {
-                bail!(
-                    "buffer is finished but not all input bytes were consumed: {}/{} bytes remaining",
-                    buffer.len(),
-                    bytes.len()
-                );
-            }
-            Err(e) if e.is::<NeedMoreData>() => {
-                buffer.extend(&bytes[offset..offset + 1])?;
-                offset += 1;
-                if offset >= bytes.len() {
-                    buffer.set_finished();
-                }
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    let remaining = buffer.len();
-    ensure!(
-        remaining == 0,
-        "buffer has too much remaining data after parsing: {} bytes (expected at most 8 bytes for checksum)",
-        remaining
-    );
-
-    // 8 bytes for checksum
-    ensure!(
-        offset == bytes.len(),
-        "not all input bytes were consumed: {}/{} bytes remaining",
-        bytes.len() - offset,
-        bytes.len()
-    );
-
-    Ok(items)
-}
-
 async fn read_filtered_items<P>(path: P) -> AnyResult<Vec<Item>>
 where P: AsRef<Path> {
-    let bytes = tokio::fs::read(path.as_ref()).await?;
-    let items = collect_items(&bytes)?;
-    Ok(items
-        .into_iter()
-        .filter(|item| !matches!(item, Item::Aux { .. }))
-        .filter(|item| !matches!(item, Item::SelectDB { .. }))
-        .filter(|item| !matches!(item, Item::ResizeDB { .. }))
-        .filter(|item| !matches!(item, Item::ModuleAux { .. }))
-        .collect())
+    let file = tokio::fs::File::open(path.as_ref()).await?;
+    let items = utils::collect_items(file).await?;
+    Ok(utils::filter_items(items))
 }

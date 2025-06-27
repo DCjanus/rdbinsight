@@ -64,7 +64,7 @@ where
                     .expect("Accumulator should contain final value"));
             }
 
-            let (input, entrust) = P::init(buffer, buffer.as_ref())?;
+            let (input, entrust) = P::init(buffer, buffer.as_slice())?;
             buffer.consume_to(input.as_ptr());
             self.entrust = Some(entrust);
         }

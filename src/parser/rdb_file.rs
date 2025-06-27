@@ -77,7 +77,7 @@ pub struct RDBFileParser {
 
 impl RDBFileParser {
     fn read_header(&mut self, buffer: &mut Buffer) -> AnyResult<()> {
-        let input = buffer.as_ref();
+        let input = buffer.as_slice();
         let input = read_tag(input, b"REDIS").context("read magic number")?;
         let (input, version) = read_exact(input, 4)?;
         let version = std::str::from_utf8(version).context("version should be utf8")?;
@@ -117,7 +117,7 @@ impl RDBFileParser {
             self.read_header(buffer).context("read header")?;
         }
 
-        let input = buffer.as_ref();
+        let input = buffer.as_slice();
         let (input, flag) = read_u8(input).context("read item flag")?;
 
         // First interpret it as an opcode (aux fields, select-db, etc.).

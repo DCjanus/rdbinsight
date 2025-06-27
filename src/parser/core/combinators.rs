@@ -8,6 +8,14 @@ pub fn read_tag<'a>(input: &'a [u8], tag: &'static [u8]) -> AnyResult<&'a [u8]> 
     Ok(input)
 }
 
+pub fn read_while(input: &[u8], predicate: impl Fn(u8) -> bool) -> AnyResult<(&[u8], &[u8])> {
+    let mut i = 0;
+    while i < input.len() && predicate(input[i]) {
+        i += 1;
+    }
+    Ok((&input[i..], &input[..i]))
+}
+
 pub fn read_exact(input: &[u8], len: usize) -> AnyResult<(&[u8], &[u8])> {
     if input.len() < len {
         return Err(NeedMoreData.into());

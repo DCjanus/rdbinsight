@@ -18,7 +18,7 @@ pub struct LzfChunkDecoder {
 
 impl LzfChunkDecoder {
     pub fn feed(&mut self, i_buf: &mut Buffer, o_buf: &mut Buffer) -> AnyResult {
-        let input = i_buf.as_ref();
+        let input = i_buf.as_slice();
         let (input, action) = Self::read_action(input)?;
 
         ensure!(
@@ -115,7 +115,7 @@ mod tests {
                 .expect("decoding failed");
         }
         // Verify output matches original
-        assert_eq!(o_buf.as_ref(), original);
+        assert_eq!(o_buf.as_slice(), original);
     }
 
     #[test]
@@ -143,7 +143,7 @@ mod tests {
                 .feed(&mut i_buf, &mut o_buf)
                 .expect("decoding failed");
         }
-        assert_eq!(o_buf.as_ref(), original);
+        assert_eq!(o_buf.as_slice(), original);
     }
 
     #[test]
@@ -172,7 +172,7 @@ mod tests {
                 .feed(&mut i_buf, &mut o_buf)
                 .expect("decoding failed");
         }
-        assert_eq!(o_buf.as_ref(), original);
+        assert_eq!(o_buf.as_slice(), original);
     }
 
     #[test]

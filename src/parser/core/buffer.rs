@@ -1,5 +1,5 @@
 use anyhow::ensure;
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BytesMut};
 
 use crate::{
     helper::{AnyResult, wrapping_to_usize},
@@ -31,8 +31,7 @@ impl Buffer {
     }
 
     pub fn push_u8(&mut self, byte: u8) -> AnyResult {
-        ensure!(self.remain_capacity() >= 1, "buffer overflow");
-        self.buf.put_u8(byte);
+        self.extend(&[byte])?;
         Ok(())
     }
 
@@ -79,11 +78,13 @@ impl Buffer {
     pub fn set_finished(&mut self) {
         self.finished = true;
     }
-}
 
-impl AsRef<[u8]> for Buffer {
-    fn as_ref(&self) -> &[u8] {
+    pub fn as_slice(&self) -> &[u8] {
         self.buf.as_ref()
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        self.buf.truncate(len);
     }
 }
 
@@ -93,7 +94,7 @@ pub(crate) fn skip_bytes(buffer: &mut Buffer, remain: &mut u64) -> AnyResult<()>
         return Ok(());
     }
 
-    let input = buffer.as_ref();
+    let input = buffer.as_slice();
     let (input, _skipped) = read_at_most_but_at_least_one(input, wrapping_to_usize(*remain))?;
     *remain -= _skipped.len() as u64;
     buffer.consume_to(input.as_ptr());

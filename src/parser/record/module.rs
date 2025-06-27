@@ -61,7 +61,7 @@ impl StateParser for Module2RecordParser {
                 self.entrust = None;
             }
 
-            let input = buffer.as_ref();
+            let input = buffer.as_slice();
             let (input, opcode) = Self::read_module_opcode(input)?;
             match opcode {
                 RDBModuleOpcode::Eof => {
@@ -135,7 +135,7 @@ impl StateParser for ModuleAuxParser {
                 self.entrust = None;
             }
 
-            let input = buffer.as_ref();
+            let input = buffer.as_slice();
             let (input, opcode) = Self::read_module_opcode(input)?;
             match opcode {
                 RDBModuleOpcode::Eof => {

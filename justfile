@@ -9,7 +9,7 @@ check:
 	cargo clippy --all -- -D warnings
 
 test: init_test
-    cargo nextest run --all --status-level=all --retries=2
+    cargo nextest run --all --status-level=all
 
 fmt:
 	cargo sort --workspace
@@ -33,6 +33,6 @@ init_test:
 
 coverage: init_test
     mkdir -p target/coverage
-    CARGO_LLVM_COV_SETUP=yes cargo +nightly llvm-cov nextest --lcov --branch --mcdc --output-path target/coverage/lcov.info --status-level=all --retries=2
+    CARGO_LLVM_COV_SETUP=yes cargo +nightly llvm-cov nextest --lcov --branch --output-path target/coverage/lcov.info --status-level=all
     grcov target/coverage/lcov.info --output-types html --source-dir . --branch --output-path target/coverage
     @echo "Report ready: target/coverage/html/index.html"

@@ -114,7 +114,7 @@ impl StateParser for ZipListLengthParser {
                 self.counted += 1;
                 self.entrust = None;
             }
-            let (input, entrust) = IsEndZipListEntryParser::init(buffer.as_ref())?;
+            let (input, entrust) = IsEndZipListEntryParser::init(buffer.as_slice())?;
             buffer.consume_to(input.as_ptr());
             self.entrust = Some(entrust);
         }
@@ -258,7 +258,8 @@ impl StateParser for QuickListLengthParser {
                 break;
             }
 
-            let (input, entrust) = RDBStrBox::<ZipListLengthParser>::init(buffer, buffer.as_ref())?;
+            let (input, entrust) =
+                RDBStrBox::<ZipListLengthParser>::init(buffer, buffer.as_slice())?;
             if entrust.is_lzf() {
                 crate::parser_trace!("quicklist.ziplist.lzf");
             } else {

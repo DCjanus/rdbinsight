@@ -3,11 +3,9 @@ use rdbinsight::{
     source::{RdbSourceConfig, standalone::Config as StandaloneConfig},
 };
 
-use crate::common::setup::{RedisConfig, RedisInstance};
+use crate::common::setup::{RedisConfig, RedisInstance, RedisVariant};
 
 mod common;
-
-// TODO: confirm whether REPLCONF ACK command needs to be sent
 
 #[derive(Debug)]
 struct TestCase {
@@ -422,6 +420,22 @@ async fn standalone_source_tests() -> AnyResult<()> {
             expected_trace: "auth.with_username",
             expected_item_count: 123,
         },
+        TestCase {
+            name: "redis6_rdb_only_unsupported",
+            redis_config: || RedisConfig::default().with_version(RedisVariant::Redis6_0),
+            username: None,
+            password: None,
+            expected_trace: "replconf.rdb_only.unsupported",
+            expected_item_count: 123,
+        },
+        TestCase {
+            name: "redis8_rdb_only_supported",
+            redis_config: || RedisConfig::default().with_version(RedisVariant::Redis8_0),
+            username: None,
+            password: None,
+            expected_trace: "replconf.rdb_only.supported",
+            expected_item_count: 123,
+        },
     ];
 
     for test_case in &test_cases {
@@ -590,16 +604,13 @@ async fn diskless_lots_of_strings_test() -> AnyResult<()> {
 }
 
 // Tests feed_more coverage for disk mode (LimitedAsyncReader::feed_more)
-// NOTE: This test is currently disabled due to instability caused by unknown factors.
-// The test may fail intermittently, affecting CI/CD reliability.
-// TODO: Investigate and fix the root cause of test instability.
-// #[tokio::test(flavor = "current_thread")]
-// async fn disk_lots_of_strings_test() -> AnyResult<()> {
-//     run_lots_of_strings_feed_more_test(FeedMoreTestConfig {
-//         diskless: false,
-//         expected_rdb_trace: "rdb.disk",
-//         expected_feed_more_trace: "limited_reader.feed_more",
-//         strict_validation: true, // Strict validation for disk mode
-//     })
-//     .await
-// }
+#[tokio::test(flavor = "current_thread")]
+async fn disk_lots_of_strings_test() -> AnyResult<()> {
+    run_lots_of_strings_feed_more_test(FeedMoreTestConfig {
+        diskless: false,
+        expected_rdb_trace: "rdb.disk",
+        expected_feed_more_trace: "limited_reader.feed_more",
+        strict_validation: true, // Strict validation for disk mode
+    })
+    .await
+}

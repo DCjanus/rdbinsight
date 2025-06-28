@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
 use tokio::io::AsyncRead;
 

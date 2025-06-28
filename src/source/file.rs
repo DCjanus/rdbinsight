@@ -5,7 +5,7 @@ use tokio::{fs::File, io::AsyncRead};
 use crate::{helper::AnyResult, source::RdbSourceConfig};
 
 pub struct Config {
-    path: PathBuf,
+    pub path: PathBuf,
 }
 
 impl RdbSourceConfig for Config {

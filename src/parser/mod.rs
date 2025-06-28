@@ -4,7 +4,7 @@ pub mod model;
 pub mod record;
 pub mod state;
 
-mod rdb_file;
+pub mod rdb_file;
 mod trace;
 
 // Re-export public API

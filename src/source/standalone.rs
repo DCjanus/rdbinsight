@@ -17,8 +17,8 @@ use redis_protocol::{
     },
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
-    net::{TcpStream, tcp::OwnedReadHalf},
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt, ReadBuf},
+    net::TcpStream,
 };
 use tokio_util::time::FutureExt;
 use tracing::debug;
@@ -51,14 +51,14 @@ impl RdbSourceConfig for Config {
 
 /// Delimiter-based reader for diskless mode
 struct DelimiterReader {
-    inner: OwnedReadHalf,
+    inner: TcpStream,
     delimiter: [u8; 40],
     buff: RingBuffer,
     done: bool,
 }
 
 impl DelimiterReader {
-    fn new(inner: OwnedReadHalf, delimiter: [u8; 40], buff: RingBuffer) -> Self {
+    fn new(inner: TcpStream, delimiter: [u8; 40], buff: RingBuffer) -> Self {
         Self {
             inner,
             delimiter,
@@ -132,13 +132,13 @@ impl AsyncAsyncRead for DelimiterReader {
 }
 
 struct LimitedReader {
-    inner: OwnedReadHalf,
+    inner: TcpStream,
     remaining: u64,
     buffer: RingBuffer,
 }
 
 impl LimitedReader {
-    fn new(inner: OwnedReadHalf, limit: u64, buffer: RingBuffer) -> Self {
+    fn new(inner: TcpStream, limit: u64, buffer: RingBuffer) -> Self {
         Self {
             inner,
             remaining: limit,
@@ -217,20 +217,18 @@ enum RDBMode {
 
 impl StandaloneSource {
     pub async fn init(config: &Config) -> AnyResult<Self> {
-        let stream = TcpStream::connect(&config.address).await?;
-
-        let (mut rx, mut tx) = stream.into_split();
+        let mut stream = TcpStream::connect(&config.address).await?;
         let mut buffer = RingBuffer::default();
-        Self::prepare(&mut buffer, &mut rx, &mut tx, config).await?;
-        let mode = Self::read_rdb_mode(&mut buffer, &mut rx, Duration::from_secs(1)).await?;
+        Self::prepare(&mut buffer, &mut stream, config).await?;
+        let mode = Self::read_rdb_mode(&mut buffer, &mut stream, Duration::from_secs(1)).await?;
 
         let reader = match mode {
             RDBMode::Disk { remain } => {
-                let async_reader = LimitedReader::new(rx, remain, buffer);
+                let async_reader = LimitedReader::new(stream, remain, buffer);
                 StandaloneReader::Disk(PollRead::new(async_reader))
             }
             RDBMode::Diskless { delimiter } => {
-                let async_reader = DelimiterReader::new(rx, delimiter, buffer);
+                let async_reader = DelimiterReader::new(stream, delimiter, buffer);
                 StandaloneReader::Diskless(PollRead::new(async_reader))
             }
         };
@@ -240,7 +238,7 @@ impl StandaloneSource {
 
     async fn read_rdb_mode(
         buf: &mut RingBuffer,
-        rx: &mut (impl AsyncRead + Unpin),
+        stream: &mut TcpStream,
         timeout: Duration,
     ) -> AnyResult<RDBMode> {
         let deadline = Instant::now() + timeout;
@@ -270,7 +268,7 @@ impl StandaloneSource {
                         }
                         // Read more data into buffer with timeout
                         if buf.remaining_capacity() > 0 {
-                            buf.read_from(rx).timeout(remain_time).await??;
+                            buf.read_from(stream).timeout(remain_time).await??;
                         } else {
                             // Buffer is full, we need to consume some data first
                             // This should not happen in normal parsing, but let's be safe
@@ -310,8 +308,7 @@ impl StandaloneSource {
 
     async fn prepare(
         buf: &mut RingBuffer,
-        rx: &mut (impl AsyncRead + Unpin),
-        tx: &mut (impl AsyncWrite + Unpin),
+        stream: &mut TcpStream,
         config: &Config,
     ) -> AnyResult<()> {
         if let Some(password) = &config.password {
@@ -324,10 +321,10 @@ impl StandaloneSource {
             }
             parts.push(password);
             let command = parts.join(" ");
-            Self::send_command(tx, &command)
+            Self::send_command(stream, &command)
                 .await
                 .context("send auth command")?;
-            let response = Self::read_response(buf, rx, Duration::from_secs(1))
+            let response = Self::read_response(buf, stream, Duration::from_secs(1))
                 .await
                 .context("read auth response")?;
             ensure!(
@@ -337,10 +334,10 @@ impl StandaloneSource {
             );
         }
 
-        Self::send_command(tx, "PING")
+        Self::send_command(stream, "PING")
             .await
             .context("send ping command")?;
-        let response = Self::read_response(buf, rx, Duration::from_secs(1))
+        let response = Self::read_response(buf, stream, Duration::from_secs(1))
             .await
             .context("read ping response")?;
         ensure!(
@@ -349,10 +346,10 @@ impl StandaloneSource {
             response
         );
 
-        Self::send_command(tx, "REPLCONF capa eof")
+        Self::send_command(stream, "REPLCONF capa eof")
             .await
             .context("send replconf command")?;
-        let response = Self::read_response(buf, rx, Duration::from_secs(1))
+        let response = Self::read_response(buf, stream, Duration::from_secs(1))
             .await
             .context("read replconf response")?;
         ensure!(
@@ -361,12 +358,30 @@ impl StandaloneSource {
             response
         );
 
-        Self::send_command(tx, "PSYNC ? -1")
+        Self::send_command(stream, "REPLCONF rdb-only 1")
+            .await
+            .context("send replconf rdb-only command")?;
+        let response = Self::read_response(buf, stream, Duration::from_secs(1))
+            .await
+            .context("read replconf rdb-only response")?;
+        match response {
+            OwnedFrame::SimpleString(s) if s == b"OK" => {
+                parser_trace!("replconf.rdb_only.supported");
+                debug!(name: "replconf_rdb_only", "Master supports rdb-only option");
+            }
+            OwnedFrame::Error(s) if s.starts_with("ERR Unrecognized REPLCONF option") => {
+                parser_trace!("replconf.rdb_only.unsupported");
+                debug!(name: "replconf_rdb_only", "Master does not support rdb-only option (non-critical): {:?}", s);
+            }
+            _ => anyhow::bail!("unexpected response from replconf rdb-only: {:?}", response),
+        }
+
+        Self::send_command(stream, "PSYNC ? -1")
             .await
             .context("send psync command")?;
 
         // repl-diskless-sync-delay may cause a long time to wait for response
-        let response = Self::read_response(buf, rx, Duration::from_secs(30))
+        let response = Self::read_response(buf, stream, Duration::from_secs(30))
             .await
             .context("read psync response")?;
         ensure!(
@@ -381,19 +396,19 @@ impl StandaloneSource {
         Ok(())
     }
 
-    async fn send_command(tx: &mut (impl AsyncWrite + Unpin), command: &str) -> AnyResult<()> {
+    async fn send_command(stream: &mut TcpStream, command: &str) -> AnyResult<()> {
         debug!(name: "send_command", command = command);
         let command = resp2_encode_command(command);
         let mut buffer = vec![0u8; command.encode_len(false)];
         let wrote = encode_bytes(&mut buffer, &command, false).context("encode command")?;
         ensure!(wrote == buffer.len(), "mismatch in encoded command length");
-        tx.write_all(&buffer).await.context("write command")?;
+        stream.write_all(&buffer).await.context("write command")?;
         Ok(())
     }
 
     async fn read_response(
         buf: &mut RingBuffer,
-        rx: &mut (impl AsyncRead + Unpin),
+        stream: &mut TcpStream,
         timeout: Duration,
     ) -> AnyResult<OwnedFrame> {
         let deadline = Instant::now() + timeout;
@@ -416,7 +431,11 @@ impl StandaloneSource {
             match decode_result? {
                 Some(frame) => {
                     buf.consume(bytes_to_consume);
-                    debug!(name: "read_response", frame = ?frame);
+                    if let Some(frame) = frame.as_str() {
+                        debug!(name: "read_response", frame = ?frame);
+                    } else {
+                        debug!(name: "read_response", frame = ?frame);
+                    }
                     return Ok(frame);
                 }
                 None => {
@@ -427,7 +446,7 @@ impl StandaloneSource {
 
                     // Read more data into buffer with timeout
                     if buf.remaining_capacity() > 0 {
-                        buf.read_from(rx).timeout(remain_time).await??;
+                        buf.read_from(stream).timeout(remain_time).await??;
                     } else {
                         // Buffer is full, we need to consume some data first
                         // This should not happen in normal parsing, but let's be safe

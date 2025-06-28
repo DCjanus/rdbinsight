@@ -1,0 +1,37 @@
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  precision: 2
+  round: down
+  
+  status:
+    project:
+      default:
+        target: 80%
+        threshold: 1%
+    
+    patch:
+      default:
+        target: 85%
+        threshold: 5%
+
+ignore:
+  - "src/bin/"
+  - "src/bin/**"
+  - "tests/"
+  - "tests/**"
+  - "examples/"
+  - "examples/**"
+  - "docs/"
+  - "docs/**"
+
+comment:
+  layout: "reach,diff,flags,tree"
+  require_head: true
+  branches:
+    - "master"
+    - "main"
+
+github_checks:
+  annotations: true 

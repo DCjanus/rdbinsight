@@ -58,12 +58,19 @@ struct DelimiterReader {
 }
 
 impl DelimiterReader {
-    fn new(inner: TcpStream, delimiter: [u8; 40], buff: RingBuffer) -> Self {
+    fn new(inner: TcpStream, delimiter: [u8; 40], mut buff: RingBuffer) -> Self {
+        let mut done = false;
+        if let Some(pos) = memmem::find(buff.filled(), &delimiter) {
+            debug!(name: "delimiter_reader.done", "delimiter found in function DelimiterReader::new");
+            done = true;
+            buff.truncate(pos);
+        }
+
         Self {
             inner,
             delimiter,
             buff,
-            done: false,
+            done,
         }
     }
 
@@ -88,9 +95,9 @@ impl DelimiterReader {
 
         if let Some(relative_pos) = memmem::find(search_zone, &self.delimiter) {
             self.done = true;
-            // Truncate to remove the delimiter and data after it
             let delimiter_pos = search_start + relative_pos;
             self.buff.truncate(delimiter_pos);
+            debug!(name: "delimiter_reader.done", "delimiter found in function DelimiterReader::feed_more");
         }
 
         Ok(())
@@ -292,6 +299,7 @@ impl StandaloneSource {
             let mut output = [0u8; 40];
             output.copy_from_slice(delimiter);
             parser_trace!("rdb.diskless");
+            debug!(name: "rdb_mode", mode = "diskless");
             Ok((input, RDBMode::Diskless { delimiter: output }))
         } else {
             let input = read_tag(input, b"$")?;
@@ -302,6 +310,7 @@ impl StandaloneSource {
                 .context("rdb length is not a valid number")?;
             let input = read_tag(input, b"\r\n")?;
             parser_trace!("rdb.disk");
+            debug!(name: "rdb_mode", mode = "disk", len = len);
             Ok((input, RDBMode::Disk { remain: len }))
         }
     }

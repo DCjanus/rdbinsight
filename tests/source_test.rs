@@ -339,7 +339,6 @@ async fn seed_test_data(
 }
 
 async fn run_test_case(test_case: &TestCase) -> AnyResult<()> {
-    common::init_subscriber();
     let guard = common::trace::capture();
 
     let redis = (test_case.redis_config)()
@@ -502,7 +501,6 @@ struct FeedMoreTestConfig {
 
 /// Generic test function for feed_more coverage in both disk and diskless modes
 async fn run_lots_of_strings_feed_more_test(config: FeedMoreTestConfig) -> AnyResult<()> {
-    common::init_subscriber();
     let guard = common::trace::capture();
 
     // Configure Redis with appropriate sync mode and large buffer limits

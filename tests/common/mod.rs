@@ -8,7 +8,7 @@ pub mod setup;
 pub mod trace;
 pub mod utils;
 
-pub fn init_subscriber() {
+pub fn init_log_for_debug() {
     let filter: EnvFilter = "info,rdbinsight=debug".parse().expect("invalid filter");
     // Ignore error if the global subscriber has already been set (which happens when multiple
     // tests call this helper).

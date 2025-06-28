@@ -2,16 +2,13 @@ use std::{path::PathBuf, time::Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use futures_util::StreamExt;
 use rdbinsight::{
     config::{Config, SourceConfig},
-    parser::{
-        core::{buffer::Buffer, raw::RDBStr},
-        model::Item,
-        rdb_file::RDBFileParser,
-    },
+    parser::core::raw::RDBStr,
+    record::{Record, RecordStream, RecordType},
     source::{RdbSourceConfig, file::Config as FileConfig, standalone::Config as StandaloneConfig},
 };
-use tokio::io::AsyncReadExt;
 use tracing::{debug, error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -107,66 +104,43 @@ async fn parse_from_standalone(
 }
 
 async fn parse_rdb_stream(
-    mut stream: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>,
+    stream: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>,
 ) -> Result<()> {
     let start_time = Instant::now();
-    let mut parser = RDBFileParser::default();
-    let mut buffer = Buffer::new(16 * 1024 * 1024); // 16MB buffer
-    let mut total_items = 0u64;
-    let mut total_bytes_read = 0u64;
+    let mut total_records = 0u64;
+    let total_bytes_read = 0u64;
 
     // Statistics counters
-    let mut stats = ItemStats::default();
+    let mut stats = RecordStats::default();
 
     info!("Starting RDB parsing...");
 
+    // Create RecordStream that will manage buffer and reading internally
+    let mut record_stream = RecordStream::new(stream);
+
     loop {
-        // Try to parse next item
-        match parser.poll_next(&mut buffer) {
-            Ok(Some(item)) => {
-                total_items += 1;
-                stats.update(&item);
+        // Try to get next record using Stream trait
+        match record_stream.next().await {
+            Some(Ok(record)) => {
+                total_records += 1;
+                stats.update(&record);
 
-                // Output item information to stdout (simulating ClickHouse output)
-                output_item(&item, total_items);
+                // Output record information to stdout (simulating ClickHouse output)
+                output_record(&record, total_records);
 
-                // Log progress every 10000 items
-                if total_items % 1000000 == 0 {
-                    debug!("Processed {total_items} items");
+                // Log progress every 1000000 records
+                if total_records % 1000000 == 0 {
+                    debug!("Processed {total_records} records");
                 }
             }
-            Ok(None) => {
+            Some(Err(e)) => {
+                error!("Parser error: {e}");
+                return Err(e);
+            }
+            None => {
                 // End of stream
                 info!("Reached end of RDB stream");
                 break;
-            }
-            Err(e) => {
-                if e.downcast_ref::<rdbinsight::parser::error::NeedMoreData>()
-                    .is_some()
-                {
-                    // Need more data, read from stream
-                    let mut read_buf = vec![0u8; 64 * 1024]; // 64KB read buffer
-                    match stream.read(&mut read_buf).await {
-                        Ok(0) => {
-                            // EOF reached
-                            buffer.set_finished();
-                            info!("Stream finished, processing remaining data...");
-                        }
-                        Ok(n) => {
-                            total_bytes_read += n as u64;
-                            buffer
-                                .extend(&read_buf[..n])
-                                .with_context(|| "Failed to extend buffer")?;
-                        }
-                        Err(e) => {
-                            error!("Failed to read from stream: {e}");
-                            return Err(e.into());
-                        }
-                    }
-                } else {
-                    error!("Parser error: {e}");
-                    return Err(e);
-                }
             }
         }
     }
@@ -174,13 +148,13 @@ async fn parse_rdb_stream(
     let duration = start_time.elapsed();
 
     // Print final statistics
-    print_final_stats(total_items, total_bytes_read, duration, &stats);
+    print_final_stats(total_records, total_bytes_read, duration, &stats);
 
     Ok(())
 }
 
 #[derive(Default)]
-struct ItemStats {
+struct RecordStats {
     strings: u64,
     lists: u64,
     sets: u64,
@@ -188,28 +162,37 @@ struct ItemStats {
     hashes: u64,
     streams: u64,
     modules: u64,
-    functions: u64,
-    aux_fields: u64,
-    db_switches: u64,
-    expiries: u64,
-    other: u64,
+    total_size: u64,
+    expired_keys: u64,
+    keys_with_idle: u64,
+    keys_with_freq: u64,
 }
 
-impl ItemStats {
-    fn update(&mut self, item: &Item) {
-        match item {
-            Item::StringRecord { .. } => self.strings += 1,
-            Item::ListRecord { .. } => self.lists += 1,
-            Item::SetRecord { .. } => self.sets += 1,
-            Item::ZSetRecord { .. } | Item::ZSet2Record { .. } => self.zsets += 1,
-            Item::HashRecord { .. } => self.hashes += 1,
-            Item::StreamRecord { .. } => self.streams += 1,
-            Item::ModuleRecord { .. } | Item::ModuleAux { .. } => self.modules += 1,
-            Item::FunctionRecord { .. } => self.functions += 1,
-            Item::Aux { .. } => self.aux_fields += 1,
-            Item::SelectDB { .. } => self.db_switches += 1,
-            Item::ExpiryMs { .. } => self.expiries += 1,
-            _ => self.other += 1,
+impl RecordStats {
+    fn update(&mut self, record: &Record) {
+        // Update type counters
+        match record.r#type {
+            RecordType::String => self.strings += 1,
+            RecordType::List => self.lists += 1,
+            RecordType::Set => self.sets += 1,
+            RecordType::ZSet => self.zsets += 1,
+            RecordType::Hash => self.hashes += 1,
+            RecordType::Stream => self.streams += 1,
+            RecordType::Module => self.modules += 1,
+        }
+
+        // Update size
+        self.total_size += record.rdb_size;
+
+        // Update metadata counters
+        if record.expire_at_ms.is_some() {
+            self.expired_keys += 1;
+        }
+        if record.idle_seconds.is_some() {
+            self.keys_with_idle += 1;
+        }
+        if record.freq.is_some() {
+            self.keys_with_freq += 1;
         }
     }
 }
@@ -221,154 +204,72 @@ fn rdb_str_to_string(rdb_str: &RDBStr) -> String {
     }
 }
 
-fn output_item(item: &Item, item_number: u64) {
-    match item {
-        Item::Aux { key, val } => {
-            println!(
-                "AUX\t{item_number}\t{}\t{}",
-                rdb_str_to_string(key),
-                rdb_str_to_string(val)
-            );
+fn format_expiry(expire_at_ms: Option<u64>) -> String {
+    match expire_at_ms {
+        Some(ms) => {
+            // Convert milliseconds to seconds for OffsetDateTime
+            let seconds = (ms / 1000) as i64;
+            match time::OffsetDateTime::from_unix_timestamp(seconds) {
+                Ok(utc_dt) => {
+                    // Try to convert to local timezone, fallback to UTC if failed
+                    let dt = utc_dt.to_offset(
+                        time::UtcOffset::local_offset_at(utc_dt).unwrap_or(time::UtcOffset::UTC),
+                    );
+
+                    // Use RFC 3339 format
+                    dt.format(&time::format_description::well_known::Rfc3339)
+                        .unwrap_or_else(|_| format!("{ms}ms"))
+                }
+                Err(_) => format!("{ms}ms"),
+            }
         }
-        Item::SelectDB { db } => {
-            println!("SELECT_DB\t{item_number}\t{db}");
-        }
-        Item::ResizeDB {
-            table_size,
-            ttl_table_size,
-        } => {
-            println!("RESIZE_DB\t{item_number}\t{table_size}\t{ttl_table_size}");
-        }
-        Item::StringRecord {
-            key,
-            rdb_size,
-            encoding,
-        } => {
-            println!(
-                "STRING\t{item_number}\t{}\t{rdb_size}\t{encoding:?}",
-                rdb_str_to_string(key)
-            );
-        }
-        Item::ListRecord {
-            key,
-            rdb_size,
-            encoding,
-            member_count,
-        } => {
-            println!(
-                "LIST\t{item_number}\t{}\t{rdb_size}\t{encoding:?}\t{member_count}",
-                rdb_str_to_string(key)
-            );
-        }
-        Item::SetRecord {
-            key,
-            rdb_size,
-            encoding,
-            member_count,
-        } => {
-            println!(
-                "SET\t{item_number}\t{}\t{rdb_size}\t{encoding:?}\t{member_count}",
-                rdb_str_to_string(key)
-            );
-        }
-        Item::ZSetRecord {
-            key,
-            rdb_size,
-            encoding,
-            member_count,
-        } => {
-            println!(
-                "ZSET\t{item_number}\t{}\t{rdb_size}\t{encoding:?}\t{member_count}",
-                rdb_str_to_string(key)
-            );
-        }
-        Item::ZSet2Record {
-            key,
-            rdb_size,
-            encoding,
-            member_count,
-        } => {
-            println!(
-                "ZSET2\t{item_number}\t{}\t{rdb_size}\t{encoding:?}\t{member_count}",
-                rdb_str_to_string(key)
-            );
-        }
-        Item::HashRecord {
-            key,
-            rdb_size,
-            encoding,
-            pair_count,
-        } => {
-            println!(
-                "HASH\t{item_number}\t{}\t{rdb_size}\t{encoding:?}\t{pair_count}",
-                rdb_str_to_string(key)
-            );
-        }
-        Item::StreamRecord {
-            key,
-            rdb_size,
-            encoding,
-            message_count,
-        } => {
-            println!(
-                "STREAM\t{item_number}\t{}\t{rdb_size}\t{encoding:?}\t{message_count}",
-                rdb_str_to_string(key)
-            );
-        }
-        Item::ModuleRecord { key, rdb_size } => {
-            println!(
-                "MODULE\t{item_number}\t{}\t{rdb_size}",
-                rdb_str_to_string(key)
-            );
-        }
-        Item::ModuleAux { rdb_size } => {
-            println!("MODULE_AUX\t{item_number}\t{rdb_size}");
-        }
-        Item::FunctionRecord { rdb_size } => {
-            println!("FUNCTION\t{item_number}\t{rdb_size}");
-        }
-        Item::ExpiryMs { expire_at_ms } => {
-            println!("EXPIRY_MS\t{item_number}\t{expire_at_ms}");
-        }
-        Item::Idle { idle_seconds } => {
-            println!("IDLE\t{item_number}\t{idle_seconds}");
-        }
-        Item::Freq { freq } => {
-            println!("FREQ\t{item_number}\t{freq}");
-        }
-        Item::SlotInfo {
-            slot_id,
-            slot_size,
-            expires_slot_size,
-        } => {
-            println!("SLOT_INFO\t{item_number}\t{slot_id}\t{slot_size}\t{expires_slot_size}");
-        }
+        None => "Never".to_string(),
     }
 }
 
+fn output_record(record: &Record, record_number: u64) {
+    println!(
+        "{}\t{record_number}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        record.type_name().to_uppercase(),
+        record.db,
+        rdb_str_to_string(&record.key),
+        record.encoding_name(),
+        record.member_count.unwrap_or(0),
+        record.rdb_size,
+        format_expiry(record.expire_at_ms),
+        record.idle_seconds.unwrap_or(0),
+        record.freq.unwrap_or(0),
+    );
+}
+
 fn print_final_stats(
-    total_items: u64,
+    total_records: u64,
     total_bytes: u64,
     duration: std::time::Duration,
-    stats: &ItemStats,
+    stats: &RecordStats,
 ) {
     println!("\n=== Parsing Complete ===");
-    println!("Total items processed: {total_items}");
+    println!("Total records processed: {total_records}");
     println!(
         "Total bytes read: {total_bytes} ({:.2} MB)",
         total_bytes as f64 / 1024.0 / 1024.0
     );
+    println!(
+        "Total RDB size: {} ({:.2} MB)",
+        stats.total_size,
+        stats.total_size as f64 / 1024.0 / 1024.0
+    );
     println!("Processing time: {:.2} seconds", duration.as_secs_f64());
     println!(
-        "Items per second: {:.2}",
-        total_items as f64 / duration.as_secs_f64()
+        "Records per second: {:.2}",
+        total_records as f64 / duration.as_secs_f64()
     );
     println!(
         "Throughput: {:.2} MB/s",
         (total_bytes as f64 / 1024.0 / 1024.0) / duration.as_secs_f64()
     );
 
-    println!("\n=== Item Statistics ===");
+    println!("\n=== Record Statistics ===");
     println!("Strings: {}", stats.strings);
     println!("Lists: {}", stats.lists);
     println!("Sets: {}", stats.sets);
@@ -376,11 +277,11 @@ fn print_final_stats(
     println!("Hashes: {}", stats.hashes);
     println!("Streams: {}", stats.streams);
     println!("Modules: {}", stats.modules);
-    println!("Functions: {}", stats.functions);
-    println!("Aux fields: {}", stats.aux_fields);
-    println!("DB switches: {}", stats.db_switches);
-    println!("Expiries: {}", stats.expiries);
-    println!("Other: {}", stats.other);
+
+    println!("\n=== Metadata Statistics ===");
+    println!("Keys with expiration: {}", stats.expired_keys);
+    println!("Keys with idle time: {}", stats.keys_with_idle);
+    println!("Keys with frequency: {}", stats.keys_with_freq);
 }
 
 fn get_cluster_name(source: &SourceConfig) -> &str {
@@ -390,5 +291,32 @@ fn get_cluster_name(source: &SourceConfig) -> &str {
         SourceConfig::RedisCluster { cluster_name, .. } => cluster_name,
         SourceConfig::Codis { cluster_name, .. } => cluster_name.as_deref().unwrap_or("unknown"),
         SourceConfig::RDBFile { cluster_name, .. } => cluster_name,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_expiry() {
+        // Test None case
+        assert_eq!(format_expiry(None), "Never");
+
+        // Test Some case with a known timestamp
+        // 2024-01-01 00:00:00 UTC = 1704067200 seconds = 1704067200000 ms
+        let test_ms = 1704067200000u64;
+        let result = format_expiry(Some(test_ms));
+
+        // Should be RFC 3339 format (either local timezone or UTC)
+        // The exact output depends on local timezone, but should contain the date
+        assert!(result.contains("2024-01-01") || result.contains("2023-12-31"));
+        assert!(result.contains("T"));
+        assert!(result.contains(":"));
+
+        // Test invalid timestamp (should fallback to ms format)
+        let invalid_ms = u64::MAX;
+        let result = format_expiry(Some(invalid_ms));
+        assert!(result.ends_with("ms"));
     }
 }

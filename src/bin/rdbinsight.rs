@@ -12,7 +12,7 @@ use rdbinsight::{
     source::{RdbSourceConfig, file::Config as FileConfig, standalone::Config as StandaloneConfig},
 };
 use tokio::io::AsyncReadExt;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
@@ -111,7 +111,7 @@ async fn parse_rdb_stream(
 ) -> Result<()> {
     let start_time = Instant::now();
     let mut parser = RDBFileParser::default();
-    let mut buffer = Buffer::new(8 * 1024 * 1024); // 8MB buffer
+    let mut buffer = Buffer::new(16 * 1024 * 1024); // 16MB buffer
     let mut total_items = 0u64;
     let mut total_bytes_read = 0u64;
 
@@ -131,8 +131,8 @@ async fn parse_rdb_stream(
                 output_item(&item, total_items);
 
                 // Log progress every 10000 items
-                if total_items % 10000 == 0 {
-                    info!("Processed {total_items} items");
+                if total_items % 1000000 == 0 {
+                    debug!("Processed {total_items} items");
                 }
             }
             Ok(None) => {

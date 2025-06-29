@@ -5,9 +5,10 @@ type = "rdb_file"
 cluster_name = "my-rdb-file"
 batch_id = "batch-456"
 path = "/path/to/dump.rdb"
+instance = "192.168.1.100:6379"
 
 [output]
 type = "clickhouse"
 address = "127.0.0.1:9000"
 username = "default"
-password = "123456" 
+password = "123456"

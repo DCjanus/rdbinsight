@@ -9,8 +9,10 @@ default-run = "rdbinsight"
 [dependencies]
 anyhow = "1.0.98"
 async_async_io = "0.2.3"
+backoff = { version = "0.4", features = ["tokio"] }
 bytes = "1.10.1"
 clap = { version = "4.5.0", features = ["derive"] }
+clickhouse = { version = "0.13.0", features = ["time"] }
 futures-util = "0.3.31"
 lzf = "1.0.0"
 memchr = "2.7.5"

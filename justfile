@@ -36,3 +36,13 @@ coverage: init_test
     CARGO_LLVM_COV_SETUP=yes cargo +nightly llvm-cov nextest --lcov --branch --output-path target/coverage/lcov.info --status-level=all
     grcov target/coverage/lcov.info --output-types html --source-dir . --branch --output-path target/coverage
     @echo "Report ready: target/coverage/html/index.html"
+
+up_dev:
+    docker-compose -f dev/docker-compose.yml up -d
+
+down_dev:
+    docker-compose -f dev/docker-compose.yml down
+
+test_dev: up_dev
+    cargo run --bin fill_redis_memory -- redis://127.0.0.1:6380 512M
+    cargo run --bin rdbinsight -- dump dev/test-config.toml

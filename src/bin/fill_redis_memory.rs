@@ -1,14 +1,18 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
+use rand::Rng;
 use redis::{Client, InfoDict, aio::MultiplexedConnection};
 use tracing::{debug, error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
 #[command(name = "fill_redis_memory")]
-#[command(about = "Fill Redis instance with random data until reaching target memory size")]
+#[command(about = "Fill Redis instance with various data types until reaching target memory size")]
 struct Cli {
     /// Redis URL (e.g., redis://localhost:6379, redis://user:pass@host:port/db)
     #[arg(help = "Redis connection URL")]
@@ -23,8 +27,57 @@ struct Cli {
     verbose: bool,
 }
 
-// Fixed value size for all keys (16 bytes)
-const VALUE_SIZE: usize = 64;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum DataType {
+    String,
+    Hash,
+    List,
+    Set,
+    ZSet,
+    Stream,
+}
+
+impl DataType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            DataType::String => "string",
+            DataType::Hash => "hash",
+            DataType::List => "list",
+            DataType::Set => "set",
+            DataType::ZSet => "zset",
+            DataType::Stream => "stream",
+        }
+    }
+}
+
+// Fixed data type distribution
+const DATA_TYPE_WEIGHTS: &[(DataType, u8)] = &[
+    (DataType::String, 40),
+    (DataType::Hash, 20),
+    (DataType::List, 20),
+    (DataType::Set, 10),
+    (DataType::ZSet, 5),
+    (DataType::Stream, 5),
+];
+
+struct DataTypeDistribution;
+
+impl DataTypeDistribution {
+    fn select_type(&self, rng: &mut impl Rng) -> DataType {
+        let rand_val = rng.random_range(0..100);
+        let mut cumulative = 0;
+
+        for (data_type, weight) in DATA_TYPE_WEIGHTS {
+            cumulative += weight;
+            if rand_val < cumulative {
+                return *data_type;
+            }
+        }
+
+        // Fallback
+        DataType::String
+    }
+}
 
 /// Custom memory size utilities using 1024 base (binary units)
 mod memory_size {
@@ -174,42 +227,74 @@ fn parse_memory_size(input: &str) -> Result<u64> {
 // Calculate optimal batch size based on remaining memory to fill
 fn calculate_batch_size(current_memory: u64, target_memory: u64) -> u64 {
     let remaining_bytes = target_memory.saturating_sub(current_memory);
-
-    let estimated_bytes_per_key = VALUE_SIZE as u64 + 32;
-
+    let estimated_bytes_per_key = 200; // Average across different data types
     let remaining_keys = remaining_bytes / estimated_bytes_per_key;
+    let raw_batch_size = (remaining_keys / 100).clamp(10, 1_000_000);
 
-    (remaining_keys / 100).clamp(100, 1_000_000)
+    // Round to nearest power of 10
+    round_to_power_of_10(raw_batch_size)
+}
+
+// Round a number to the nearest power of 10
+fn round_to_power_of_10(n: u64) -> u64 {
+    if n == 0 {
+        return 10;
+    }
+
+    // Find the power of 10 that n falls between
+    let log10 = (n as f64).log10();
+    let lower_power = 10_u64.pow(log10.floor() as u32);
+    let upper_power = 10_u64.pow(log10.ceil() as u32);
+
+    // Choose the closer one
+    if n - lower_power <= upper_power - n {
+        lower_power
+    } else {
+        upper_power
+    }
 }
 
 struct MemoryFiller {
     conn: MultiplexedConnection,
     target_bytes: u64,
     prefix: String,
-    value_data: String,
     verbose: bool,
     total_keys_written: u64,
     batch_count: u64,
     last_report_time: Instant,
+    distribution: DataTypeDistribution,
+    type_counters: HashMap<DataType, u64>,
 }
 
 impl MemoryFiller {
     fn new(conn: MultiplexedConnection, target_bytes: u64, cli: &Cli) -> Self {
+        let distribution = DataTypeDistribution;
+        let mut type_counters = HashMap::new();
+
+        // Initialize counters for all data types
+        for (data_type, _) in DATA_TYPE_WEIGHTS {
+            type_counters.insert(*data_type, 0);
+        }
+
         Self {
             conn,
             target_bytes,
             prefix: "fill_mem".to_string(),
-            value_data: generate_fixed_value(VALUE_SIZE),
             verbose: cli.verbose,
             total_keys_written: 0,
             batch_count: 0,
             last_report_time: Instant::now(),
+            distribution,
+            type_counters,
         }
     }
 
     async fn fill_memory(&mut self) -> Result<()> {
-        info!("Starting memory fill process...");
-        info!("Using fixed value size: {} bytes", VALUE_SIZE);
+        info!("Starting memory fill process with multiple data types...");
+        self.log_distribution_info();
+
+        // Check and display Redis memory configuration
+        self.log_redis_memory_config().await?;
 
         // Main processing loop
         loop {
@@ -259,10 +344,56 @@ impl MemoryFiller {
             }
         }
 
+        self.report_final_stats();
+        Ok(())
+    }
+
+    fn log_distribution_info(&self) {
+        info!("Data type distribution:");
+        for (data_type, weight) in DATA_TYPE_WEIGHTS {
+            info!("  {}: {}%", data_type.as_str(), weight);
+        }
+    }
+
+    async fn log_redis_memory_config(&mut self) -> Result<()> {
+        let info: InfoDict = redis::cmd("INFO")
+            .arg("memory")
+            .query_async(&mut self.conn)
+            .await
+            .with_context(|| "Failed to get Redis INFO for memory config")?;
+
+        let current_memory = get_memory_from_info_dict(&info)?;
+        let max_memory = get_maxmemory_from_info_dict(&info)?;
+
+        info!("Redis memory configuration:");
         info!(
-            "Memory fill completed. Total keys written: {} in {} batches",
-            self.total_keys_written, self.batch_count
+            "  Current memory usage: {}",
+            format_binary_size(current_memory)
         );
+
+        if max_memory > 0 {
+            info!("  Max memory limit: {}", format_binary_size(max_memory));
+            let usage_percentage = (current_memory as f64 / max_memory as f64) * 100.0;
+            info!("  Memory usage: {:.1}%", usage_percentage);
+
+            // Get memory policy if available
+            if let Some(policy) = info.get::<String>("maxmemory_policy") {
+                info!("  Eviction policy: {}", policy);
+            }
+
+            // Adjust target if it exceeds max memory
+            if self.target_bytes > max_memory {
+                info!(
+                    "  Target memory ({}) exceeds maxmemory limit, adjusting to {}",
+                    format_binary_size(self.target_bytes),
+                    format_binary_size(max_memory)
+                );
+                self.target_bytes = max_memory;
+            }
+        } else {
+            info!("  Max memory limit: No limit set");
+        }
+
         Ok(())
     }
 
@@ -272,7 +403,31 @@ impl MemoryFiller {
             .query_async(&mut self.conn)
             .await
             .with_context(|| "Failed to get Redis INFO")?;
-        get_memory_from_info_dict(&info)
+
+        let current_memory = get_memory_from_info_dict(&info)?;
+        let max_memory = get_maxmemory_from_info_dict(&info)?;
+
+        // Check if Redis has a memory limit configured and adjust target if needed
+        if max_memory > 0 && self.target_bytes > max_memory {
+            debug!(
+                "Target memory size ({}) exceeds Redis maxmemory limit ({}). \
+                 Adjusting target to maxmemory limit.",
+                format_binary_size(self.target_bytes),
+                format_binary_size(max_memory)
+            );
+            self.target_bytes = max_memory;
+        }
+
+        // Warn if we're getting close to the limit
+        if max_memory > 0 && current_memory > max_memory * 9 / 10 {
+            debug!(
+                "Current memory usage ({}) is approaching Redis maxmemory limit ({})",
+                format_binary_size(current_memory),
+                format_binary_size(max_memory)
+            );
+        }
+
+        Ok(current_memory)
     }
 
     fn should_report_progress(&self) -> bool {
@@ -306,14 +461,34 @@ impl MemoryFiller {
         );
     }
 
+    fn report_final_stats(&self) {
+        info!(
+            "Memory fill completed. Total keys written: {} in {} batches",
+            self.total_keys_written, self.batch_count
+        );
+        info!("Keys by data type:");
+        for (data_type, count) in &self.type_counters {
+            if *count > 0 {
+                let percentage = (*count as f64 / self.total_keys_written as f64) * 100.0;
+                info!("  {}: {} ({:.1}%)", data_type.as_str(), count, percentage);
+            }
+        }
+    }
+
     async fn process_single_batch(&mut self, batch_size: u64) -> Result<u64> {
         let mut pipe = redis::pipe();
+        let mut rng = rand::rng();
 
-        // Add all SET commands to the pipeline with random keys
+        // Add commands for different data types to the pipeline
         for _ in 0..batch_size {
-            let random_id: u64 = rand::random();
-            let key = format!("{}:{}", self.prefix, random_id);
-            pipe.set(&key, &self.value_data).ignore();
+            let data_type = self.distribution.select_type(&mut rng);
+            let random_id: u64 = rng.random();
+            let key = format!("{}:{}:{}", self.prefix, data_type.as_str(), random_id);
+
+            self.add_data_to_pipeline(&mut pipe, &key, data_type, &mut rng);
+
+            // Update counter
+            *self.type_counters.get_mut(&data_type).unwrap() += 1;
         }
 
         // Execute the pipeline
@@ -323,6 +498,67 @@ impl MemoryFiller {
             .with_context(|| "Failed to execute batch write")?;
 
         Ok(batch_size)
+    }
+
+    fn add_data_to_pipeline(
+        &self,
+        pipe: &mut redis::Pipeline,
+        key: &str,
+        data_type: DataType,
+        rng: &mut impl Rng,
+    ) {
+        match data_type {
+            DataType::String => {
+                let value = format!("value_{}", rng.random::<u32>());
+                pipe.set(key, value).ignore();
+            }
+            DataType::Hash => {
+                let field_count = rng.random_range(1..=16);
+                for i in 0..field_count {
+                    pipe.hset(
+                        key,
+                        format!("field{}", i),
+                        format!("value_{}", rng.random::<u32>()),
+                    )
+                    .ignore();
+                }
+            }
+            DataType::List => {
+                let item_count = rng.random_range(1..=16);
+                for i in 0..item_count {
+                    pipe.lpush(key, format!("item_{}_{}", i, rng.random::<u16>()))
+                        .ignore();
+                }
+            }
+            DataType::Set => {
+                let member_count = rng.random_range(1..=16);
+                for i in 0..member_count {
+                    pipe.sadd(key, format!("member_{}_{}", i, rng.random::<u16>()))
+                        .ignore();
+                }
+            }
+            DataType::ZSet => {
+                let member_count = rng.random_range(1..=16);
+                for i in 0..member_count {
+                    let score = rng.random::<f64>() * 100.0;
+                    let member = format!("player_{}_{}", i, rng.random::<u16>());
+                    pipe.zadd(key, member, score).ignore();
+                }
+            }
+            DataType::Stream => {
+                let entry_count = rng.random_range(1..=16);
+                for i in 0..entry_count {
+                    let mut cmd = redis::cmd("XADD");
+                    cmd.arg(key)
+                        .arg("*")
+                        .arg("field1")
+                        .arg(format!("value_{}_{}", i, rng.random::<u16>()))
+                        .arg("field2")
+                        .arg(format!("value_{}_{}", i, rng.random::<u16>()));
+                    pipe.add_command(cmd).ignore();
+                }
+            }
+        }
     }
 }
 
@@ -344,14 +580,13 @@ async fn main() -> Result<()> {
     // Parse target memory size using custom parser for binary units
     let target_bytes = parse_memory_size(&cli.target_memory)?;
 
-    info!("Starting Redis memory fill tool");
+    info!("Starting Redis memory fill tool with multiple data types");
     info!("Redis URL: {}", cli.redis_url);
     info!(
         "Target memory: {} ({} bytes)",
         format_binary_size(target_bytes),
         target_bytes
     );
-    info!("Value size: {} bytes (fixed)", VALUE_SIZE);
 
     // Connect to Redis
     let client = Client::open(cli.redis_url.as_str())
@@ -379,7 +614,7 @@ fn get_memory_from_info_dict(info: &InfoDict) -> Result<u64> {
         .ok_or_else(|| anyhow!("used_memory not found in INFO output"))
 }
 
-fn generate_fixed_value(size: usize) -> String {
-    // Generate a fixed string of the specified size
-    "x".repeat(size)
+fn get_maxmemory_from_info_dict(info: &InfoDict) -> Result<u64> {
+    // maxmemory returns 0 if no limit is set
+    Ok(info.get("maxmemory").unwrap_or(0))
 }

@@ -1,0 +1,39 @@
+version: "3.8"
+
+name: rdbinsight-dev
+
+services:
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "6380:6379" # Host port 6380 -> Container port 6379
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - rdbinsight-dev
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    ports:
+      - "8124:8123" # HTTP interface: Host port 8124 -> Container port 8123
+      - "9001:9000" # Native client: Host port 9001 -> Container port 9000
+    environment:
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: dev123
+      CLICKHOUSE_DB: rdbinsight
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    networks:
+      - rdbinsight-dev
+
+networks:
+  rdbinsight-dev:
+    driver: bridge
+
+volumes:
+  clickhouse_data:
+    driver: local

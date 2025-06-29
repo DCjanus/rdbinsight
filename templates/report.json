@@ -1,0 +1,838 @@
+{
+  "cluster": "production-redis-cluster",
+  "batch": "2024-12-20T14:30:45.123456Z",
+  "prefix_records": [
+    {
+      "prefix": "",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 524288000,
+      "key_count": 125000
+    },
+    {
+      "prefix": "user:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 209715200,
+      "key_count": 50000
+    },
+    {
+      "prefix": "user:session:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 104857600,
+      "key_count": 25000
+    },
+    {
+      "prefix": "user:session:web:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 62914560,
+      "key_count": 15000
+    },
+    {
+      "prefix": "user:session:mobile:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "user:session:api:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 10485760,
+      "key_count": 2500
+    },
+    {
+      "prefix": "user:profile:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 73400320,
+      "key_count": 17500
+    },
+    {
+      "prefix": "user:profile:basic:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "user:profile:extended:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "user:preferences:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "cache:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 157286400,
+      "key_count": 37500
+    },
+    {
+      "prefix": "cache:page:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 83886080,
+      "key_count": 20000
+    },
+    {
+      "prefix": "cache:page:home:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "cache:page:product:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "cache:page:category:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 10485760,
+      "key_count": 2500
+    },
+    {
+      "prefix": "cache:api:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 52428800,
+      "key_count": 12500
+    },
+    {
+      "prefix": "cache:api:v1:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "cache:api:v2:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "cache:db:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "config:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 104857600,
+      "key_count": 25000
+    },
+    {
+      "prefix": "config:app:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 62914560,
+      "key_count": 15000
+    },
+    {
+      "prefix": "config:feature:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "config:system:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 10485760,
+      "key_count": 2500
+    },
+    {
+      "prefix": "metrics:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "metrics:daily:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "metrics:hourly:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 314572800,
+      "key_count": 75000
+    },
+    {
+      "prefix": "order:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 125829120,
+      "key_count": 30000
+    },
+    {
+      "prefix": "order:details:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 83886080,
+      "key_count": 20000
+    },
+    {
+      "prefix": "order:details:items:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 52428800,
+      "key_count": 12500
+    },
+    {
+      "prefix": "order:details:shipping:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "order:details:payment:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 10485760,
+      "key_count": 2500
+    },
+    {
+      "prefix": "order:status:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "order:history:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 10485760,
+      "key_count": 2500
+    },
+    {
+      "prefix": "product:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 104857600,
+      "key_count": 25000
+    },
+    {
+      "prefix": "product:catalog:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 62914560,
+      "key_count": 15000
+    },
+    {
+      "prefix": "product:inventory:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "product:reviews:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 10485760,
+      "key_count": 2500
+    },
+    {
+      "prefix": "shopping:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 62914560,
+      "key_count": 15000
+    },
+    {
+      "prefix": "shopping:cart:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "shopping:wishlist:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "analytics:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "hash",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "list",
+      "rdb_size": 167772160,
+      "key_count": 40000
+    },
+    {
+      "prefix": "queue:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "list",
+      "rdb_size": 104857600,
+      "key_count": 25000
+    },
+    {
+      "prefix": "queue:email:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "list",
+      "rdb_size": 52428800,
+      "key_count": 12500
+    },
+    {
+      "prefix": "queue:sms:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "list",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "queue:webhook:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "list",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "log:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "list",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "log:error:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "list",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "log:access:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "list",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "timeline:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "list",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "set",
+      "rdb_size": 83886080,
+      "key_count": 20000
+    },
+    {
+      "prefix": "tags:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "set",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "tags:product:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "set",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "tags:user:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "set",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "followers:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "set",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "permissions:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "set",
+      "rdb_size": 10485760,
+      "key_count": 2500
+    },
+    {
+      "prefix": "",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "zset",
+      "rdb_size": 125829120,
+      "key_count": 30000
+    },
+    {
+      "prefix": "leaderboard:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "zset",
+      "rdb_size": 62914560,
+      "key_count": 15000
+    },
+    {
+      "prefix": "leaderboard:daily:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "zset",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "leaderboard:weekly:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "zset",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "leaderboard:monthly:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "zset",
+      "rdb_size": 10485760,
+      "key_count": 2500
+    },
+    {
+      "prefix": "ranking:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "zset",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "ranking:product:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "zset",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "ranking:category:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "zset",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "scores:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "zset",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "stream",
+      "rdb_size": 62914560,
+      "key_count": 15000
+    },
+    {
+      "prefix": "events:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "stream",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "events:user:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "stream",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "events:system:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "stream",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "notifications:",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "type": "stream",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "",
+      "instance": "redis-slave-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 209715200,
+      "key_count": 50000
+    },
+    {
+      "prefix": "backup:",
+      "instance": "redis-slave-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 104857600,
+      "key_count": 25000
+    },
+    {
+      "prefix": "backup:daily:",
+      "instance": "redis-slave-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 62914560,
+      "key_count": 15000
+    },
+    {
+      "prefix": "backup:weekly:",
+      "instance": "redis-slave-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "sync:",
+      "instance": "redis-slave-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 83886080,
+      "key_count": 20000
+    },
+    {
+      "prefix": "sync:user:",
+      "instance": "redis-slave-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 52428800,
+      "key_count": 12500
+    },
+    {
+      "prefix": "sync:config:",
+      "instance": "redis-slave-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "temp:",
+      "instance": "redis-slave-01:6379",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "type": "string",
+      "rdb_size": 157286400,
+      "key_count": 37500
+    },
+    {
+      "prefix": "session:",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "type": "string",
+      "rdb_size": 104857600,
+      "key_count": 25000
+    },
+    {
+      "prefix": "session:admin:",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "type": "string",
+      "rdb_size": 62914560,
+      "key_count": 15000
+    },
+    {
+      "prefix": "session:guest:",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "type": "string",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "auth:",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "type": "string",
+      "rdb_size": 52428800,
+      "key_count": 12500
+    },
+    {
+      "prefix": "auth:token:",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "type": "string",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "auth:refresh:",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "type": "string",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "type": "hash",
+      "rdb_size": 104857600,
+      "key_count": 25000
+    },
+    {
+      "prefix": "admin:",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "type": "hash",
+      "rdb_size": 62914560,
+      "key_count": 15000
+    },
+    {
+      "prefix": "admin:settings:",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "type": "hash",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "admin:logs:",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "type": "hash",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "system:",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "type": "hash",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 314572800,
+      "key_count": 75000
+    },
+    {
+      "prefix": "api:",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 167772160,
+      "key_count": 40000
+    },
+    {
+      "prefix": "api:response:",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 104857600,
+      "key_count": 25000
+    },
+    {
+      "prefix": "api:response:v1:",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 62914560,
+      "key_count": 15000
+    },
+    {
+      "prefix": "api:response:v2:",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "api:rate_limit:",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "api:auth:",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 20971520,
+      "key_count": 5000
+    },
+    {
+      "prefix": "cdn:",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 104857600,
+      "key_count": 25000
+    },
+    {
+      "prefix": "cdn:images:",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 62914560,
+      "key_count": 15000
+    },
+    {
+      "prefix": "cdn:static:",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "geo:",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 41943040,
+      "key_count": 10000
+    },
+    {
+      "prefix": "geo:location:",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 31457280,
+      "key_count": 7500
+    },
+    {
+      "prefix": "geo:region:",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "type": "string",
+      "rdb_size": 10485760,
+      "key_count": 2500
+    }
+  ]
+}

@@ -1,0 +1,1731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RDBInsight Report</title>
+    
+    <!-- Vue.js 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    
+    <!-- Naive UI -->
+    <script src="https://unpkg.com/naive-ui@2.42.0/dist/index.prod.js"></script>
+    
+    <!-- D3.js and d3-flame-graph -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.css" type="text/css">
+    
+    <!-- Vfonts for Naive UI icons -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" type="text/css">
+    <link rel="stylesheet" href="https://unpkg.com/vfonts@0.1.0/Lato.css" type="text/css">
+    <link rel="stylesheet" href="https://unpkg.com/vfonts@0.1.0/FiraCode.css" type="text/css">
+    
+    <!-- Error Handling -->
+    <script>
+        // Global error handling for better debugging
+        window.addEventListener('error', (event) => {
+            console.error('Global JavaScript error:', event.error);
+            console.error('Error details:', {
+                message: event.message,
+                filename: event.filename,
+                lineno: event.lineno,
+                colno: event.colno
+            });
+        });
+        
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('Unhandled promise rejection:', event.reason);
+        });
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, initializing RDBInsight report...');
+        });
+    </script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+        
+        #app {
+            min-height: 100vh;
+            max-width: 100vw;
+        }
+        
+        .main-container {
+            max-width: 1600px;
+            margin-left: auto;
+            margin-right: auto;
+            transition: margin 0.3s ease;
+        }
+        
+        /* Enhanced card styles with shadows and animations */
+        .card-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+        }
+        
+        .card-container:hover {
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.12);
+        }
+        
+        /* Header enhancements */
+        .header-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            transition: all 0.3s ease;
+        }
+        
+        .header-card:hover {
+            box-shadow: 0 6px 30px rgba(0, 0, 0, 0.12);
+        }
+        
+        /* Filter bar enhancements */
+        .filter-card {
+            background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+            border-radius: 12px;
+            box-shadow: 0 2px 16px rgba(0, 0, 0, 0.06);
+            border: 1px solid rgba(226, 232, 240, 0.8);
+            transition: all 0.3s ease;
+        }
+        
+        .filter-card:hover {
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Sidebar enhancements */
+        .sidebar-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%);
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+            border: 1px solid rgba(226, 232, 240, 0.6);
+            transition: all 0.3s ease;
+            overflow: hidden;
+        }
+        
+        .sidebar-card:hover {
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+        }
+        
+        /* Main content area enhancements */
+        .main-content-card {
+            background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            border: 1px solid rgba(226, 232, 240, 0.6);
+            transition: all 0.3s ease;
+        }
+        
+        .main-content-card:hover {
+            box-shadow: 0 6px 28px rgba(0, 0, 0, 0.12);
+        }
+        
+        /* Responsive grid layouts */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+        }
+        
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+        }
+        
+        .distribution-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+        
+        /* Enhanced clickable elements */
+        .clickable-element {
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 8px;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid transparent;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .clickable-element::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+            transition: left 0.5s;
+        }
+        
+        .clickable-element:hover::before {
+            left: 100%;
+        }
+        
+        .clickable-element:hover {
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            border-color: #cbd5e1;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        
+        .clickable-element.copied {
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%) !important;
+            border-color: #3b82f6 !important;
+            color: #1d4ed8 !important;
+            transform: scale(1.02);
+        }
+        
+        .header-stat-item.clickable-element.copied {
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%) !important;
+            border-color: #3b82f6 !important;
+            color: #1d4ed8 !important;
+        }
+        
+        /* Enhanced stat cards */
+        .stat-card {
+            text-align: center;
+            padding: 8px 12px;
+            border-radius: 10px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            border: 1px solid rgba(226, 232, 240, 0.5);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6, #06b6d4);
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+        }
+        
+        .stat-card:hover::before {
+            transform: translateX(0);
+        }
+        
+        .stat-card:hover {
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Enhanced header stats with hover animation */
+        .header-stat-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: #333;
+            padding: 6px 10px;
+            border-radius: 8px;
+            height: 32px;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid transparent;
+            position: relative;
+            overflow: hidden;
+            cursor: default;
+        }
+        
+        .header-stat-item::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.05), transparent);
+            transition: left 0.4s ease;
+        }
+        
+        .header-stat-item:hover::before {
+            left: 100%;
+        }
+        
+        .header-stat-item:hover {
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            border-color: #cbd5e1;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+        
+        /* Enhanced distribution items */
+        .distribution-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-radius: 6px;
+            transition: all 0.25s ease;
+            margin: 0 -6px;
+            padding-left: 6px;
+            padding-right: 6px;
+        }
+        
+        .distribution-item:hover {
+            background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+            transform: translateX(2px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+        
+        /* Enhanced progress bars */
+        .progress-bar {
+            width: 40px;
+            height: 4px;
+            background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+            border-radius: 3px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(45deg, 
+                transparent 25%, 
+                rgba(255, 255, 255, 0.3) 25%, 
+                rgba(255, 255, 255, 0.3) 50%, 
+                transparent 50%, 
+                transparent 75%, 
+                rgba(255, 255, 255, 0.3) 75%);
+            background-size: 8px 8px;
+            animation: progress-shine 2s linear infinite;
+        }
+        
+        @keyframes progress-shine {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+        
+        /* Enhanced buttons */
+        .enhanced-button {
+            border-radius: 8px;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .enhanced-button::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transition: all 0.3s ease;
+            transform: translate(-50%, -50%);
+        }
+        
+        .enhanced-button:hover::before {
+            width: 100px;
+            height: 100px;
+        }
+        
+        .enhanced-button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+        
+        .enhanced-button:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Enhanced tags */
+        .enhanced-tag {
+            border-radius: 6px;
+            transition: all 0.2s ease;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        
+        .enhanced-tag:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+        }
+        
+        /* Enhanced input fields */
+        .enhanced-input {
+            border-radius: 8px;
+            transition: all 0.25s ease;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        
+        .enhanced-input:focus {
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1), 0 2px 8px rgba(0, 0, 0, 0.15);
+            transform: translateY(-1px);
+        }
+        
+        /* Fix for Naive UI select component extra spacing */
+        .filter-bar .n-select,
+        .filter-bar .n-select *,
+        .filter-bar .enhanced-input,
+        .filter-bar .enhanced-input * {
+            margin: 0 !important;
+            padding-bottom: 0 !important;
+            margin-bottom: 0 !important;
+        }
+        
+        .filter-bar .n-base-selection,
+        .filter-bar .n-base-selection__border,
+        .filter-bar .n-base-selection__state-border {
+            margin: 0 !important;
+            padding-bottom: 0 !important;
+            margin-bottom: 0 !important;
+        }
+        
+        /* Force height and remove any overflow */
+        .filter-bar .n-select {
+            height: 32px !important;
+            max-height: 32px !important;
+            overflow: hidden !important;
+        }
+        
+        .filter-bar .n-base-selection {
+            height: 32px !important;
+            max-height: 32px !important;
+            min-height: 32px !important;
+            box-sizing: border-box !important;
+        }
+        
+        /* Aggressive fix for any remaining spacing issues */
+        .filter-bar > div {
+            overflow: hidden !important;
+        }
+        
+        .filter-bar .n-select::after,
+        .filter-bar .enhanced-input::after {
+            display: none !important;
+        }
+        
+        /* Remove any pseudo-elements that might cause spacing */
+        .filter-bar * {
+            box-sizing: border-box !important;
+        }
+        
+        .filter-bar *::before,
+        .filter-bar *::after {
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        
+        /* Responsive design for the new layout */
+        @media (max-width: 1200px) {
+            /* Adjust main layout for medium screens */
+            .main-layout {
+                grid-template-columns: 260px 1fr !important;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            /* Stack layout vertically on tablets */
+            .main-layout {
+                grid-template-columns: 1fr !important;
+                grid-template-rows: auto 1fr;
+                height: auto !important;
+            }
+            
+            .sidebar {
+                max-height: 300px !important;
+            }
+            
+            .filter-bar {
+                grid-template-columns: 1fr 1fr !important;
+                gap: 12px !important;
+            }
+            
+            .header-stats {
+                gap: 16px !important;
+            }
+            
+            /* Reduce margins on tablets */
+            .main-container {
+                margin: 6px !important;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            /* Single column layout on mobile */
+            .filter-bar {
+                grid-template-columns: 1fr !important;
+                gap: 8px !important;
+            }
+            
+            .header-stats {
+                flex-direction: column !important;
+                gap: 8px !important;
+            }
+            
+            .header-content {
+                flex-direction: column !important;
+                align-items: flex-start !important;
+                gap: 12px !important;
+            }
+            
+            /* Minimal margins on mobile */
+            .main-container {
+                margin: 4px !important;
+                border-radius: 8px !important;
+            }
+        }
+        
+        #flame-chart {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .flame-chart-controls {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+        }
+
+        .flame-details {
+            padding: 10px 16px;
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            border-top: 1px solid rgba(226, 232, 240, 0.4);
+            font-family: 'Fira Code', monospace;
+            font-size: 12px;
+            color: #64748b;
+            min-height: 20px;
+            transition: all 0.3s ease;
+            margin: 0 8px;
+            border-radius: 0 0 8px 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            position: relative;
+            border-left: 1px solid rgba(226, 232, 240, 0.3);
+            border-right: 1px solid rgba(226, 232, 240, 0.3);
+            border-bottom: 1px solid rgba(226, 232, 240, 0.3);
+        }
+        
+        .flame-details::before {
+            content: '';
+            position: absolute;
+            left: 8px;
+            right: 8px;
+            top: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.1), transparent);
+        }
+
+        /* Enhanced success indicator */
+        .success-indicator {
+            color: #059669;
+            font-size: 12px;
+            font-weight: 500;
+            white-space: nowrap;
+            padding: 6px 12px;
+            background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+            border: 1px solid #a7f3d0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(5, 150, 105, 0.1);
+            transition: all 0.3s ease;
+            animation: success-pulse 2s infinite;
+        }
+        
+        @keyframes success-pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+        
+        .success-indicator:hover {
+            box-shadow: 0 4px 8px rgba(5, 150, 105, 0.15);
+            transform: translateY(-1px);
+        }
+
+        /* Override d3-flamegraph default styles for better integration */
+        .d3-flame-graph .d3-flame-graph-label {
+            font-family: 'Roboto', sans-serif;
+            font-weight: 400;
+            fill: #888;
+            opacity: 0.8;
+        }
+
+        .d3-flame-graph rect {
+            stroke: #fff;
+            stroke-width: 1px;
+            transition: all 0.2s ease;
+        }
+        
+        .d3-flame-graph rect:hover {
+            stroke-width: 2px;
+            filter: brightness(1.1);
+        }
+        
+        /* Enhanced section dividers */
+        .section-divider {
+            border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+            position: relative;
+        }
+        
+        .section-divider::after {
+            content: '';
+            position: absolute;
+            bottom: -1px;
+            left: 0;
+            width: 40px;
+            height: 2px;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+            border-radius: 1px;
+        }
+        
+        /* Subtle loading animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.6s ease-out;
+        }
+        
+        /* Enhanced scrollbar */
+        .sidebar-card::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .sidebar-card::-webkit-scrollbar-track {
+            background: rgba(241, 245, 249, 0.5);
+            border-radius: 3px;
+        }
+        
+        .sidebar-card::-webkit-scrollbar-thumb {
+            background: linear-gradient(135deg, #cbd5e1, #94a3b8);
+            border-radius: 3px;
+            transition: all 0.3s ease;
+        }
+        
+        .sidebar-card::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(135deg, #94a3b8, #64748b);
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Container with unified background -->
+        <div class="main-container" style="margin: 8px 8px; background: white; border-radius: 12px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12); overflow: hidden;">
+            <!-- Ultra Compact Header -->
+            <div class="header-card fade-in" style="padding: 10px 24px; border-radius: 0; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06); border-bottom: 1px solid rgba(226, 232, 240, 0.8); background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);">
+                <div class="header-content" style="display: flex; justify-content: space-between; align-items: center; min-height: 24px;">
+                    <!-- Left: Inline App Info -->
+                    <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;">
+                        <span style="font-size: 18px; font-weight: 600; color: #333; line-height: 32px; flex-shrink: 0; display: flex; align-items: center;">RDBInsight</span>
+
+                        <n-tooltip 
+                            :show-arrow="false"
+                            :delay="400"
+                            placement="bottom"
+                        >
+                            <template #trigger>
+                                <div 
+                                    class="header-stat-item clickable-element"
+                                    :class="{ copied: copiedItem === 'cluster' }"
+                                    @click="copyToClipboard(cluster, 'cluster')"
+                                    @mouseenter="hoveredItem = 'cluster'"
+                                    @mouseleave="hoveredItem = null"
+                                    style="cursor: pointer; min-width: 200px; max-width: 300px;"
+                                >
+                                    <span style="color: #666; font-size: 12px;">Cluster:</span>
+                                    <span style="font-weight: 600; font-size: 13px; font-family: 'Fira Code', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;">{{ cluster }}</span>
+                                    <n-icon size="12" :style="{ opacity: hoveredItem === 'cluster' || copiedItem === 'cluster' ? 1 : 0, transition: 'opacity 0.2s', marginLeft: '4px', flexShrink: 0 }">
+                                        <svg v-if="copiedItem === 'cluster'" viewBox="0 0 24 24">
+                                            <path fill="currentColor" d="M9,20.42L2.79,14.21L5.62,11.38L9,14.77L18.88,4.88L21.71,7.71L9,20.42Z"/>
+                                        </svg>
+                                        <svg v-else viewBox="0 0 24 24">
+                                            <path fill="currentColor" d="M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z"/>
+                                        </svg>
+                                    </n-icon>
+                                </div>
+                            </template>
+                            {{ copiedItem === 'cluster' ? 'Copied cluster name!' : 'Redis cluster name - Click to copy' }}
+                        </n-tooltip>
+
+                        <n-tooltip 
+                            :show-arrow="false"
+                            :delay="400"
+                            placement="bottom"
+                        >
+                            <template #trigger>
+                                <div 
+                                    class="header-stat-item clickable-element"
+                                    :class="{ copied: copiedItem === 'batch' }"
+                                    @click="copyToClipboard(batch, 'batch')"
+                                    @mouseenter="hoveredItem = 'batch'"
+                                    @mouseleave="hoveredItem = null"
+                                    style="cursor: pointer; min-width: 280px; max-width: 350px;"
+                                >
+                                    <span style="color: #666; font-size: 12px;">Batch:</span>
+                                    <span style="font-weight: 600; font-size: 13px; font-family: 'Fira Code', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;">{{ batch }}</span>
+                                    <n-icon size="12" :style="{ opacity: hoveredItem === 'batch' || copiedItem === 'batch' ? 1 : 0, transition: 'opacity 0.2s', marginLeft: '4px', flexShrink: 0 }">
+                                        <svg v-if="copiedItem === 'batch'" viewBox="0 0 24 24">
+                                            <path fill="currentColor" d="M9,20.42L2.79,14.21L5.62,11.38L9,14.77L18.88,4.88L21.71,7.71L9,20.42Z"/>
+                                        </svg>
+                                        <svg v-else viewBox="0 0 24 24">
+                                            <path fill="currentColor" d="M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z"/>
+                                        </svg>
+                                    </n-icon>
+                                </div>
+                            </template>
+                            {{ copiedItem === 'batch' ? 'Copied batch timestamp!' : 'RDB dump batch timestamp - Click to copy' }}
+                        </n-tooltip>
+                    </div>
+                    
+                    <!-- Right: Inline Stats and Export -->
+                    <div class="header-stats" style="display: flex; gap: 12px; align-items: center; flex-shrink: 0; font-size: 12px;">
+                        <n-tooltip 
+                            :show-arrow="false"
+                            :delay="400"
+                            placement="bottom"
+                        >
+                            <template #trigger>
+                                <div 
+                                    class="header-stat-item"
+                                    @mouseenter="hoveredStat = 'memory'"
+                                    @mouseleave="hoveredStat = null"
+                                >
+                                    <span style="color: #666; font-size: 12px;">Memory:</span>
+                                    <span style="font-weight: 600; font-size: 13px;">{{ formatSize(totalFilteredSize) }}</span>
+                                </div>
+                            </template>
+                            Total memory usage for current filter selection
+                        </n-tooltip>
+                        <n-tooltip 
+                            :show-arrow="false"
+                            :delay="400"
+                            placement="bottom"
+                        >
+                            <template #trigger>
+                                <div 
+                                    class="header-stat-item"
+                                    @mouseenter="hoveredStat = 'coverage'"
+                                    @mouseleave="hoveredStat = null"
+                                >
+                                    <span style="color: #666; font-size: 12px;">Coverage:</span>
+                                    <span style="font-weight: 600; font-size: 13px;">{{ coveragePercentage }}%</span>
+                                </div>
+                            </template>
+                            Percentage of total data covered by current filters
+                        </n-tooltip>
+                        <n-tooltip 
+                            :show-arrow="false"
+                            :delay="400"
+                            placement="bottom"
+                        >
+                            <template #trigger>
+                                <div 
+                                    class="header-stat-item"
+                                    @mouseenter="hoveredStat = 'active'"
+                                    @mouseleave="hoveredStat = null"
+                                >
+                                    <span style="color: #666; font-size: 12px;">Classes:</span>
+                                    <span style="font-weight: 600; font-size: 13px;">{{ filteredData.length }}/{{ totalClassifications }}</span>
+                                </div>
+                            </template>
+                            Number of data classifications matching current filters
+                        </n-tooltip>
+                        
+                        <div style="margin-left: 4px;">
+                            <n-button 
+                                @click="exportJsonData" 
+                                size="small" 
+                                :type="copiedItem === 'export' ? 'success' : 'primary'"
+                                :title="copiedItem === 'export' ? 'JSON data exported successfully!' : 'Export raw JSON data with current filter settings'"
+                                class="enhanced-button"
+                                style="height: 32px; padding: 0 12px; font-size: 12px;"
+                            >
+                                <template #icon>
+                                    <n-icon size="14">
+                                        <svg v-if="copiedItem === 'export'" viewBox="0 0 24 24">
+                                            <path fill="currentColor" d="M9,20.42L2.79,14.21L5.62,11.38L9,14.77L18.88,4.88L21.71,7.71L9,20.42Z"/>
+                                        </svg>
+                                        <svg v-else viewBox="0 0 24 24">
+                                            <path fill="currentColor" d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                                        </svg>
+                                    </n-icon>
+                                </template>
+                                Export
+                            </n-button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Compact Filter Bar -->
+            <div class="filter-card fade-in" style="padding: 24px 24px 22px 24px; border-radius: 0; box-shadow: none; border-bottom: 1px solid rgba(226, 232, 240, 0.5); background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border-top: 1px solid rgba(226, 232, 240, 0.3);">
+                <div class="filter-bar" style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 24px; align-items: end;">
+                    <div style="display: flex; flex-direction: column;">
+                        <n-text style="font-size: 13px; color: #666; font-weight: 500; display: block; margin-bottom: 10px; line-height: 1;">Data Types</n-text>
+                        <n-select
+                            v-model:value="selectedTypes"
+                            multiple
+                            :options="typeOptions"
+                            placeholder="All types"
+                            clearable
+                            filterable
+                            size="small"
+                            :max-tag-count="2"
+                            class="enhanced-input"
+                            style="height: 32px !important; max-height: 32px !important; margin: 0 !important; padding: 0 !important; overflow: hidden;"
+                        />
+                    </div>
+                    
+                    <div style="display: flex; flex-direction: column;">
+                        <n-text style="font-size: 13px; color: #666; font-weight: 500; display: block; margin-bottom: 10px; line-height: 1;">Redis Instances</n-text>
+                        <n-select
+                            v-model:value="selectedInstances"
+                            multiple
+                            :options="instanceOptions"
+                            placeholder="All instances"
+                            clearable
+                            filterable
+                            size="small"
+                            :max-tag-count="1"
+                            class="enhanced-input"
+                            style="height: 32px !important; max-height: 32px !important; margin: 0 !important; padding: 0 !important; overflow: hidden;"
+                        />
+                    </div>
+                    
+                    <div style="display: flex; flex-direction: column;">
+                        <n-text style="font-size: 13px; color: #666; font-weight: 500; display: block; margin-bottom: 10px; line-height: 1;">Databases</n-text>
+                        <n-select
+                            v-model:value="selectedDbs"
+                            multiple
+                            :options="dbOptions"
+                            placeholder="All databases"
+                            clearable
+                            filterable
+                            size="small"
+                            :max-tag-count="3"
+                            class="enhanced-input"
+                            style="height: 32px !important; max-height: 32px !important; margin: 0 !important; padding: 0 !important; overflow: hidden;"
+                        />
+                    </div>
+                    
+                    <div v-if="filteredData.length > 0" style="display: flex; align-items: end; justify-content: center;">
+                        <div class="success-indicator" style="height: 32px; display: flex; align-items: center; justify-content: center; margin: 0;">
+                            ✓ Filtered
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Show warning only when no data matches -->
+                <n-alert 
+                    v-if="filteredData.length === 0" 
+                    title="No Data Matches Current Filters" 
+                    type="warning"
+                    style="margin-top: 12px;"
+                    show-icon
+                >
+                    Please adjust your filter selections above to view data.
+                </n-alert>
+            </div>
+
+            <!-- Main Content: Side-by-side Layout -->
+            <div class="main-layout" style="display: grid; grid-template-columns: 280px 1fr; gap: 0; height: calc(100vh - 168px); border-top: 1px solid rgba(226, 232, 240, 0.6);">
+                
+                <!-- Left Sidebar: Distribution Stats -->
+                <div class="sidebar-card fade-in" style="padding: 20px 16px; overflow-y: auto; background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border-right: 1px solid rgba(226, 232, 240, 0.5); border-radius: 0; box-shadow: none;">
+                    <div v-if="filteredData.length > 0">
+                        <!-- Data Types Distribution -->
+                        <div style="margin-bottom: 20px;">
+                            <div class="section-divider" style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                                <n-icon size="16" style="color: #666;">
+                                    <svg viewBox="0 0 24 24">
+                                        <path fill="currentColor" d="M12,2A2,2 0 0,1 14,4V8A2,2 0 0,1 12,10A2,2 0 0,1 10,8V4A2,2 0 0,1 12,2M21,9V7L19,8L21,9M15,9V7L13,8L15,9M9,9V7L7,8L9,9M3,9V7L1,8L3,9M12,10.5A2.5,2.5 0 0,1 14.5,13A2.5,2.5 0 0,1 12,15.5A2.5,2.5 0 0,1 9.5,13A2.5,2.5 0 0,1 12,10.5M12,17L15,20H9L12,17Z"/>
+                                    </svg>
+                                </n-icon>
+                                <span style="font-size: 14px; font-weight: 600; color: #555;">By Data Type</span>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 3px;">
+                                <div 
+                                    v-for="typeStats in typeDistribution" 
+                                    :key="typeStats.type"
+                                    class="distribution-item"
+                                >
+                                    <div style="display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;">
+                                        <n-tag :type="getTypeTagColor(typeStats.type)" size="small" class="enhanced-tag" style="flex-shrink: 0;">
+                                            {{ typeStats.type }}
+                                        </n-tag>
+                                        <span style="font-size: 10px; color: #888;">
+                                            {{ formatSize(typeStats.size) }}
+                                        </span>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                                        <div class="progress-bar">
+                                            <div 
+                                                class="progress-fill"
+                                                :style="{
+                                                    width: typeStats.percentage + '%',
+                                                    background: getTypeColor(typeStats.type)
+                                                }"
+                                            ></div>
+                                        </div>
+                                        <span style="font-size: 11px; font-weight: 500; min-width: 32px; text-align: right;">
+                                            {{ typeStats.percentage.toFixed(1) }}%
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Database Distribution -->
+                        <div>
+                            <div class="section-divider" style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                                <n-icon size="16" style="color: #666;">
+                                    <svg viewBox="0 0 24 24">
+                                        <path fill="currentColor" d="M12,3C7.58,3 4,4.79 4,7C4,9.21 7.58,11 12,11C16.42,11 20,9.21 20,7C20,4.79 16.42,3 12,3M4,9V12C4,14.21 7.58,16 12,16C16.42,16 20,14.21 20,12V9C20,11.21 16.42,13 12,13C7.58,13 4,11.21 4,9M4,14V17C4,19.21 7.58,21 12,21C16.42,21 20,19.21 20,17V14C20,16.21 16.42,18 12,18C7.58,18 4,16.21 4,14Z"/>
+                                    </svg>
+                                </n-icon>
+                                <span style="font-size: 14px; font-weight: 600; color: #555;">By Database</span>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 3px;">
+                                <div 
+                                    v-for="dbStats in dbDistribution" 
+                                    :key="dbStats.db"
+                                    class="distribution-item"
+                                >
+                                    <div style="display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;">
+                                        <n-tag type="info" size="small" class="enhanced-tag" style="flex-shrink: 0;">
+                                            DB {{ dbStats.db }}
+                                        </n-tag>
+                                        <span style="font-size: 10px; color: #888;">
+                                            {{ formatSize(dbStats.size) }}
+                                        </span>
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                                        <div class="progress-bar">
+                                            <div 
+                                                class="progress-fill"
+                                                :style="{
+                                                    width: dbStats.percentage + '%',
+                                                    background: getDbColor(dbStats.db)
+                                                }"
+                                            ></div>
+                                        </div>
+                                        <span style="font-size: 11px; font-weight: 500; min-width: 32px; text-align: right;">
+                                            {{ dbStats.percentage.toFixed(1) }}%
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- No data message for sidebar -->
+                    <div v-else style="text-align: center; padding: 40px 20px; color: #999;">
+                        <n-icon size="32" style="margin-bottom: 12px; opacity: 0.5;">
+                            <svg viewBox="0 0 24 24">
+                                <path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M11,16.5L6.5,12L7.91,10.59L11,13.67L16.59,8.09L18,9.5L11,16.5Z"/>
+                            </svg>
+                        </n-icon>
+                        <div style="font-size: 13px;">No data matches current filters</div>
+                    </div>
+                </div>
+                
+                <!-- Right Main Area: Flame Graph -->
+                <div class="main-content-card fade-in" style="display: flex; flex-direction: column; min-height: 0; border-radius: 0; box-shadow: none; background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);">
+                    <div class="flame-chart-controls" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; min-height: 48px;">
+                        <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: #333; line-height: 1.1;">Memory Distribution Flame Graph</h3>
+                        <div v-if="filteredData.length > 0" style="display: flex; gap: 10px; align-items: center;">
+                            <n-input
+                                v-model:value="searchTerm"
+                                placeholder="Search prefixes (regex)"
+                                clearable
+                                size="small"
+                                class="enhanced-input"
+                                style="width: 200px; height: 32px;"
+                                @input="onSearchInput"
+                            >
+                                <template #prefix>
+                                    <n-icon size="14">
+                                        <svg viewBox="0 0 24 24">
+                                            <path fill="currentColor" d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/>
+                                        </svg>
+                                    </n-icon>
+                                </template>
+                            </n-input>
+                            
+                            <n-button @click="resetZoom" size="small" type="default" class="enhanced-button" style="height: 32px; padding: 0 12px; font-size: 12px;">
+                                <template #icon>
+                                    <n-icon size="14">
+                                        <svg viewBox="0 0 24 24">
+                                            <path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M7,13H17V11H7V13Z"/>
+                                        </svg>
+                                    </n-icon>
+                                </template>
+                                Reset
+                            </n-button>
+                        </div>
+                    </div>
+                    
+                    <div style="flex: 1; position: relative; min-height: 0; display: flex; flex-direction: column;">
+                        <div v-if="filteredData.length === 0" style="position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #999;">
+                            <n-icon size="48" style="margin-bottom: 16px; opacity: 0.5;">
+                                <svg viewBox="0 0 24 24">
+                                    <path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M11,16.5L6.5,12L7.91,10.59L11,13.67L16.59,8.09L18,9.5L11,16.5Z"/>
+                                </svg>
+                            </n-icon>
+                            <div style="font-size: 16px;">Select filters above to display the flame graph</div>
+                        </div>
+                        
+                        <div v-else style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+                            <div style="flex: 1; margin: 0 8px; background: white; border-radius: 8px 8px 0 0; box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05); position: relative; z-index: 1; border: 1px solid rgba(226, 232, 240, 0.3); border-bottom: none;">
+                                <div id="flame-chart" style="height: 100%; border-radius: 8px 8px 0 0; overflow: hidden;"></div>
+                            </div>
+                            <div class="flame-details" id="flame-details">
+                                Click on a frame to zoom in, or use search to highlight specific prefixes
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script id="rdbinsight-data" type="application/json" src="./report.json"></script>
+
+    <script>
+        // Wait for all dependencies to load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Check if all required dependencies are loaded
+            if (typeof Vue === 'undefined') {
+                console.error('Vue is not loaded');
+                return;
+            }
+            if (typeof naive === 'undefined') {
+                console.error('Naive UI is not loaded');
+                return;
+            }
+            if (typeof d3 === 'undefined') {
+                console.error('D3 is not loaded');
+                return;
+            }
+            if (typeof flamegraph === 'undefined') {
+                console.error('d3-flame-graph is not loaded');
+                return;
+            }
+            
+            console.log('All dependencies loaded successfully');
+            initializeApp();
+        });
+        
+        function initializeApp() {
+            const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
+            const { 
+                NCard, NH1, NH3, NH4, NText, NSelect, NAlert, NStatisticGroup, NStatistic, 
+                NCollapse, NCollapseItem, NSpace, NTag, NIcon, NInput, NButton,
+                NGrid, NGridItem, NTooltip
+            } = naive;
+
+            const app = createApp({
+                components: {
+                    NCard, NH1, NH3, NH4, NText, NSelect, NAlert, NStatisticGroup, NStatistic,
+                    NCollapse, NCollapseItem, NSpace, NTag, NIcon, NInput, NButton,
+                    NGrid, NGridItem, NTooltip
+                },
+                setup() {
+                // Reactive data
+                const reportData = ref([]);
+                const selectedTypes = ref([]);
+                const selectedInstances = ref([]);
+                const selectedDbs = ref([]);
+                const searchTerm = ref('');
+                const flameGraph = ref(null);
+                const hoveredItem = ref(null);
+                const copiedItem = ref(null);
+                const hoveredStat = ref(null);
+                const dataLoaded = ref(false);
+                
+                // Cluster and batch info from report data
+                const cluster = ref('');
+                const batch = ref('');
+
+                // Computed properties for filter options
+                const typeOptions = computed(() => {
+                    const types = [...new Set(reportData.value.map(item => item.type))].sort();
+                    return types.map(type => ({ label: type, value: type }));
+                });
+
+                const instanceOptions = computed(() => {
+                    const instances = [...new Set(reportData.value.map(item => item.instance))].sort();
+                    return instances.map(instance => ({ label: instance, value: instance }));
+                });
+
+                const dbOptions = computed(() => {
+                    const dbs = [...new Set(reportData.value.map(item => item.db))].sort((a, b) => a - b);
+                    return dbs.map(db => ({ label: `DB ${db}`, value: db }));
+                });
+
+                // Computed filtered data - filter the raw prefix records
+                const filteredPrefixRecords = computed(() => {
+                    return reportData.value.filter(record => {
+                        const typeMatch = selectedTypes.value.length === 0 || selectedTypes.value.includes(record.type);
+                        const instanceMatch = selectedInstances.value.length === 0 || selectedInstances.value.includes(record.instance);
+                        const dbMatch = selectedDbs.value.length === 0 || selectedDbs.value.includes(record.db);
+                        return typeMatch && instanceMatch && dbMatch;
+                    });
+                });
+
+                // Computed filtered classifications for UI display
+                const filteredData = computed(() => {
+                    // Group filtered records by classification to get unique classifications
+                    const classificationMap = new Map();
+                    
+                    filteredPrefixRecords.value.forEach(record => {
+                        const key = `${record.type}:${record.instance}:${record.db}`;
+                        if (!classificationMap.has(key)) {
+                            classificationMap.set(key, {
+                                classification: {
+                                    type: record.type,
+                                    instance: record.instance,
+                                    db: record.db
+                                },
+                                total_size: 0
+                            });
+                        }
+                        classificationMap.get(key).total_size += record.rdb_size;
+                    });
+                    
+                    return Array.from(classificationMap.values());
+                });
+
+                // Computed statistics
+                const totalClassifications = computed(() => {
+                    const uniqueClassifications = new Set();
+                    reportData.value.forEach(record => {
+                        uniqueClassifications.add(`${record.type}:${record.instance}:${record.db}`);
+                    });
+                    return uniqueClassifications.size;
+                });
+                
+                const totalFilteredSize = computed(() => {
+                    // Only calculate after data is loaded
+                    if (!dataLoaded.value || !filteredPrefixRecords.value || filteredPrefixRecords.value.length === 0) return 0;
+                    return filteredPrefixRecords.value
+                        .filter(record => record.prefix === '')
+                        .reduce((sum, record) => sum + record.rdb_size, 0);
+                });
+                
+                const totalSize = computed(() => {
+                    // Only calculate after data is loaded
+                    if (!dataLoaded.value || !reportData.value || reportData.value.length === 0) return 0;
+                    return reportData.value
+                        .filter(record => record.prefix === '')
+                        .reduce((sum, record) => sum + record.rdb_size, 0);
+                });
+                
+                const coveragePercentage = computed(() => {
+                    const total = totalSize.value;
+                    const filtered = totalFilteredSize.value;
+                    if (!total || total === 0) return 0;
+                    return Math.round((filtered / total) * 100);
+                });
+
+                // Computed distribution statistics
+                const typeDistribution = computed(() => {
+                    if (!dataLoaded.value || !filteredPrefixRecords.value || filteredPrefixRecords.value.length === 0) return [];
+                    
+                    const typeMap = new Map();
+                    
+                    // Only use empty prefix records (classification totals) to avoid double counting
+                    filteredPrefixRecords.value
+                        .filter(record => record.prefix === '')
+                        .forEach(record => {
+                            const type = record.type;
+                            const size = record.rdb_size;
+                            
+                            if (typeMap.has(type)) {
+                                typeMap.set(type, typeMap.get(type) + size);
+                            } else {
+                                typeMap.set(type, size);
+                            }
+                        });
+                    
+                    const total = totalFilteredSize.value;
+                    const result = Array.from(typeMap.entries())
+                        .map(([type, size]) => ({
+                            type,
+                            size,
+                            percentage: total > 0 ? (size / total) * 100 : 0
+                        }))
+                        .sort((a, b) => b.size - a.size);
+                    
+                    return result;
+                });
+
+                const dbDistribution = computed(() => {
+                    if (!dataLoaded.value || !filteredPrefixRecords.value || filteredPrefixRecords.value.length === 0) return [];
+                    
+                    const dbMap = new Map();
+                    
+                    // Only use empty prefix records (classification totals) to avoid double counting
+                    filteredPrefixRecords.value
+                        .filter(record => record.prefix === '')
+                        .forEach(record => {
+                            const db = record.db;
+                            const size = record.rdb_size;
+                            
+                            if (dbMap.has(db)) {
+                                dbMap.set(db, dbMap.get(db) + size);
+                            } else {
+                                dbMap.set(db, size);
+                            }
+                        });
+                    
+                    const total = totalFilteredSize.value;
+                    const result = Array.from(dbMap.entries())
+                        .map(([db, size]) => ({
+                            db,
+                            size,
+                            percentage: total > 0 ? (size / total) * 100 : 0
+                        }))
+                        .sort((a, b) => a.db - b.db); // Sort by database number
+                    
+                    return result;
+                });
+
+                // Utility functions
+                const formatSize = (bytes) => {
+                    if (typeof bytes !== 'number' || isNaN(bytes)) return 'N/A';
+                    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+                    let size = bytes;
+                    let unitIndex = 0;
+                    
+                    while (size >= 1024 && unitIndex < units.length - 1) {
+                        size /= 1024;
+                        unitIndex++;
+                    }
+                    
+                    return `${size.toFixed(1)} ${units[unitIndex]}`;
+                };
+                
+                const getClassificationKey = (item) => {
+                    return `${item.classification.type}:${item.classification.instance}:${item.classification.db}`;
+                };
+                
+                const getClassificationDisplay = (item) => {
+                    return `${item.classification.type}:${item.classification.instance}:${item.classification.db}`;
+                };
+
+                // Color helper functions
+                const getTypeColor = (type) => {
+                    const colors = {
+                        'string': '#18a058',
+                        'hash': '#2080f0',
+                        'list': '#f0a020',
+                        'set': '#d03050',
+                        'zset': '#7c3aed',
+                        'stream': '#0ea5e9'
+                    };
+                    return colors[type] || '#666666';
+                };
+
+                const getTypeTagColor = (type) => {
+                    const tagColors = {
+                        'string': 'success',
+                        'hash': 'info',
+                        'list': 'warning',
+                        'set': 'error',
+                        'zset': 'primary',
+                        'stream': 'info'
+                    };
+                    return tagColors[type] || 'default';
+                };
+
+                const getDbColor = (db) => {
+                    // Generate colors based on database number
+                    const colors = [
+                        '#18a058', '#2080f0', '#f0a020', '#d03050', 
+                        '#7c3aed', '#0ea5e9', '#ef4444', '#10b981',
+                        '#8b5cf6', '#06b6d4', '#f59e0b', '#ec4899',
+                        '#14b8a6', '#6366f1', '#84cc16', '#f97316'
+                    ];
+                    return colors[db % colors.length];
+                };
+
+                // Convert aggregated prefix data to unified flame graph structure
+                const convertToFlameGraphData = (filteredPrefixRecords) => {
+                    if (filteredPrefixRecords.length === 0) return null;
+
+                    // Step 1: Aggregate all prefix records across classifications
+                    const prefixAggregateMap = new Map();
+                    
+                    filteredPrefixRecords.forEach(record => {
+                        const prefix = record.prefix;
+                        const size = record.rdb_size;
+                        const count = record.key_count;
+                        
+                        if (prefixAggregateMap.has(prefix)) {
+                            const existing = prefixAggregateMap.get(prefix);
+                            existing.value += size;
+                            existing.count += count;
+                        } else {
+                            prefixAggregateMap.set(prefix, {
+                                prefix: prefix,
+                                value: size,
+                                count: count
+                            });
+                        }
+                    });
+
+                    // Step 2: Build hierarchical tree structure from aggregated prefixes
+                    const root = { name: 'Root', value: 0, children: [] };
+                    const nodeMap = new Map();
+                    nodeMap.set('', root);
+                    
+                    // Sort prefixes by length to ensure parents are processed before children
+                    const sortedPrefixes = Array.from(prefixAggregateMap.keys()).sort((a, b) => a.length - b.length);
+                    
+                    sortedPrefixes.forEach(prefix => {
+                        const data = prefixAggregateMap.get(prefix);
+                        
+                        if (prefix === '') {
+                            // Root node - aggregate all data
+                            root.value += data.value;
+                            return;
+                        }
+                        
+                        // Find the best parent for this prefix
+                        let bestParent = root;
+                        let bestParentPrefix = '';
+                        
+                        // Look for the longest matching parent prefix
+                        for (const [parentPrefix, parentNode] of nodeMap.entries()) {
+                            if (parentPrefix !== prefix && 
+                                prefix.startsWith(parentPrefix) && 
+                                parentPrefix.length > bestParentPrefix.length) {
+                                bestParent = parentNode;
+                                bestParentPrefix = parentPrefix;
+                            }
+                        }
+                        
+                        // Create display name (show complete prefix for each node)
+                        const displayName = prefix;
+                        
+                        // Create the node
+                        const node = {
+                            name: displayName,
+                            value: data.value,
+                            children: []
+                        };
+                        
+                        bestParent.children.push(node);
+                        nodeMap.set(prefix, node);
+                    });
+                    
+                    return root;
+                };
+
+                // Initialize and render flame graph
+                const initFlameGraph = () => {
+                    const chartDom = document.getElementById('flame-chart');
+                    const detailsDom = document.getElementById('flame-details');
+                    
+                    if (!chartDom || filteredPrefixRecords.value.length === 0) return;
+                    
+                    // Clear previous chart
+                    chartDom.innerHTML = '';
+                    
+                    const data = convertToFlameGraphData(filteredPrefixRecords.value);
+                    if (!data) return;
+
+                    // Create flame graph with dynamic height
+                    const availableHeight = Math.max(400, chartDom.offsetHeight - 30); // Reserve space for details bar
+                    
+                    // Calculate optimal cell height based on available space and data depth
+                    const calculateOptimalCellHeight = (data, availableHeight) => {
+                        // Calculate the maximum depth of the flame graph
+                        const getMaxDepth = (node, depth = 0) => {
+                            if (!node.children || node.children.length === 0) {
+                                return depth;
+                            }
+                            return Math.max(...node.children.map(child => getMaxDepth(child, depth + 1)));
+                        };
+                        
+                        const maxDepth = getMaxDepth(data) + 1; // +1 for root
+                        const minCellHeight = 16; // Minimum readable height
+                        const maxCellHeight = 40; // Maximum height to avoid too thick bars
+                        const idealCellHeight = Math.floor(availableHeight / maxDepth);
+                        
+                        // Constrain within reasonable bounds
+                        return Math.max(minCellHeight, Math.min(maxCellHeight, idealCellHeight));
+                    };
+                    
+                    const optimalCellHeight = calculateOptimalCellHeight(data, availableHeight);
+                    
+                    flameGraph.value = flamegraph()
+                        .width(chartDom.offsetWidth)
+                        .height(availableHeight)
+                        .cellHeight(optimalCellHeight)
+                        .transitionDuration(750)
+                        .minFrameSize(3)
+                        .tooltip(false) // We'll use our own details display
+                        .onClick((d) => {
+                            updateDetails(`Zoomed to: ${d.data.name} (${formatSize(d.data.value)})`);
+                        })
+                        .onHover((d) => {
+                            if (d) {
+                                const percentage = ((d.data.value / data.value) * 100).toFixed(2);
+                                updateDetails(`${d.data.name} • ${formatSize(d.data.value)} (${percentage}%)`);
+                            } else {
+                                updateDetails('Click on a frame to zoom in, or use search to highlight specific prefixes');
+                            }
+                        });
+
+                    // Render the flame graph
+                    d3.select(chartDom)
+                        .datum(data)
+                        .call(flameGraph.value);
+                    
+                    // Apply dynamic font sizing based on cell height
+                    setTimeout(() => {
+                        const labels = chartDom.querySelectorAll('.d3-flame-graph-label');
+                        labels.forEach(label => {
+                            const rect = label.previousElementSibling;
+                            if (rect && rect.tagName === 'rect') {
+                                const height = parseFloat(rect.getAttribute('height'));
+                                let fontSize = '10px';
+                                
+                                if (height >= 30) {
+                                    fontSize = '12px';
+                                } else if (height >= 25) {
+                                    fontSize = '11px';
+                                } else if (height >= 20) {
+                                    fontSize = '10px';
+                                } else if (height >= 16) {
+                                    fontSize = '9px';
+                                } else {
+                                    fontSize = '8px';
+                                }
+                                
+                                label.style.fontSize = fontSize;
+                                
+                                // Adjust opacity based on height
+                                const opacity = Math.max(0.7, Math.min(0.9, height / 35));
+                                label.style.opacity = opacity;
+                            }
+                        });
+                    }, 100);
+                };
+
+                const updateDetails = (text) => {
+                    const detailsDom = document.getElementById('flame-details');
+                    if (detailsDom) {
+                        detailsDom.textContent = text;
+                    }
+                };
+
+                const resetZoom = () => {
+                    if (flameGraph.value) {
+                        flameGraph.value.resetZoom();
+                        updateDetails('Click on a frame to zoom in, or use search to highlight specific prefixes');
+                    }
+                };
+
+                const onSearchInput = () => {
+                    if (flameGraph.value && searchTerm.value) {
+                        try {
+                            flameGraph.value.search(searchTerm.value);
+                        } catch (error) {
+                            console.warn('Invalid search regex:', error);
+                        }
+                    } else if (flameGraph.value) {
+                        flameGraph.value.clear();
+                    }
+                };
+
+                // Copy to clipboard functionality
+                const copyToClipboard = async (text, itemType) => {
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        console.log(`${itemType} copied to clipboard: ${text}`);
+                        
+                        // Show success feedback
+                        copiedItem.value = itemType;
+                        setTimeout(() => {
+                            copiedItem.value = null;
+                        }, 1000); // Show success state for 1 second
+                        
+                    } catch (error) {
+                        console.error('Failed to copy to clipboard:', error);
+                        // Fallback for older browsers
+                        try {
+                            const textArea = document.createElement('textarea');
+                            textArea.value = text;
+                            textArea.style.position = 'fixed';
+                            textArea.style.left = '-999999px';
+                            textArea.style.top = '-999999px';
+                            document.body.appendChild(textArea);
+                            textArea.focus();
+                            textArea.select();
+                            document.execCommand('copy');
+                            textArea.remove();
+                            console.log(`${itemType} copied to clipboard (fallback): ${text}`);
+                            
+                            // Show success feedback for fallback too
+                            copiedItem.value = itemType;
+                            setTimeout(() => {
+                                copiedItem.value = null;
+                            }, 1000);
+                            
+                        } catch (fallbackError) {
+                            console.error('Fallback copy failed:', fallbackError);
+                        }
+                    }
+                };
+
+                // Export JSON data functionality
+                const exportJsonData = () => {
+                    try {
+                        // Get the current raw data (could be from window.RDBINSIGHT_DATA or loaded data)
+                        const dataToExport = {
+                            cluster: cluster.value,
+                            batch: batch.value,
+                            prefix_records: reportData.value,
+                            exported_at: new Date().toISOString(),
+                            export_filters: {
+                                types: selectedTypes.value,
+                                instances: selectedInstances.value,
+                                databases: selectedDbs.value
+                            }
+                        };
+                        
+                        // Convert to JSON string with pretty formatting
+                        const jsonString = JSON.stringify(dataToExport, null, 2);
+                        
+                        // Create blob and download
+                        const blob = new Blob([jsonString], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        
+                        // Create download link
+                        const link = document.createElement('a');
+                        link.href = url;
+                        
+                        // Generate filename with cluster and batch (same format as HTML report)
+                        const safe_batch = batch.value.replace(/[:.]/g, '-').replace(/\+/g, '_');
+                        const filename = `rdb_report_${cluster.value}_${safe_batch}.json`;
+                        link.download = filename;
+                        
+                        // Trigger download
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        
+                        // Clean up
+                        URL.revokeObjectURL(url);
+                        
+                        console.log(`JSON data exported as: ${filename}`);
+                        
+                        // Show success feedback (reuse the copy feedback mechanism)
+                        copiedItem.value = 'export';
+                        setTimeout(() => {
+                            copiedItem.value = null;
+                        }, 1000);
+                        
+                    } catch (error) {
+                        console.error('Failed to export JSON data:', error);
+                        alert('Failed to export JSON data. Please check the console for details.');
+                    }
+                };
+
+                // Load data from external JSON file or inline data
+                const loadReportData = async () => {
+                    try {
+                        // Try to get data from script element
+                        const scriptElement = document.getElementById('rdbinsight-data');
+                        if (!scriptElement) {
+                            throw new Error('Data script element not found');
+                        }
+                        
+                        // Check if data is inline (production mode)
+                        const inlineData = scriptElement.textContent.trim();
+                        if (inlineData) {
+                            // Production mode: parse inline data
+                            const data = JSON.parse(inlineData);
+                            console.log('Loaded inline report data');
+                            return data;
+                        }
+                        
+                        // Development mode: load from external file
+                        const src = scriptElement.getAttribute('src');
+                        if (!src) {
+                            throw new Error('No data source specified');
+                        }
+                        
+                        const response = await fetch(src);
+                        if (!response.ok) {
+                            throw new Error(`Failed to fetch data from ${src}: ${response.status}`);
+                        }
+                        const data = await response.json();
+                        console.log('Loaded external report data from:', src);
+                        return data;
+                        
+                    } catch (error) {
+                        console.error('Failed to load report data:', error);
+                        // Return empty data structure to prevent crashes
+                        return {
+                            cluster: 'Error',
+                            batch: 'Failed to load data',
+                            prefix_records: []
+                        };
+                    }
+                };
+
+                // Initialize data
+                const initData = async () => {
+                    try {
+                        const data = await loadReportData();
+                        
+                        cluster.value = data.cluster || 'Unknown';
+                        batch.value = data.batch || 'Unknown';
+                        reportData.value = data.prefix_records || [];
+                        
+                        // Update document title dynamically
+                        document.title = `RDBInsight Report - ${cluster.value}`;
+                        
+                        console.log('Report data initialized:', {
+                            cluster: cluster.value,
+                            batch: batch.value,
+                            records_count: reportData.value.length
+                        });
+                        
+                        // Mark data as loaded
+                        dataLoaded.value = true;
+                        
+                        // Wait for next tick to ensure computed properties are updated
+                        await nextTick();
+                        
+                        // Only set default filters if we have data
+                        if (reportData.value.length > 0) {
+                            selectedTypes.value = typeOptions.value.map(opt => opt.value);
+                            selectedInstances.value = instanceOptions.value.map(opt => opt.value);
+                            selectedDbs.value = dbOptions.value.map(opt => opt.value);
+                            
+                            console.log('Default filters set:', {
+                                types: selectedTypes.value.length,
+                                instances: selectedInstances.value.length,
+                                dbs: selectedDbs.value.length
+                            });
+                        }
+                        
+                    } catch (error) {
+                        console.error('Failed to initialize report data:', error);
+                        // Show error message in UI
+                        cluster.value = 'Error';
+                        batch.value = 'Failed to load data';
+                        reportData.value = [];
+                        dataLoaded.value = true; // Mark as loaded even on error to show UI
+                    }
+                };
+
+                // Watch for filter changes and re-render chart
+                watch([filteredPrefixRecords], () => {
+                    nextTick(() => {
+                        if (filteredPrefixRecords.value.length > 0) {
+                            initFlameGraph();
+                        }
+                    });
+                }, { deep: true });
+
+                // Handle window resize
+                const handleResize = () => {
+                    if (flameGraph.value) {
+                        const chartDom = document.getElementById('flame-chart');
+                        if (chartDom) {
+                            flameGraph.value.width(chartDom.offsetWidth);
+                            flameGraph.value.update();
+                        }
+                    }
+                };
+
+                onMounted(() => {
+                    // Global error handler
+                    window.addEventListener('error', (event) => {
+                        console.error('Global error:', event.error);
+                    });
+                    
+                    window.addEventListener('unhandledrejection', (event) => {
+                        console.error('Unhandled promise rejection:', event.reason);
+                        event.preventDefault(); // Prevent default browser error handling
+                    });
+                    
+                    initData();
+                    window.addEventListener('resize', handleResize);
+                });
+
+                return {
+                    cluster,
+                    batch,
+                    selectedTypes,
+                    selectedInstances,
+                    selectedDbs,
+                    searchTerm,
+                    hoveredItem,
+                    copiedItem,
+                    hoveredStat,
+                    typeOptions,
+                    instanceOptions,
+                    dbOptions,
+                    filteredData,
+                    filteredPrefixRecords,
+                    totalClassifications,
+                    totalFilteredSize,
+                    coveragePercentage,
+                    typeDistribution,
+                    dbDistribution,
+                    formatSize,
+                    getClassificationKey,
+                    getClassificationDisplay,
+                    getTypeColor,
+                    getTypeTagColor,
+                    getDbColor,
+                    resetZoom,
+                    onSearchInput,
+                    copyToClipboard,
+                    exportJsonData
+                };
+                }
+            });
+            
+            // Mount the app
+            app.mount('#app');
+        }
+    </script>
+</body>
+</html> 

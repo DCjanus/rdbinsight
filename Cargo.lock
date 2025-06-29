@@ -1568,6 +1568,7 @@ dependencies = [
  "redis",
  "redis-protocol",
  "serde",
+ "serde_json",
  "spire_enum",
  "testcontainers",
  "thiserror 2.0.12",

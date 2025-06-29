@@ -28,6 +28,8 @@ struct Cli {
 enum Command {
     /// Dump Redis data to ClickHouse
     Dump(DumpArgs),
+    /// Generate interactive HTML report
+    Report(ReportArgs),
     /// Miscellaneous utilities
     #[command(subcommand)]
     Misc(MiscCommand),
@@ -37,6 +39,25 @@ enum Command {
 struct DumpArgs {
     /// Path to configuration file
     config: PathBuf,
+}
+
+#[derive(Parser)]
+struct ReportArgs {
+    /// Path to configuration file
+    #[clap(short, long)]
+    config: PathBuf,
+
+    /// Cluster name
+    #[clap(long)]
+    cluster: String,
+
+    /// Batch timestamp in RFC3339 format (optional, defaults to latest batch for the cluster)
+    #[clap(long)]
+    batch: Option<String>,
+
+    /// Output HTML file path (optional)
+    #[clap(short, long)]
+    output: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -62,6 +83,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Dump(args) => dump_to_clickhouse(args.config).await,
+        Command::Report(args) => run_report(args).await,
         Command::Misc(misc_cmd) => match misc_cmd {
             MiscCommand::PrintClickhouseSchema => {
                 print_clickhouse_schema();
@@ -88,8 +110,8 @@ fn print_clickhouse_schema() {
     ];
 
     for (filename, content) in sql_files {
-        println!("-- File: {}", filename);
-        println!("{}", content);
+        println!("-- File: {filename}");
+        println!("{content}");
         println!();
     }
 }
@@ -340,4 +362,8 @@ mod tests {
         };
         assert_eq!(get_instance_identifier(&rdb_config), "192.168.1.100:6379");
     }
+}
+
+async fn run_report(args: ReportArgs) -> Result<()> {
+    rdbinsight::report::run_report(args.config, args.cluster, args.batch, args.output).await
 }

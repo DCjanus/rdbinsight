@@ -517,7 +517,7 @@ impl MemoryFiller {
                 for i in 0..field_count {
                     pipe.hset(
                         key,
-                        format!("field{}", i),
+                        format!("field{i}"),
                         format!("value_{}", rng.random::<u32>()),
                     )
                     .ignore();

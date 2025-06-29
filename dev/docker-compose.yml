@@ -21,8 +21,6 @@ services:
       CLICKHOUSE_USER: default
       CLICKHOUSE_PASSWORD: dev123
       CLICKHOUSE_DB: rdbinsight
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
     ulimits:
       nofile:
         soft: 262144
@@ -33,7 +31,3 @@ services:
 networks:
   rdbinsight-dev:
     driver: bridge
-
-volumes:
-  clickhouse_data:
-    driver: local

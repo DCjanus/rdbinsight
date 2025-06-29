@@ -27,9 +27,9 @@ clean:
 	rm -rf tests/dumps/*.rdb
 
 init_test:
-    if ! cargo nextest --version > /dev/null 2>&1; then cargo install cargo-nextest --locked; fi
-    if ! grcov --version > /dev/null 2>&1; then cargo install grcov --locked; fi
-    if ! cargo llvm-cov --version > /dev/null 2>&1; then cargo install cargo-llvm-cov --locked; fi
+    @ if ! cargo nextest --version > /dev/null 2>&1; then cargo install cargo-nextest --locked; fi
+    @ if ! grcov --version > /dev/null 2>&1; then cargo install grcov --locked; fi
+    @ if ! cargo llvm-cov --version > /dev/null 2>&1; then cargo install cargo-llvm-cov --locked; fi
 
 coverage: init_test
     mkdir -p target/coverage
@@ -43,6 +43,7 @@ up_dev:
 down_dev:
     docker-compose -f dev/docker-compose.yml down
 
-test_dev: up_dev
-    cargo run --bin fill_redis_memory -- redis://127.0.0.1:6380 512M
-    cargo run --bin rdbinsight -- dump dev/test-config.toml
+demo: up_dev
+    cargo run --bin fill_redis_memory -- 'redis://127.0.0.1:6380' '512M'
+    cargo run --bin rdbinsight -- dump './dev/test-config.toml'
+    cargo run --bin rdbinsight -- report --config './dev/test-config.toml' --cluster 'dev-test-cluster'

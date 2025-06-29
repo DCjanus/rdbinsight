@@ -1,0 +1,51 @@
+name: Deploy HTML Template to GitHub Pages
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "templates/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Create demo page
+        run: |
+          mkdir -p _site
+          cp templates/report.html _site/index.html
+          # Create a simple demo data file if report.json doesn't exist
+          if [ ! -f "templates/report.json" ]; then
+            echo '[]' > _site/report.json
+          else
+            cp templates/report.json _site/report.json
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "_site"
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

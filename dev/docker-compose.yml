@@ -7,7 +7,7 @@ services:
     image: redis:8-alpine
     ports:
       - "6380:6379" # Host port 6380 -> Container port 6379
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --repl-diskless-sync-delay 0
     networks:
       - rdbinsight-dev
 

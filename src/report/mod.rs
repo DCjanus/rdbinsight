@@ -16,6 +16,7 @@ pub struct ReportData {
     pub cluster: String,
     pub batch: String,
     pub prefix_records: Vec<querier::PrefixRecord>,
+    pub top_keys: Vec<querier::TopKeyRecord>,
 }
 
 pub struct ReportGenerator {
@@ -60,10 +61,20 @@ impl ReportGenerator {
             prefix_records.len()
         );
 
+        // Get top 100 big keys for all classifications
+        let top_keys = self
+            .querier
+            .get_top_keys_for_all_classifications()
+            .await
+            .context("Failed to get top keys data from ClickHouse")?;
+
+        tracing::info!("Generated {} top key records for report", top_keys.len());
+
         let report_data = ReportData {
             cluster: self.cluster.clone(),
             batch: self.batch.clone(),
             prefix_records,
+            top_keys,
         };
 
         // Read HTML template
@@ -267,6 +278,7 @@ mod tests {
                 rdb_size: 600,
                 key_count: 100,
             }],
+            top_keys: vec![],
         };
 
         // Verify the structure is correct

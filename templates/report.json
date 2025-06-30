@@ -834,5 +834,307 @@
       "rdb_size": 10485760,
       "key_count": 2500
     }
+  ],
+  "top_keys": [
+    {
+      "key": "user:session:web:active_users_12345678901234567890",
+      "rdb_size": 2048576,
+      "member_count": 5000,
+      "type": "hash",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "hash:hashtable",
+      "expire_at": "2024-12-27T14:30:45.123456Z"
+    },
+    {
+      "key": "cache:page:home:popular_products_global_trending",
+      "rdb_size": 1572864,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "string:raw",
+      "expire_at": "2024-12-21T02:30:45.123456Z"
+    },
+    {
+      "key": "leaderboard:daily:user_scores_2024_12_20",
+      "rdb_size": 1048576,
+      "member_count": 10000,
+      "type": "zset",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "zset:skiplist",
+      "expire_at": null
+    },
+    {
+      "key": "queue:email:high_priority_notifications_queue",
+      "rdb_size": 786432,
+      "member_count": 2512,
+      "type": "list",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "list:quicklist",
+      "expire_at": null
+    },
+    {
+      "key": "tags:product:electronics_categories_mapping",
+      "rdb_size": 524288,
+      "member_count": 1200,
+      "type": "set",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "set:hashtable",
+      "expire_at": "2024-12-25T14:30:45.123456Z"
+    },
+    {
+      "key": "events:user:activity_stream_user_987654321",
+      "rdb_size": 512000,
+      "member_count": 800,
+      "type": "stream",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "stream:radix",
+      "expire_at": null
+    },
+    {
+      "key": "order:details:items:bulk_order_202412201430",
+      "rdb_size": 409600,
+      "member_count": 150,
+      "type": "hash",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "hash:listpack",
+      "expire_at": "2025-01-20T14:30:45.123456Z"
+    },
+    {
+      "key": "api:response:v2:product_catalog_cached_full",
+      "rdb_size": 393216,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "encoding": "string:embstr",
+      "expire_at": "2024-12-20T16:30:45.123456Z"
+    },
+    {
+      "key": "session:admin:super_admin_dashboard_state",
+      "rdb_size": 368640,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "encoding": "string:raw",
+      "expire_at": "2024-12-20T18:30:45.123456Z"
+    },
+    {
+      "key": "shopping:cart:mega_cart_user_123456789",
+      "rdb_size": 327680,
+      "member_count": 250,
+      "type": "hash",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "hash:hashtable",
+      "expire_at": "2024-12-22T14:30:45.123456Z"
+    },
+    {
+      "key": "backup:daily:full_database_snapshot_20241220",
+      "rdb_size": 294912,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-slave-01:6379",
+      "db": 0,
+      "encoding": "string:raw",
+      "expire_at": "2024-12-27T14:30:45.123456Z"
+    },
+    {
+      "key": "metrics:hourly:performance_data_aggregated",
+      "rdb_size": 262144,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "string:raw",
+      "expire_at": "2024-12-21T14:30:45.123456Z"
+    },
+    {
+      "key": "user:profile:extended:premium_user_features_456789",
+      "rdb_size": 245760,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "string:embstr",
+      "expire_at": null
+    },
+    {
+      "key": "cdn:images:carousel_banner_holiday_collection",
+      "rdb_size": 229376,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "encoding": "string:raw",
+      "expire_at": "2024-12-31T23:59:59.999999Z"
+    },
+    {
+      "key": "config:feature:experimental_features_toggle_map",
+      "rdb_size": 212992,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "string:embstr",
+      "expire_at": null
+    },
+    {
+      "key": "ranking:product:bestsellers_electronics_2024_q4",
+      "rdb_size": 196608,
+      "member_count": 500,
+      "type": "zset",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "zset:listpack",
+      "expire_at": "2025-01-01T00:00:00.000000Z"
+    },
+    {
+      "key": "log:error:critical_application_errors_buffer",
+      "rdb_size": 180224,
+      "member_count": 75,
+      "type": "list",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "list:quicklist",
+      "expire_at": "2024-12-27T14:30:45.123456Z"
+    },
+    {
+      "key": "analytics:real_time_user_behavior_tracking",
+      "rdb_size": 163840,
+      "member_count": 320,
+      "type": "hash",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "hash:hashtable",
+      "expire_at": "2024-12-21T14:30:45.123456Z"
+    },
+    {
+      "key": "geo:location:user_coordinates_cache_global",
+      "rdb_size": 147456,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "encoding": "string:embstr",
+      "expire_at": "2024-12-20T20:30:45.123456Z"
+    },
+    {
+      "key": "admin:settings:global_configuration_master",
+      "rdb_size": 131072,
+      "member_count": 89,
+      "type": "hash",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "encoding": "hash:listpack",
+      "expire_at": null
+    },
+    {
+      "key": "followers:influencer_network_connections_789123",
+      "rdb_size": 122880,
+      "member_count": 15000,
+      "type": "set",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "set:hashtable",
+      "expire_at": null
+    },
+    {
+      "key": "timeline:global_activity_feed_trending_now",
+      "rdb_size": 114688,
+      "member_count": 450,
+      "type": "list",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "list:quicklist",
+      "expire_at": "2024-12-21T00:00:00.000000Z"
+    },
+    {
+      "key": "sync:user:profile_synchronization_batch_202412",
+      "rdb_size": 106496,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-slave-01:6379",
+      "db": 0,
+      "encoding": "string:raw",
+      "expire_at": "2024-12-22T14:30:45.123456Z"
+    },
+    {
+      "key": "permissions:role_based_access_control_matrix",
+      "rdb_size": 98304,
+      "member_count": 2500,
+      "type": "set",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "set:hashtable",
+      "expire_at": null
+    },
+    {
+      "key": "notifications:push_notification_queue_prioritized",
+      "rdb_size": 90112,
+      "member_count": 1800,
+      "type": "stream",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "stream:radix",
+      "expire_at": "2024-12-21T14:30:45.123456Z"
+    },
+    {
+      "key": "auth:token:jwt_token_blacklist_security",
+      "rdb_size": 81920,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "encoding": "string:embstr",
+      "expire_at": "2024-12-21T14:30:45.123456Z"
+    },
+    {
+      "key": "scores:game_leaderboard_global_championship",
+      "rdb_size": 73728,
+      "member_count": 5000,
+      "type": "zset",
+      "instance": "redis-master-01:6379",
+      "db": 0,
+      "encoding": "zset:skiplist",
+      "expire_at": "2025-01-15T14:30:45.123456Z"
+    },
+    {
+      "key": "temp:data_migration_temporary_storage_chunk_1",
+      "rdb_size": 65536,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-slave-01:6379",
+      "db": 0,
+      "encoding": "string:raw",
+      "expire_at": "2024-12-20T15:30:45.123456Z"
+    },
+    {
+      "key": "system:health_check_monitoring_comprehensive",
+      "rdb_size": 57344,
+      "member_count": 125,
+      "type": "hash",
+      "instance": "redis-master-02:6379",
+      "db": 1,
+      "encoding": "hash:listpack",
+      "expire_at": "2024-12-20T15:00:00.000000Z"
+    },
+    {
+      "key": "api:rate_limit:user_request_throttling_counters",
+      "rdb_size": 49152,
+      "member_count": 1,
+      "type": "string",
+      "instance": "redis-cache-01:6380",
+      "db": 0,
+      "encoding": "string:int",
+      "expire_at": "2024-12-20T15:30:45.123456Z"
+    }
   ]
 }

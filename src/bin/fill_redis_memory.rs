@@ -264,6 +264,7 @@ struct MemoryFiller {
     last_report_time: Instant,
     distribution: DataTypeDistribution,
     type_counters: HashMap<DataType, u64>,
+    keys_with_expiration: u64,
 }
 
 impl MemoryFiller {
@@ -286,6 +287,7 @@ impl MemoryFiller {
             last_report_time: Instant::now(),
             distribution,
             type_counters,
+            keys_with_expiration: 0,
         }
     }
 
@@ -466,6 +468,18 @@ impl MemoryFiller {
             "Memory fill completed. Total keys written: {} in {} batches",
             self.total_keys_written, self.batch_count
         );
+
+        // Report expiration statistics
+        let expiration_percentage = if self.total_keys_written > 0 {
+            (self.keys_with_expiration as f64 / self.total_keys_written as f64) * 100.0
+        } else {
+            0.0
+        };
+        info!(
+            "Keys with expiration (7 days): {} ({:.1}%)",
+            self.keys_with_expiration, expiration_percentage
+        );
+
         info!("Keys by data type:");
         for (data_type, count) in &self.type_counters {
             if *count > 0 {
@@ -485,10 +499,13 @@ impl MemoryFiller {
             let random_id: u64 = rng.random();
             let key = format!("{}:{}:{}", self.prefix, data_type.as_str(), random_id);
 
-            self.add_data_to_pipeline(&mut pipe, &key, data_type, &mut rng);
+            let has_expiration = self.add_data_to_pipeline(&mut pipe, &key, data_type, &mut rng);
 
-            // Update counter
+            // Update counters
             *self.type_counters.get_mut(&data_type).unwrap() += 1;
+            if has_expiration {
+                self.keys_with_expiration += 1;
+            }
         }
 
         // Execute the pipeline
@@ -506,7 +523,15 @@ impl MemoryFiller {
         key: &str,
         data_type: DataType,
         rng: &mut impl Rng,
-    ) {
+    ) -> bool {
+        // 60% of keys should have expiration (more than half)
+        let should_expire = rng.random::<f64>() < 0.6;
+        let expire_seconds = if should_expire {
+            Some(7 * 24 * 3600) // 7 days in seconds
+        } else {
+            None
+        };
+
         match data_type {
             DataType::String => {
                 let value = format!("value_{}", rng.random::<u32>());
@@ -559,6 +584,13 @@ impl MemoryFiller {
                 }
             }
         }
+
+        // Set expiration if needed (applies to all data types)
+        if let Some(ttl) = expire_seconds {
+            pipe.expire(key, ttl).ignore();
+        }
+
+        should_expire
     }
 }
 

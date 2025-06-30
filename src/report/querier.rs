@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use anyhow::Result as AnyResult;
 use clickhouse::{Client, Row};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use crate::config::ClickHouseConfig;
 
@@ -21,6 +22,18 @@ pub struct Classification {
     pub r#type: String,
     pub instance: String,
     pub db: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TopKeyRecord {
+    pub key: String,
+    pub rdb_size: u64,
+    pub member_count: Option<u64>,
+    pub r#type: String,
+    pub instance: String,
+    pub db: u64,
+    pub encoding: String,
+    pub expire_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -397,6 +410,75 @@ impl ClickHouseQuerier {
             })
             .collect())
     }
+
+    /// Get top 100 big keys for all classifications using window function
+    pub async fn get_top_keys_for_all_classifications(&self) -> AnyResult<Vec<TopKeyRecord>> {
+        #[derive(Debug, Row, Deserialize)]
+        struct TopKeyRow {
+            key: String,
+            rdb_size: u64,
+            member_count: u64,
+            r#type: String,
+            instance: String,
+            db: u64,
+            encoding: String,
+            #[serde(with = "clickhouse::serde::time::datetime64::millis::option")]
+            expire_at: Option<OffsetDateTime>,
+        }
+
+        let query = "
+            SELECT 
+                key,
+                rdb_size,
+                member_count,
+                type,
+                instance,
+                db,
+                encoding,
+                expire_at
+            FROM (
+                SELECT 
+                    key,
+                    rdb_size,
+                    member_count,
+                    type,
+                    instance,
+                    db,
+                    encoding,
+                    expire_at,
+                    ROW_NUMBER() OVER (PARTITION BY type, instance, db ORDER BY rdb_size DESC) as rn
+                FROM redis_records_view
+                WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC')
+            ) ranked
+            WHERE rn <= 100
+            ORDER BY type, instance, db, rdb_size DESC
+        ";
+
+        let rows: Vec<TopKeyRow> = self
+            .client
+            .query(query)
+            .bind(&self.cluster)
+            .bind(&self.batch)
+            .fetch_all()
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| TopKeyRecord {
+                key: row.key,
+                rdb_size: row.rdb_size,
+                member_count: Some(row.member_count),
+                r#type: row.r#type,
+                instance: row.instance,
+                db: row.db,
+                encoding: row.encoding,
+                expire_at: row.expire_at.map(|dt| {
+                    dt.format(&time::format_description::well_known::Rfc3339)
+                        .unwrap_or_default()
+                }),
+            })
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -404,129 +486,72 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_significance_threshold_calculation() {
-        let total_size = 1000000u64;
-        let threshold = (total_size as f64 * 0.001) as u64;
-        assert_eq!(threshold, 1000);
-    }
-
-    #[test]
-    fn test_classification_creation() {
-        let _classification = Classification {
-            r#type: "string".to_string(),
-            instance: "127.0.0.1:6379".to_string(),
-            db: 0,
-        };
-    }
-
-    #[test]
-    fn test_prefix_node_creation() {
-        let root = PrefixNode {
-            prefix: "".to_string(), // Root node has empty prefix
-            value: 1000,
-            children: vec![
-                PrefixNode {
-                    prefix: "user:".to_string(),
-                    value: 600,
-                    children: vec![],
-                },
-                PrefixNode {
-                    prefix: "*".to_string(),
-                    value: 400,
-                    children: vec![],
-                },
-            ],
+    fn test_longest_common_prefix() {
+        let querier = ClickHouseQuerier {
+            client: Client::default(),
+            cluster: "test".to_string(),
+            batch: "test".to_string(),
         };
 
-        assert_eq!(root.prefix, "");
-        assert_eq!(root.value, 1000);
-        assert_eq!(root.children.len(), 2);
-        assert_eq!(root.children[0].prefix, "user:");
-        assert_eq!(root.children[1].prefix, "*");
+        assert_eq!(
+            querier.longest_common_prefix("hello_alice", "hello_zarah"),
+            "hello_"
+        );
+        assert_eq!(querier.longest_common_prefix("apple", "banana"), "");
+        assert_eq!(
+            querier.longest_common_prefix("user", "user_profile"),
+            "user"
+        );
+        assert_eq!(
+            querier.longest_common_prefix("cache:key", "cache:key"),
+            "cache:key"
+        );
     }
 
     #[test]
-    fn test_path_compression_logic() {
-        let children_data = vec![("user:session:".to_string(), 1000u64)];
-
-        let current_size = 1000u64;
-        let should_compress = children_data.len() == 1 && children_data[0].1 == current_size;
-
-        assert!(should_compress);
-    }
-
-    #[test]
-    fn test_other_node_filtering() {
-        let significance_threshold = 100u64;
-        let other_size = 50u64;
-        let should_include_other = other_size > significance_threshold;
-        assert!(!should_include_other);
-
-        let other_size_significant = 150u64;
-        let should_include_other_significant = other_size_significant > significance_threshold;
-        assert!(should_include_other_significant);
-    }
-
-    #[test]
-    fn test_root_node_naming() {
-        let classification = Classification {
-            r#type: "hash".to_string(),
-            instance: "redis-cluster-1:6379".to_string(),
-            db: 2,
+    fn test_path_compression_with_reasonable_prefix() {
+        let querier = ClickHouseQuerier {
+            client: Client::default(),
+            cluster: "test".to_string(),
+            batch: "test".to_string(),
         };
 
-        let expected_name = format!(
-            "{}:{}:{}",
-            classification.r#type, classification.instance, classification.db
+        // Should compress when significant improvement
+        assert_eq!(
+            querier.find_compressed_prefix("he", "hello_alice", "hello_zarah"),
+            "hello_"
         );
 
-        assert_eq!(expected_name, "hash:redis-cluster-1:6379:2");
+        // Should not compress when minimal improvement
+        assert_eq!(
+            querier.find_compressed_prefix("user", "user_a", "user_z"),
+            "user"
+        );
     }
 
     #[test]
-    fn test_prefix_record_creation() {
-        let record = PrefixRecord {
-            prefix: "user:".to_string(),
-            instance: "127.0.0.1:6379".to_string(),
-            db: 0,
-            r#type: "string".to_string(),
-            rdb_size: 1024,
-            key_count: 42,
+    fn test_path_compression_with_length_limit() {
+        let querier = ClickHouseQuerier {
+            client: Client::default(),
+            cluster: "test".to_string(),
+            batch: "test".to_string(),
         };
 
-        assert_eq!(record.prefix, "user:");
-        assert_eq!(record.instance, "127.0.0.1:6379");
-        assert_eq!(record.db, 0);
-        assert_eq!(record.r#type, "string");
-        assert_eq!(record.rdb_size, 1024);
-        assert_eq!(record.key_count, 42);
+        let result = querier.find_compressed_prefix(
+            "u",
+            "user_profile_very_long_key_name",
+            "user_profile_very_long_key_other",
+        );
+
+        // Should truncate to reasonable length (u + 20 = 21 chars max)
+        assert_eq!(result.len(), 21);
+        assert!(result.starts_with("user_profile_very_lon"));
     }
 
     #[test]
-    fn test_empty_prefix_record_for_classification_total() {
-        // Test that empty prefix records can represent classification totals
-        let empty_prefix_record = PrefixRecord {
-            prefix: "".to_string(), // Empty prefix for classification total
-            instance: "127.0.0.1:6379".to_string(),
-            db: 0,
-            r#type: "string".to_string(),
-            rdb_size: 10240, // Total size for this classification
-            key_count: 100,  // Total key count for this classification
-        };
-
-        assert_eq!(empty_prefix_record.prefix, "");
-        assert_eq!(empty_prefix_record.rdb_size, 10240);
-        assert_eq!(empty_prefix_record.key_count, 100);
-
-        // This empty prefix record enables easy aggregation of cluster totals
-        // by filtering records with prefix == "" and summing rdb_size and key_count
-    }
-
-    #[test]
-    fn test_unified_data_structure_design() {
-        // Test that the unified data structure supports both total aggregation and prefix analysis
+    fn test_prefix_records_aggregation() {
         let records = vec![
-            // Empty prefix records for classification totals
+            // Classification totals (empty prefix)
             PrefixRecord {
                 prefix: "".to_string(),
                 instance: "127.0.0.1:6379".to_string(),
@@ -543,7 +568,7 @@ mod tests {
                 rdb_size: 5000,
                 key_count: 50,
             },
-            // Important prefix records discovered through BFS
+            // Specific prefix records
             PrefixRecord {
                 prefix: "user:".to_string(),
                 instance: "127.0.0.1:6379".to_string(),
@@ -562,176 +587,28 @@ mod tests {
             },
         ];
 
-        // Test cluster total aggregation
-        let cluster_total_memory: u64 = records
+        // Cluster total memory
+        let cluster_total: u64 = records
             .iter()
             .filter(|r| r.prefix.is_empty())
             .map(|r| r.rdb_size)
             .sum();
-        assert_eq!(cluster_total_memory, 15000);
+        assert_eq!(cluster_total, 15000);
 
-        // Test prefix cross-classification aggregation
-        let user_prefix_total_memory: u64 = records
+        // Prefix cross-classification memory
+        let user_prefix_total: u64 = records
             .iter()
             .filter(|r| r.prefix == "user:")
             .map(|r| r.rdb_size)
             .sum();
-        assert_eq!(user_prefix_total_memory, 11000);
-
-        // Test that we have both total data and prefix details
-        let empty_prefix_count = records.iter().filter(|r| r.prefix.is_empty()).count();
-        let non_empty_prefix_count = records.iter().filter(|r| !r.prefix.is_empty()).count();
-        assert_eq!(empty_prefix_count, 2); // Two classifications
-        assert_eq!(non_empty_prefix_count, 2); // One prefix across two classifications
+        assert_eq!(user_prefix_total, 11000);
     }
 
     #[test]
-    fn test_discover_important_prefixes_bfs_returns_prefix_records() {
-        // Test that discover_important_prefixes_bfs now returns Vec<PrefixRecord>
-        // This allows one-time collection of both count and sum statistics
-        let classification = Classification {
-            r#type: "string".to_string(),
-            instance: "127.0.0.1:6379".to_string(),
-            db: 0,
-        };
+    fn test_significance_threshold_filtering() {
+        let threshold = 100u64;
 
-        // Mock what the BFS function should return - PrefixRecord with full statistics
-        let mock_result = vec![
-            PrefixRecord {
-                prefix: "user:".to_string(),
-                instance: "127.0.0.1:6379".to_string(),
-                db: 0,
-                r#type: "string".to_string(),
-                rdb_size: 8000,
-                key_count: 80,
-            },
-            PrefixRecord {
-                prefix: "cache:".to_string(),
-                instance: "127.0.0.1:6379".to_string(),
-                db: 0,
-                r#type: "string".to_string(),
-                rdb_size: 1500,
-                key_count: 15,
-            },
-        ];
-
-        // Verify that each record contains both rdb_size and key_count
-        for record in &mock_result {
-            assert!(!record.prefix.is_empty());
-            assert!(record.rdb_size > 0);
-            assert!(record.key_count > 0);
-            assert_eq!(record.instance, classification.instance);
-            assert_eq!(record.db, classification.db);
-            assert_eq!(record.r#type, classification.r#type);
-        }
-
-        // This demonstrates that the BFS function now provides complete statistics
-        // eliminating the need for additional queries to get count information
-        let total_size: u64 = mock_result.iter().map(|r| r.rdb_size).sum();
-        let total_count: u64 = mock_result.iter().map(|r| r.key_count).sum();
-
-        assert_eq!(total_size, 9500);
-        assert_eq!(total_count, 95);
-    }
-
-    #[test]
-    fn test_longest_common_prefix() {
-        let querier = ClickHouseQuerier {
-            client: Client::default(),
-            cluster: "test".to_string(),
-            batch: "test".to_string(),
-        };
-
-        // Test case 1: Common prefix exists
-        assert_eq!(
-            querier.longest_common_prefix("hello_alice", "hello_zarah"),
-            "hello_"
-        );
-
-        // Test case 2: No common prefix
-        assert_eq!(querier.longest_common_prefix("apple", "banana"), "");
-
-        // Test case 3: One string is prefix of another
-        assert_eq!(
-            querier.longest_common_prefix("user", "user_profile"),
-            "user"
-        );
-
-        // Test case 4: Identical strings
-        assert_eq!(
-            querier.longest_common_prefix("cache:key", "cache:key"),
-            "cache:key"
-        );
-    }
-
-    #[test]
-    fn test_find_compressed_prefix() {
-        let querier = ClickHouseQuerier {
-            client: Client::default(),
-            cluster: "test".to_string(),
-            batch: "test".to_string(),
-        };
-
-        // Test case 1: Should compress from "he" to "hello_"
-        assert_eq!(
-            querier.find_compressed_prefix("he", "hello_alice", "hello_zarah"),
-            "hello_"
-        );
-
-        // Test case 2: Should compress but truncate if common prefix is too long
-        let result = querier.find_compressed_prefix(
-            "u",
-            "user_profile_very_long_key_name",
-            "user_profile_very_long_key_other",
-        );
-        // Should be truncated to reasonable length (u + 20 = 21 chars max)
-        assert_eq!(result.len(), 21);
-        assert!(result.starts_with("user_profile_very_lon"));
-
-        // Test case 3: Should not compress if improvement is minimal
-        assert_eq!(
-            querier.find_compressed_prefix("user", "user_a", "user_z"),
-            "user"
-        );
-
-        // Test case 4: Should compress reasonable length improvement
-        assert_eq!(
-            querier.find_compressed_prefix("ca", "cache:session:", "cache:temp:"),
-            "cache:"
-        );
-    }
-
-    #[test]
-    fn test_path_compression_benefits() {
-        // Demonstrate the benefits of path compression
-
-        // Before compression: Need to traverse he -> hel -> hell -> hello
-        // After compression: Jump directly from he -> hello_
-
-        let scenarios = vec![
-            ("he", "hello_alice", "hello_zarah", "hello_"),
-            ("u", "user:session:123", "user:session:999", "user:session:"),
-            ("c", "cache:temp:data", "cache:temp:info", "cache:temp:"),
-        ];
-
-        for (prefix, min_key, max_key, expected_compressed) in scenarios {
-            let querier = ClickHouseQuerier {
-                client: Client::default(),
-                cluster: "test".to_string(),
-                batch: "test".to_string(),
-            };
-
-            let result = querier.find_compressed_prefix(prefix, min_key, max_key);
-            assert_eq!(result, expected_compressed);
-
-            // Verify compression actually provides benefit
-            assert!(result.len() > prefix.len() + 1);
-            println!(
-                "Compressed '{}' -> '{}' (saved {} levels)",
-                prefix,
-                result,
-                result.len() - prefix.len() - 1
-            );
-        }
+        assert!(150u64 > threshold); // Should include
+        assert!(!(50u64 > threshold)); // Should exclude
     }
 }

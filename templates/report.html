@@ -443,11 +443,106 @@
             padding: 0 !important;
         }
         
+        /* Top Keys Section styles */
+        .top-keys-section {
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        
+        .top-keys-section .n-data-table {
+            border-radius: 0 0 12px 12px;
+        }
+        
+        .top-keys-section .n-data-table-th {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+            font-weight: 600;
+            color: #374151;
+        }
+        
+        .top-keys-section .n-data-table-td {
+            border-bottom: 1px solid rgba(226, 232, 240, 0.4);
+        }
+        
+        .top-keys-section .n-data-table-tr:hover .n-data-table-td {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        }
+
+        /* Enhanced clickable elements in table */
+        .top-keys-section .clickable-element {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            border-radius: 6px;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid transparent;
+        }
+        
+        .top-keys-section .clickable-element:hover {
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%) !important;
+            border-color: #cbd5e1;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .top-keys-section .clickable-element:active {
+            transform: translateY(0);
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Copied state for key names - consistent with header style */
+        .top-keys-section .clickable-element.copied {
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%) !important;
+            border-color: #3b82f6 !important;
+            color: #1d4ed8 !important;
+            transform: scale(1.02);
+        }
+        
+
+        
+        /* Key name copy effect with shine animation */
+        .top-keys-section .clickable-element::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+            transition: left 0.5s;
+        }
+        
+        .top-keys-section .clickable-element:hover::before {
+            left: 100%;
+        }
+        
+        /* Enhanced scrollbar for the data table */
+        .top-keys-section .n-data-table .n-scrollbar-rail {
+            opacity: 0.3;
+        }
+        
+        .top-keys-section .n-data-table .n-scrollbar-rail:hover {
+            opacity: 1;
+        }
+        
+        /* Ensure table takes full height */
+        .top-keys-section .n-data-table {
+            height: 500px;
+        }
+        
+        .top-keys-section .n-data-table .n-data-table-base-table {
+            height: 100%;
+        }
+
         /* Responsive design for the new layout */
         @media (max-width: 1200px) {
             /* Adjust main layout for medium screens */
             .main-layout {
                 grid-template-columns: 260px 1fr !important;
+            }
+            
+            /* Adjust top keys table on medium screens */
+            .top-keys-section .n-data-table {
+                font-size: 13px;
             }
         }
         
@@ -476,6 +571,26 @@
             .main-container {
                 margin: 6px !important;
             }
+            
+            /* Optimize top keys section for tablets */
+            .top-keys-section {
+                margin-top: 6px;
+            }
+            
+            .top-keys-section .filter-card {
+                padding: 16px 20px;
+            }
+            
+            .top-keys-section .filter-card > div:first-child {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+            
+            .top-keys-section .filter-card n-input {
+                width: 100% !important;
+                max-width: none !important;
+            }
         }
         
         @media (max-width: 480px) {
@@ -500,6 +615,42 @@
             .main-container {
                 margin: 4px !important;
                 border-radius: 8px !important;
+            }
+            
+            /* Mobile optimizations for top keys */
+            .top-keys-section {
+                margin-top: 4px;
+                border-radius: 8px;
+            }
+            
+            .top-keys-section .filter-card {
+                padding: 12px 16px;
+            }
+            
+            .top-keys-section h3 {
+                font-size: 16px !important;
+            }
+            
+            .top-keys-section .n-data-table {
+                font-size: 12px;
+            }
+            
+            /* Adjust Key Name column on mobile */
+            .top-keys-section .n-data-table th:nth-child(1), /* Key Name */
+            .top-keys-section .n-data-table td:nth-child(1) {
+                max-width: 120px;
+                min-width: 120px;
+            }
+            
+            /* Hide less important columns on mobile */
+            .top-keys-section .n-data-table th:nth-child(7), /* Encoding */
+            .top-keys-section .n-data-table td:nth-child(7) {
+                display: none;
+            }
+            
+            .top-keys-section .n-data-table th:nth-child(8), /* Expires */
+            .top-keys-section .n-data-table td:nth-child(8) {
+                display: none;
             }
         }
         
@@ -1016,6 +1167,91 @@
                 </div>
             </div>
         </div>
+
+        <!-- Top Keys Section: Second Screen -->
+        <div class="top-keys-section fade-in" style="margin-top: 8px; background: white; border-radius: 12px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12); overflow: hidden;">
+            <!-- Top Keys Header -->
+            <div class="filter-card" style="padding: 20px 24px; border-radius: 0; box-shadow: none; border-bottom: 1px solid rgba(226, 232, 240, 0.5); background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <n-icon size="20" style="color: #666;">
+                            <svg viewBox="0 0 24 24">
+                                <path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M11,17H13V11H11V17M11,9H13V7H11V9Z"/>
+                            </svg>
+                        </n-icon>
+                        <h3 style="margin: 0; font-size: 18px; font-weight: 600; color: #333;">Top 100 Big Keys</h3>
+                        <n-tag 
+                            v-if="filteredTopKeys.length > 0" 
+                            type="info" 
+                            size="small" 
+                            class="enhanced-tag"
+                        >
+                            {{ searchedTopKeys.length }} of {{ filteredTopKeys.length }} keys
+                        </n-tag>
+                    </div>
+                    
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <n-input
+                            v-model:value="topKeysSearchTerm"
+                            placeholder="Search keys by name..."
+                            clearable
+                            size="small"
+                            class="enhanced-input"
+                            style="width: 240px; height: 32px;"
+                        >
+                            <template #prefix>
+                                <n-icon size="14">
+                                    <svg viewBox="0 0 24 24">
+                                        <path fill="currentColor" d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/>
+                                    </svg>
+                                </n-icon>
+                            </template>
+                        </n-input>
+                    </div>
+                </div>
+                
+                <!-- Description -->
+                <n-text style="font-size: 13px; color: #666; line-height: 1.4;">
+                    The top 100 largest keys sorted by RDB size, filtered by your current type/instance/database selections.
+                    <strong>Click on any field to copy to clipboard.</strong> Hold <strong>Shift</strong> and click column headers for multi-column sorting.
+                </n-text>
+            </div>
+
+            <!-- Top Keys Data Table -->
+            <div style="padding: 0; height: 540px; overflow: hidden;">
+                <div v-if="filteredTopKeys.length === 0" style="display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 80px 20px; color: #999;">
+                    <n-icon size="48" style="margin-bottom: 16px; opacity: 0.5;">
+                        <svg viewBox="0 0 24 24">
+                            <path fill="currentColor" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M11,16.5L6.5,12L7.91,10.59L11,13.67L16.59,8.09L18,9.5L11,16.5Z"/>
+                        </svg>
+                    </n-icon>
+                    <div style="font-size: 16px; margin-bottom: 8px;">No Big Keys Found</div>
+                    <div style="font-size: 13px; color: #888;">
+                        <span v-if="selectedTypes.length === 0 && selectedInstances.length === 0 && selectedDbs.length === 0">
+                            Please apply filters above to view big keys data.
+                        </span>
+                        <span v-else>
+                            No keys match your current filter selection. Try adjusting the filters above.
+                        </span>
+                    </div>
+                </div>
+                
+                <n-data-table
+                    v-else
+                    :columns="topKeysTableColumns"
+                    :data="searchedTopKeys"
+                    :row-key="(row) => row.key"
+                    striped
+                    size="small"
+                    :pagination="false"
+                    :max-height="500"
+                    :scroll-x="1140"
+                    virtual-scroll
+                    :multiple="true"
+                    v-model:sorter="tableSorter"
+                />
+            </div>
+        </div>
     </div>
 
     <script id="rdbinsight-data" type="application/json" src="./report.json"></script>
@@ -1046,31 +1282,41 @@
         });
         
         function initializeApp() {
-            const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
+            const { createApp, ref, computed, onMounted, watch, nextTick, h, reactive } = Vue;
             const { 
                 NCard, NH1, NH3, NH4, NText, NSelect, NAlert, NStatisticGroup, NStatistic, 
                 NCollapse, NCollapseItem, NSpace, NTag, NIcon, NInput, NButton,
-                NGrid, NGridItem, NTooltip
+                NGrid, NGridItem, NTooltip, NDataTable
             } = naive;
 
             const app = createApp({
                 components: {
                     NCard, NH1, NH3, NH4, NText, NSelect, NAlert, NStatisticGroup, NStatistic,
                     NCollapse, NCollapseItem, NSpace, NTag, NIcon, NInput, NButton,
-                    NGrid, NGridItem, NTooltip
+                    NGrid, NGridItem, NTooltip, NDataTable
                 },
                 setup() {
                 // Reactive data
                 const reportData = ref([]);
+                const topKeys = ref([]);
                 const selectedTypes = ref([]);
                 const selectedInstances = ref([]);
                 const selectedDbs = ref([]);
                 const searchTerm = ref('');
+                const topKeysSearchTerm = ref('');
                 const flameGraph = ref(null);
                 const hoveredItem = ref(null);
                 const copiedItem = ref(null);
                 const hoveredStat = ref(null);
                 const dataLoaded = ref(false);
+                
+                // Table sorting state
+                const tableSorter = ref([
+                    {
+                        columnKey: 'rdb_size',
+                        order: 'descend'
+                    }
+                ]);
                 
                 // Cluster and batch info from report data
                 const cluster = ref('');
@@ -1220,6 +1466,276 @@
                     return result;
                 });
 
+                // Computed filtered top keys based on user filter conditions
+                const filteredTopKeys = computed(() => {
+                    if (!dataLoaded.value || !topKeys.value || topKeys.value.length === 0) return [];
+                    
+                    return topKeys.value
+                        .filter((key) => {
+                            const typeMatch =
+                                selectedTypes.value.length === 0 ||
+                                selectedTypes.value.includes(key.type);
+                            const instanceMatch =
+                                selectedInstances.value.length === 0 ||
+                                selectedInstances.value.includes(key.instance);
+                            const dbMatch =
+                                selectedDbs.value.length === 0 || 
+                                selectedDbs.value.includes(key.db);
+                            return typeMatch && instanceMatch && dbMatch;
+                        })
+                        .sort((a, b) => b.rdb_size - a.rdb_size)
+                        .slice(0, 100);
+                });
+
+                // Computed searched top keys for table search functionality
+                const searchedTopKeys = computed(() => {
+                    const keys = !topKeysSearchTerm.value ? filteredTopKeys.value : 
+                        filteredTopKeys.value.filter(key => 
+                            key.key.toLowerCase().includes(topKeysSearchTerm.value.toLowerCase())
+                        );
+                    
+                    // Convert to plain objects to avoid Proxy issues
+                    return keys.map(key => ({
+                        key: key.key,
+                        rdb_size: key.rdb_size,
+                        member_count: key.member_count,
+                        type: key.type,
+                        instance: key.instance,
+                        db: key.db,
+                        encoding: key.encoding,
+                        expire_at: key.expire_at
+                    }));
+                });
+
+                // Table configuration for top keys with enhanced functionality
+                const topKeysTableColumns = [
+                    {
+                        title: 'Key Name',
+                        key: 'key',
+                        width: 240,
+                        ellipsis: true,
+                        sorter: 'default',
+                        sortOrder: false,
+                        render: (row) => {
+                            const isKeyCopied = copiedItem.value === `key-${row.key}`;
+                            return h(NTooltip, {
+                                showArrow: false,
+                                delay: 400,
+                                placement: 'bottom'
+                            }, {
+                                trigger: () => h('div', {
+                                    class: ['clickable-element', { copied: isKeyCopied }],
+                                    style: 'font-family: "Fira Code", monospace; font-size: 12px; padding: 4px 8px; cursor: pointer; display: flex; align-items: center; gap: 6px;',
+                                    onClick: () => copyKeyName(row.key)
+                                }, [
+                                    h('span', {
+                                        style: 'flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
+                                    }, row.key),
+                                    h(NIcon, {
+                                        size: 12,
+                                        style: { 
+                                            opacity: isKeyCopied ? 1 : 0, 
+                                            transition: 'opacity 0.2s', 
+                                            flexShrink: 0 
+                                        }
+                                    }, () => isKeyCopied ? 
+                                        h('svg', { viewBox: '0 0 24 24' }, [
+                                            h('path', { 
+                                                fill: 'currentColor', 
+                                                d: 'M9,20.42L2.79,14.21L5.62,11.38L9,14.77L18.88,4.88L21.71,7.71L9,20.42Z' 
+                                            })
+                                        ]) :
+                                        h('svg', { viewBox: '0 0 24 24' }, [
+                                            h('path', { 
+                                                fill: 'currentColor', 
+                                                d: 'M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z' 
+                                            })
+                                        ])
+                                    )
+                                ]),
+                                default: () => isKeyCopied ? 'Copied!' : row.key
+                            });
+                        }
+                    },
+                    {
+                        title: 'RDB Size',
+                        key: 'rdb_size',
+                        width: 120,
+                        sorter: 'default',
+                        sortOrder: false,
+                        render: (row) => {
+                            const isCopied = copiedItem.value === `rdb_size-${row.key}`;
+                            return h(NTooltip, {
+                                showArrow: false,
+                                delay: 400,
+                                placement: 'bottom'
+                            }, {
+                                trigger: () => h('div', {
+                                    class: ['clickable-element', { copied: isCopied }],
+                                    style: 'font-weight: 600; color: #374151; cursor: pointer; padding: 4px 8px;',
+                                    onClick: () => copyFieldValue(row.rdb_size.toString(), 'rdb_size', row.key)
+                                }, formatSize(row.rdb_size)),
+                                default: () => isCopied ? 'Copied!' : `${row.rdb_size} bytes`
+                            });
+                        }
+                    },
+                    {
+                        title: 'Type',
+                        key: 'type',
+                        width: 80,
+                        sorter: 'default',
+                        sortOrder: false,
+                        render: (row) => {
+                            const isCopied = copiedItem.value === `type-${row.key}`;
+                            return h(NTooltip, {
+                                showArrow: false,
+                                delay: 400,
+                                placement: 'bottom'
+                            }, {
+                                trigger: () => h('div', {
+                                    class: ['clickable-element', { copied: isCopied }],
+                                    style: 'cursor: pointer; padding: 2px;',
+                                    onClick: () => copyFieldValue(row.type, 'type', row.key)
+                                }, [
+                                    h(NTag, {
+                                        type: getTypeTagColor(row.type),
+                                        size: 'small',
+                                        class: 'enhanced-tag'
+                                    }, () => row.type)
+                                ]),
+                                default: () => isCopied ? 'Copied!' : row.type
+                            });
+                        }
+                    },
+                    {
+                        title: 'Instance',
+                        key: 'instance',
+                        width: 160,
+                        ellipsis: true,
+                        sorter: 'default',
+                        sortOrder: false,
+                        render: (row) => {
+                            const isCopied = copiedItem.value === `instance-${row.key}`;
+                            return h(NTooltip, {
+                                showArrow: false,
+                                delay: 400,
+                                placement: 'bottom'
+                            }, {
+                                trigger: () => h('div', {
+                                    class: ['clickable-element', { copied: isCopied }],
+                                    style: 'font-family: "Fira Code", monospace; font-size: 12px; color: #6b7280; cursor: pointer; padding: 4px 8px;',
+                                    onClick: () => copyFieldValue(row.instance, 'instance', row.key)
+                                }, row.instance),
+                                default: () => isCopied ? 'Copied!' : row.instance
+                            });
+                        }
+                    },
+                    {
+                        title: 'DB',
+                        key: 'db',
+                        width: 60,
+                        sorter: 'default',
+                        sortOrder: false,
+                        render: (row) => {
+                            const isCopied = copiedItem.value === `db-${row.key}`;
+                            return h(NTooltip, {
+                                showArrow: false,
+                                delay: 400,
+                                placement: 'bottom'
+                            }, {
+                                trigger: () => h('div', {
+                                    class: ['clickable-element', { copied: isCopied }],
+                                    style: 'cursor: pointer; padding: 2px;',
+                                    onClick: () => copyFieldValue(row.db.toString(), 'db', row.key)
+                                }, [
+                                    h(NTag, {
+                                        type: 'info',
+                                        size: 'small',
+                                        class: 'enhanced-tag'
+                                    }, () => `DB ${row.db}`)
+                                ]),
+                                default: () => isCopied ? 'Copied!' : `Database ${row.db}`
+                            });
+                        }
+                    },
+                    {
+                        title: 'Members',
+                        key: 'member_count',
+                        width: 100,
+                        sorter: 'default',
+                        sortOrder: false,
+                        render: (row) => {
+                            const isCopied = copiedItem.value === `member_count-${row.key}`;
+                            return h(NTooltip, {
+                                showArrow: false,
+                                delay: 400,
+                                placement: 'bottom'
+                            }, {
+                                trigger: () => h('div', {
+                                    class: ['clickable-element', { copied: isCopied }],
+                                    style: 'font-weight: 500; color: #6b7280; cursor: pointer; padding: 4px 8px;',
+                                    onClick: () => copyFieldValue((row.member_count || 0).toString(), 'member_count', row.key)
+                                }, formatMemberCount(row.member_count)),
+                                default: () => isCopied ? 'Copied!' : `${row.member_count || 0} members`
+                            });
+                        }
+                    },
+                    {
+                        title: 'Encoding',
+                        key: 'encoding',
+                        width: 120,
+                        ellipsis: true,
+                        render: (row) => {
+                            const isCopied = copiedItem.value === `encoding-${row.key}`;
+                            return h(NTooltip, {
+                                showArrow: false,
+                                delay: 400,
+                                placement: 'bottom'
+                            }, {
+                                trigger: () => h('div', {
+                                    class: ['clickable-element', { copied: isCopied }],
+                                    style: 'font-family: "Fira Code", monospace; font-size: 11px; color: #6b7280; cursor: pointer; padding: 4px 8px;',
+                                    onClick: () => copyFieldValue(row.encoding || 'N/A', 'encoding', row.key)
+                                }, row.encoding || 'N/A'),
+                                default: () => isCopied ? 'Copied!' : row.encoding || 'N/A'
+                            });
+                        }
+                    },
+                    {
+                        title: 'Expires',
+                        key: 'expire_at',
+                        width: 180,
+                        ellipsis: true,
+                        render: (row) => {
+                            const isCopied = copiedItem.value === `expire_at-${row.key}`;
+                            const localTimeValue = formatExpireTimeForDisplay(row.expire_at);
+                            const utcTimeValue = getExpireTimeForCopy(row.expire_at);
+                            return h(NTooltip, {
+                                showArrow: false,
+                                delay: 400,
+                                placement: 'bottom'
+                            }, {
+                                trigger: () => h('div', {
+                                    class: ['clickable-element', { copied: isCopied }],
+                                    style: 'font-family: "Fira Code", monospace; font-size: 11px; color: #6b7280; cursor: pointer; padding: 4px 8px;',
+                                    onClick: () => copyFieldValue(utcTimeValue, 'expire_at', row.key)
+                                }, localTimeValue),
+                                default: () => isCopied ? 'Copied!' : (utcTimeValue === 'Never' ? 'Never expires' : `UTC: ${utcTimeValue}`)
+                            });
+                        }
+                    }
+                ];
+
+                // Table pagination configuration
+                const topKeysTablePagination = reactive({
+                    page: 1,
+                    pageSize: 50,
+                    showSizePicker: true,
+                    pageSizes: [20, 50, 100],
+                    showQuickJumper: true,
+                    prefix: (info) => `Total ${info.itemCount} keys`
+                });
+
                 // Utility functions
                 const formatSize = (bytes) => {
                     if (typeof bytes !== 'number' || isNaN(bytes)) return 'N/A';
@@ -1278,6 +1794,119 @@
                     ];
                     return colors[db % colors.length];
                 };
+
+                // Generic copy functionality for table fields
+                const copyFieldValue = async (value, fieldType, identifier = '') => {
+                    try {
+                        await navigator.clipboard.writeText(value);
+                        console.log(`${fieldType} copied to clipboard: ${value}`);
+                        
+                        // Show success feedback with unique identifier
+                        const itemId = identifier ? `${fieldType}-${identifier}` : fieldType;
+                        copiedItem.value = itemId;
+                        setTimeout(() => {
+                            if (copiedItem.value === itemId) {
+                                copiedItem.value = null;
+                            }
+                        }, 600);
+                        
+                    } catch (error) {
+                        console.error(`Failed to copy ${fieldType} to clipboard:`, error);
+                        // Fallback for older browsers
+                        try {
+                            const textArea = document.createElement('textarea');
+                            textArea.value = value;
+                            textArea.style.position = 'fixed';
+                            textArea.style.left = '-999999px';
+                            textArea.style.top = '-999999px';
+                            document.body.appendChild(textArea);
+                            textArea.focus();
+                            textArea.select();
+                            document.execCommand('copy');
+                            textArea.remove();
+                            console.log(`${fieldType} copied to clipboard (fallback): ${value}`);
+                            
+                            // Show success feedback for fallback too
+                            const itemId = identifier ? `${fieldType}-${identifier}` : fieldType;
+                            copiedItem.value = itemId;
+                            setTimeout(() => {
+                                if (copiedItem.value === itemId) {
+                                    copiedItem.value = null;
+                                }
+                            }, 600);
+                            
+                        } catch (fallbackError) {
+                            console.error('Fallback copy failed:', fallbackError);
+                        }
+                    }
+                };
+
+                // Top Keys utility functions
+                const copyKeyName = async (keyName) => {
+                    await copyFieldValue(keyName, 'key', keyName);
+                };
+
+
+
+                const formatMemberCount = (count) => {
+                    if (count == null || count === undefined) return 'N/A';
+                    if (typeof count !== 'number') return 'N/A';
+                    
+                    if (count >= 1000000) {
+                        return `${(count / 1000000).toFixed(1)}M`;
+                    } else if (count >= 1000) {
+                        return `${(count / 1000).toFixed(1)}K`;
+                    }
+                    return count.toString();
+                };
+
+                // Time formatting functions for displaying and copying timestamps
+                const formatExpireTimeForDisplay = (expireAt) => {
+                    if (!expireAt) return 'Never';
+                    try {
+                        // expireAt is in UTC RFC 3339 format from backend
+                        const date = new Date(expireAt);
+                        if (isNaN(date.getTime())) return 'Invalid';
+                        
+                        // Convert to local timezone but keep RFC 3339 format
+                        // Using toLocaleString with RFC 3339-like format
+                        const year = date.getFullYear();
+                        const month = String(date.getMonth() + 1).padStart(2, '0');
+                        const day = String(date.getDate()).padStart(2, '0');
+                        const hours = String(date.getHours()).padStart(2, '0');
+                        const minutes = String(date.getMinutes()).padStart(2, '0');
+                        const seconds = String(date.getSeconds()).padStart(2, '0');
+                        const milliseconds = String(date.getMilliseconds()).padStart(3, '0');
+                        
+                        // Get timezone offset
+                        const timezoneOffset = date.getTimezoneOffset();
+                        const offsetHours = Math.floor(Math.abs(timezoneOffset) / 60);
+                        const offsetMinutes = Math.abs(timezoneOffset) % 60;
+                        const offsetSign = timezoneOffset <= 0 ? '+' : '-';
+                        const offsetString = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
+                        
+                        return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}${offsetString}`;
+                    } catch (error) {
+                        return 'Invalid';
+                    }
+                };
+
+                const getExpireTimeForCopy = (expireAt) => {
+                    if (!expireAt) return 'Never';
+                    try {
+                        // Validate and return the original UTC RFC 3339 string
+                        const date = new Date(expireAt);
+                        if (isNaN(date.getTime())) return 'Invalid';
+                        
+                        // Return the original UTC timestamp
+                        return expireAt;
+                    } catch (error) {
+                        return 'Invalid';
+                    }
+                };
+
+                // Legacy function for backward compatibility
+                const formatExpireTime = formatExpireTimeForDisplay;
 
                 // Convert aggregated prefix data to unified flame graph structure
                 const convertToFlameGraphData = (filteredPrefixRecords) => {
@@ -1480,7 +2109,7 @@
                         copiedItem.value = itemType;
                         setTimeout(() => {
                             copiedItem.value = null;
-                        }, 1000); // Show success state for 1 second
+                        }, 800); // Show success state for 0.8 seconds
                         
                     } catch (error) {
                         console.error('Failed to copy to clipboard:', error);
@@ -1502,7 +2131,7 @@
                             copiedItem.value = itemType;
                             setTimeout(() => {
                                 copiedItem.value = null;
-                            }, 1000);
+                            }, 800);
                             
                         } catch (fallbackError) {
                             console.error('Fallback copy failed:', fallbackError);
@@ -1615,6 +2244,7 @@
                         cluster.value = data.cluster || 'Unknown';
                         batch.value = data.batch || 'Unknown';
                         reportData.value = data.prefix_records || [];
+                        topKeys.value = data.top_keys || [];
                         
                         // Update document title dynamically
                         document.title = `RDBInsight Report - ${cluster.value}`;
@@ -1622,8 +2252,12 @@
                         console.log('Report data initialized:', {
                             cluster: cluster.value,
                             batch: batch.value,
-                            records_count: reportData.value.length
+                            records_count: reportData.value.length,
+                            top_keys_count: topKeys.value.length
                         });
+                        
+                        // Debug: log first few top keys
+                        console.log('First 3 top keys:', topKeys.value.slice(0, 3));
                         
                         // Mark data as loaded
                         dataLoaded.value = true;
@@ -1642,6 +2276,13 @@
                                 instances: selectedInstances.value.length,
                                 dbs: selectedDbs.value.length
                             });
+                            
+                            // Debug: check filtered top keys after filters are set
+                            setTimeout(() => {
+                                console.log('Filtered top keys count:', filteredTopKeys.value.length);
+                                console.log('Searched top keys count:', searchedTopKeys.value.length);
+                                console.log('First filtered key:', filteredTopKeys.value[0]);
+                            }, 1000);
                         }
                         
                     } catch (error) {
@@ -1692,10 +2333,13 @@
                 return {
                     cluster,
                     batch,
+                    topKeys,
                     selectedTypes,
                     selectedInstances,
                     selectedDbs,
                     searchTerm,
+                    topKeysSearchTerm,
+                    tableSorter,
                     hoveredItem,
                     copiedItem,
                     hoveredStat,
@@ -1704,6 +2348,10 @@
                     dbOptions,
                     filteredData,
                     filteredPrefixRecords,
+                    filteredTopKeys,
+                    searchedTopKeys,
+                    topKeysTableColumns,
+                    topKeysTablePagination,
                     totalClassifications,
                     totalFilteredSize,
                     coveragePercentage,
@@ -1715,6 +2363,9 @@
                     getTypeColor,
                     getTypeTagColor,
                     getDbColor,
+                    copyKeyName,
+                    formatMemberCount,
+                    formatExpireTime,
                     resetZoom,
                     onSearchInput,
                     copyToClipboard,

@@ -1,8 +1,9 @@
 use std::marker::ConstParamTy;
 
 use num_enum::{IntoPrimitive, TryFromPrimitive};
+use serde::{Deserialize, Serialize};
 
-use crate::parser::core::raw::RDBStr;
+use crate::{impl_serde_str_conversion, parser::core::raw::RDBStr};
 
 /// A single logical item emitted by the high-level [`RDBFileParser`].
 #[derive(Debug, Clone)]
@@ -96,14 +97,23 @@ pub enum Item {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+impl_serde_str_conversion!(StringEncoding);
+impl_serde_str_conversion!(ListEncoding);
+impl_serde_str_conversion!(SetEncoding);
+impl_serde_str_conversion!(ZSetEncoding);
+impl_serde_str_conversion!(HashEncoding);
+impl_serde_str_conversion!(StreamEncoding);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StringEncoding {
     Raw,
     Int,
     LZF,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ListEncoding {
     List,
     ZipList,
@@ -111,14 +121,16 @@ pub enum ListEncoding {
     QuickList2,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SetEncoding {
     Raw,
     IntSet,
     ListPack,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ZSetEncoding {
     SkipList,
     ZipList,
@@ -126,7 +138,8 @@ pub enum ZSetEncoding {
     ListPack,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HashEncoding {
     Raw,
     ZipMap,
@@ -136,7 +149,8 @@ pub enum HashEncoding {
     ListPackEx,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ConstParamTy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ConstParamTy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StreamEncoding {
     ListPacks,
     ListPacks2,

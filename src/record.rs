@@ -100,12 +100,12 @@ impl Record {
     /// Get the encoding as a string for serialization
     pub fn encoding_name(&self) -> String {
         match self.encoding {
-            RecordEncoding::String(enc) => format!("string:{enc:?}").to_lowercase(),
-            RecordEncoding::List(enc) => format!("list:{enc:?}").to_lowercase(),
-            RecordEncoding::Set(enc) => format!("set:{enc:?}").to_lowercase(),
-            RecordEncoding::ZSet(enc) => format!("zset:{enc:?}").to_lowercase(),
-            RecordEncoding::Hash(enc) => format!("hash:{enc:?}").to_lowercase(),
-            RecordEncoding::Stream(enc) => format!("stream:{enc:?}").to_lowercase(),
+            RecordEncoding::String(enc) => enc.to_string(),
+            RecordEncoding::List(enc) => enc.to_string(),
+            RecordEncoding::Set(enc) => enc.to_string(),
+            RecordEncoding::ZSet(enc) => enc.to_string(),
+            RecordEncoding::Hash(enc) => enc.to_string(),
+            RecordEncoding::Stream(enc) => enc.to_string(),
             RecordEncoding::Module => "module".to_string(),
         }
     }
@@ -431,7 +431,7 @@ mod tests {
             .build();
 
         assert_eq!(record.type_name(), "hash");
-        assert_eq!(record.encoding_name(), "hash:raw");
+        assert_eq!(record.encoding_name(), "raw");
         assert!(!record.is_expired(1000)); // No expiry set
 
         let expired_record = Record::builder()

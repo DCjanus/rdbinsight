@@ -268,7 +268,7 @@ mod tests {
         assert_eq!(row.r#type, "string");
         assert_eq!(row.member_count, 1);
         assert_eq!(row.rdb_size, 100);
-        assert_eq!(row.encoding, "string:raw");
+        assert_eq!(row.encoding, "raw");
         assert_eq!(
             row.expire_at,
             Some(OffsetDateTime::from_unix_timestamp_nanos(1640995260000 * 1_000_000).unwrap())

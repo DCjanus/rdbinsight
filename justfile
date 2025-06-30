@@ -25,6 +25,7 @@ before_commit:
 
 clean:
 	rm -rf tests/dumps/*.rdb
+	rm -f ./rdb_report_*.html
 
 init_test:
     @ if ! cargo nextest --version > /dev/null 2>&1; then cargo install cargo-nextest --locked; fi

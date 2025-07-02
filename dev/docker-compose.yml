@@ -18,8 +18,8 @@ services:
       - "9001:9000" # Native client: Host port 9001 -> Container port 9000
     environment:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: dev123
+      CLICKHOUSE_USER: rdbinsight
+      CLICKHOUSE_PASSWORD: rdbinsight
       CLICKHOUSE_DB: rdbinsight
     ulimits:
       nofile:

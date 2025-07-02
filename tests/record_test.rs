@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use futures_util::StreamExt;
 use rdbinsight::{
     parser::core::raw::RDBStr,
@@ -367,7 +367,8 @@ fn verify_records(actual_records: &[Record], expected_records: &[ExpectedRecord]
     // Verify each actual record
     for record in actual_records {
         let key_str = match &record.key {
-            RDBStr::Str(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+            RDBStr::Str(bytes) => String::from_utf8(bytes.to_vec())
+                .map_err(|e| anyhow!("Invalid UTF-8 in record key: {}", e))?,
             RDBStr::Int(n) => n.to_string(),
         };
 
@@ -519,7 +520,8 @@ async fn test_record_stream_with_expiry() -> Result<()> {
         );
 
         let key_str = match &record.key {
-            RDBStr::Str(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+            RDBStr::Str(bytes) => String::from_utf8(bytes.to_vec())
+                .map_err(|e| anyhow!("Invalid UTF-8 in record key: {}", e))?,
             RDBStr::Int(n) => n.to_string(),
         };
 

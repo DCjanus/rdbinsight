@@ -1384,7 +1384,7 @@
                     // Only calculate after data is loaded
                     if (!dataLoaded.value || !filteredPrefixRecords.value || filteredPrefixRecords.value.length === 0) return 0;
                     return filteredPrefixRecords.value
-                        .filter(record => record.prefix === '')
+                        .filter(record => record.prefix_base64 === '')
                         .reduce((sum, record) => sum + record.rdb_size, 0);
                 });
                 
@@ -1392,7 +1392,7 @@
                     // Only calculate after data is loaded
                     if (!dataLoaded.value || !reportData.value || reportData.value.length === 0) return 0;
                     return reportData.value
-                        .filter(record => record.prefix === '')
+                        .filter(record => record.prefix_base64 === '')
                         .reduce((sum, record) => sum + record.rdb_size, 0);
                 });
                 
@@ -1411,7 +1411,7 @@
                     
                     // Only use empty prefix records (classification totals) to avoid double counting
                     filteredPrefixRecords.value
-                        .filter(record => record.prefix === '')
+                        .filter(record => record.prefix_base64 === '')
                         .forEach(record => {
                             const type = record.type;
                             const size = record.rdb_size;
@@ -1442,7 +1442,7 @@
                     
                     // Only use empty prefix records (classification totals) to avoid double counting
                     filteredPrefixRecords.value
-                        .filter(record => record.prefix === '')
+                        .filter(record => record.prefix_base64 === '')
                         .forEach(record => {
                             const db = record.db;
                             const size = record.rdb_size;
@@ -1490,13 +1490,15 @@
                 // Computed searched top keys for table search functionality
                 const searchedTopKeys = computed(() => {
                     const keys = !topKeysSearchTerm.value ? filteredTopKeys.value : 
-                        filteredTopKeys.value.filter(key => 
-                            key.key.toLowerCase().includes(topKeysSearchTerm.value.toLowerCase())
-                        );
+                        filteredTopKeys.value.filter(key => {
+                            // Decode the Base64 key for search comparison
+                            const decodedKey = decodeAndFormatKey(key.key_base64);
+                            return decodedKey.toLowerCase().includes(topKeysSearchTerm.value.toLowerCase());
+                        });
                     
                     // Convert to plain objects to avoid Proxy issues
                     return keys.map(key => ({
-                        key: key.key,
+                        key: key.key_base64,
                         rdb_size: key.rdb_size,
                         member_count: key.member_count,
                         type: key.type,
@@ -1518,6 +1520,7 @@
                         sortOrder: false,
                         render: (row) => {
                             const isKeyCopied = copiedItem.value === `key-${row.key}`;
+                            const displayKey = decodeAndFormatKey(row.key);
                             return h(NTooltip, {
                                 showArrow: false,
                                 delay: 400,
@@ -1530,7 +1533,7 @@
                                 }, [
                                     h('span', {
                                         style: 'flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
-                                    }, row.key),
+                                    }, displayKey),
                                     h(NIcon, {
                                         size: 12,
                                         style: { 
@@ -1553,7 +1556,7 @@
                                         ])
                                     )
                                 ]),
-                                default: () => isKeyCopied ? 'Copied!' : row.key
+                                default: () => isKeyCopied ? 'Copied!' : displayKey
                             });
                         }
                     },
@@ -1841,9 +1844,86 @@
                     }
                 };
 
+                // Decode and format Base64-encoded key for display
+                const decodeAndFormatKey = (base64Key) => {
+                    try {
+                        // Decode Base64 to binary string
+                        const binaryString = atob(base64Key);
+                        
+                        // Convert binary string to Uint8Array
+                        const bytes = new Uint8Array(binaryString.length);
+                        for (let i = 0; i < binaryString.length; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
+                        }
+                        
+                        try {
+                            // Try to decode as UTF-8
+                            const decoder = new TextDecoder('utf-8', { fatal: true });
+                            return decoder.decode(bytes);
+                        } catch (error) {
+                            // If UTF-8 decoding fails, format as hex escape sequences
+                            let result = '';
+                            for (let i = 0; i < bytes.length; i++) {
+                                const byte = bytes[i];
+                                if (byte >= 32 && byte <= 126) {
+                                    // Printable ASCII character
+                                    result += String.fromCharCode(byte);
+                                } else {
+                                    // Non-printable byte, format as \xHH
+                                    result += '\\x' + byte.toString(16).padStart(2, '0');
+                                }
+                            }
+                            return result;
+                        }
+                    } catch (error) {
+                        console.error('Failed to decode key:', error);
+                        return base64Key; // Fallback to original Base64 string
+                    }
+                };
+
                 // Top Keys utility functions
-                const copyKeyName = async (keyName) => {
-                    await copyFieldValue(keyName, 'key', keyName);
+                const copyKeyName = async (base64Key) => {
+                    try {
+                        // Decode Base64 to get original binary data
+                        const binaryString = atob(base64Key);
+                        
+                        // Convert binary string to Uint8Array
+                        const bytes = new Uint8Array(binaryString.length);
+                        for (let i = 0; i < binaryString.length; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
+                        }
+                        
+                        // Create a Blob with the original binary data
+                        const blob = new Blob([bytes], { type: 'application/octet-stream' });
+                        
+                        // Use modern clipboard API if available
+                        if (navigator.clipboard && navigator.clipboard.write) {
+                            const clipboardItem = new ClipboardItem({
+                                'application/octet-stream': blob
+                            });
+                            await navigator.clipboard.write([clipboardItem]);
+                        } else {
+                            // Fallback: copy as text (may not preserve binary data perfectly)
+                            await navigator.clipboard.writeText(binaryString);
+                        }
+                        
+                        console.log('Key binary data copied to clipboard');
+                        
+                        // Show success feedback
+                        const itemId = `key-${base64Key}`;
+                        copiedItem.value = itemId;
+                        setTimeout(() => {
+                            if (copiedItem.value === itemId) {
+                                copiedItem.value = null;
+                            }
+                        }, 600);
+                        
+                    } catch (error) {
+                        console.error('Failed to copy key binary data:', error);
+                        // Ultimate fallback: copy the display string
+                        const displayKey = decodeAndFormatKey(base64Key);
+                        await copyFieldValue(displayKey, 'key', base64Key);
+                    }
                 };
 
 
@@ -1916,7 +1996,8 @@
                     const prefixAggregateMap = new Map();
                     
                     filteredPrefixRecords.forEach(record => {
-                        const prefix = record.prefix;
+                        // Decode Base64-encoded prefix for display
+                        const prefix = decodeAndFormatKey(record.prefix_base64);
                         const size = record.rdb_size;
                         const count = record.key_count;
                         
@@ -2363,6 +2444,7 @@
                     getTypeColor,
                     getTypeTagColor,
                     getDbColor,
+                    decodeAndFormatKey,
                     copyKeyName,
                     formatMemberCount,
                     formatExpireTime,

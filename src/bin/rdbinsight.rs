@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 use clap::{Parser, Subcommand};
 use futures_util::StreamExt;
@@ -39,6 +39,10 @@ enum Command {
 struct DumpArgs {
     /// Path to configuration file
     config: PathBuf,
+
+    /// Batch timestamp in RFC3339 format (defaults to current UTC time)
+    #[clap(long, env = "RDBINSIGHT_BATCH_TIMESTAMP")]
+    batch_timestamp: Option<String>,
 }
 
 #[derive(Parser)]
@@ -51,11 +55,11 @@ struct ReportArgs {
     #[clap(long)]
     cluster: String,
 
-    /// Batch timestamp in RFC3339 format (optional, defaults to latest batch for the cluster)
+    /// Batch timestamp in RFC3339 format (defaults to latest batch)
     #[clap(long)]
     batch: Option<String>,
 
-    /// Output HTML file path (optional)
+    /// Output HTML file path
     #[clap(short, long)]
     output: Option<PathBuf>,
 }
@@ -82,7 +86,7 @@ async fn main() -> Result<()> {
         .init();
 
     match cli.command {
-        Command::Dump(args) => dump_to_clickhouse(args.config).await,
+        Command::Dump(args) => dump_to_clickhouse(args).await,
         Command::Report(args) => run_report(args).await,
         Command::Misc(misc_cmd) => match misc_cmd {
             MiscCommand::PrintClickhouseSchema => {
@@ -116,12 +120,12 @@ fn print_clickhouse_schema() {
     }
 }
 
-async fn dump_to_clickhouse(config_path: PathBuf) -> Result<()> {
-    info!("Loading configuration from: {}", config_path.display());
+async fn dump_to_clickhouse(args: DumpArgs) -> Result<()> {
+    info!("Loading configuration from: {}", args.config.display());
 
-    let config_content = tokio::fs::read_to_string(&config_path)
+    let config_content = tokio::fs::read_to_string(&args.config)
         .await
-        .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
+        .with_context(|| format!("Failed to read config file: {}", args.config.display()))?;
 
     let config: Config =
         toml::from_str(&config_content).with_context(|| "Failed to parse configuration file")?;
@@ -132,11 +136,18 @@ async fn dump_to_clickhouse(config_path: PathBuf) -> Result<()> {
     info!("Cluster: {}", cluster_name);
     info!("Concurrency: {}", config.concurrency);
 
-    // Generate unique batch timestamp
-    let batch_timestamp = OffsetDateTime::now_utc();
-    info!("Batch timestamp: {}", batch_timestamp);
+    let batch_timestamp = if let Some(timestamp_str) = args.batch_timestamp {
+        let parsed_timestamp = OffsetDateTime::parse(
+            &timestamp_str,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .with_context(|| anyhow!("Failed to parse batch timestamp: {timestamp_str}"))?;
+        parsed_timestamp.to_offset(time::UtcOffset::UTC)
+    } else {
+        OffsetDateTime::now_utc()
+    };
+    info!("Batch timestamp (UTC): {}", batch_timestamp);
 
-    // Initialize ClickHouse output
     let clickhouse_output = match &config.output {
         OutputConfig::Clickhouse(clickhouse_config) => {
             info!(
@@ -149,7 +160,6 @@ async fn dump_to_clickhouse(config_path: PathBuf) -> Result<()> {
         }
     };
 
-    // Get instance identifier based on source type
     let instance = get_instance_identifier(&config.source);
     info!("Instance: {}", instance);
 
@@ -159,7 +169,6 @@ async fn dump_to_clickhouse(config_path: PathBuf) -> Result<()> {
         instance,
     };
 
-    // Get RDB stream based on source type
     let stream = match &config.source {
         SourceConfig::RDBFile { path, .. } => {
             info!("Reading from RDB file: {}", path);
@@ -190,7 +199,6 @@ async fn dump_to_clickhouse(config_path: PathBuf) -> Result<()> {
         }
     };
 
-    // Process records and write to ClickHouse
     process_records_to_clickhouse(stream, clickhouse_output, batch_info).await
 }
 
@@ -207,10 +215,8 @@ async fn process_records_to_clickhouse(
 
     info!("Starting RDB parsing and ClickHouse writing...");
 
-    // Create RecordStream
     let mut record_stream = RecordStream::new(stream);
 
-    // Configure retry strategy: linear backoff up to 1 minute timeout
     let backoff_strategy = ExponentialBackoffBuilder::new()
         .with_initial_interval(std::time::Duration::from_secs(1))
         .with_max_interval(std::time::Duration::from_secs(10))
@@ -223,7 +229,6 @@ async fn process_records_to_clickhouse(
                 total_records += 1;
                 record_buffer.push(record);
 
-                // Write batch when buffer is full
                 if record_buffer.len() >= BATCH_SIZE {
                     write_batch_with_retry(
                         &clickhouse_output,
@@ -240,8 +245,7 @@ async fn process_records_to_clickhouse(
                     record_buffer.clear();
                 }
 
-                // Log progress every 100,000 records
-                if total_records % 100_000 == 0 {
+                if total_records.is_multiple_of(100_000) {
                     debug!("Processed {} records", total_records);
                 }
             }
@@ -250,7 +254,6 @@ async fn process_records_to_clickhouse(
                 return Err(e);
             }
             None => {
-                // End of stream - write any remaining records
                 if !record_buffer.is_empty() {
                     write_batch_with_retry(
                         &clickhouse_output,
@@ -266,7 +269,6 @@ async fn process_records_to_clickhouse(
         }
     }
 
-    // Commit the batch to mark it as complete
     info!("Committing batch to mark import as complete...");
     commit_batch_with_retry(&clickhouse_output, &batch_info, &backoff_strategy).await?;
 

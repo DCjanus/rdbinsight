@@ -9,7 +9,7 @@ address = "127.0.0.1:6380"
 [output]
 type = "clickhouse"
 address = "http://127.0.0.1:8124"
-username = "default"
-password = "dev123"
+username = "rdbinsight"
+password = "rdbinsight"
 database = "rdbinsight"
 auto_create_tables = true

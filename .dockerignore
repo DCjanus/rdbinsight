@@ -1,0 +1,4 @@
+/target
+tests/dumps/
+.cursor/
+rdb_report_*.html

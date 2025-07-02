@@ -7,5 +7,5 @@ CREATE TABLE IF NOT EXISTS import_batches_completed
 ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMMDD(batch)
 ORDER BY (cluster, batch)
-TTL batch + INTERVAL 3 DAY
+TTL toDateTime(batch) + INTERVAL 3 DAY
 COMMENT 'Batch completion marker table for completed data imports' 

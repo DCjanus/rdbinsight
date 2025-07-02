@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use clickhouse::{Client, Row};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -23,7 +24,7 @@ pub struct RedisRecordRow {
     batch: OffsetDateTime,
     instance: String,
     db: u64,
-    key: String,
+    key: Bytes,
     r#type: String,
     member_count: u64,
     rdb_size: u64,
@@ -192,11 +193,9 @@ impl ClickHouseOutput {
     }
 
     fn record_to_row(&self, record: &Record, batch_info: &BatchInfo) -> RedisRecordRow {
-        let key_str = match &record.key {
-            crate::parser::core::raw::RDBStr::Str(bytes) => {
-                String::from_utf8_lossy(bytes).into_owned()
-            }
-            crate::parser::core::raw::RDBStr::Int(i) => i.to_string(),
+        let key_bytes = match &record.key {
+            crate::parser::core::raw::RDBStr::Str(bytes) => bytes.clone(),
+            crate::parser::core::raw::RDBStr::Int(i) => Bytes::from(i.to_string()),
         };
 
         RedisRecordRow {
@@ -204,7 +203,7 @@ impl ClickHouseOutput {
             batch: batch_info.batch,
             instance: batch_info.instance.clone(),
             db: record.db,
-            key: key_str,
+            key: key_bytes,
             r#type: record.type_name().to_string(),
             member_count: record.member_count.unwrap_or(0),
             rdb_size: record.rdb_size,
@@ -264,7 +263,7 @@ mod tests {
         assert_eq!(row.batch, batch_info.batch);
         assert_eq!(row.instance, "127.0.0.1:6379");
         assert_eq!(row.db, 0);
-        assert_eq!(row.key, "test_key");
+        assert_eq!(row.key, Bytes::from("test_key"));
         assert_eq!(row.r#type, "string");
         assert_eq!(row.member_count, 1);
         assert_eq!(row.rdb_size, 100);
@@ -286,7 +285,7 @@ mod tests {
             .build();
 
         let int_row = output.record_to_row(&int_record, &batch_info);
-        assert_eq!(int_row.key, "42");
+        assert_eq!(int_row.key, Bytes::from("42"));
         assert_eq!(int_row.db, 1);
         assert_eq!(int_row.r#type, "hash");
         assert_eq!(int_row.member_count, 10);

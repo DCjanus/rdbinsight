@@ -253,6 +253,9 @@ name = "bytes"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "bytes-utils"
@@ -1561,6 +1564,7 @@ dependencies = [
  "clap",
  "clickhouse",
  "futures-util",
+ "hex",
  "lzf",
  "memchr",
  "num_enum",
@@ -1569,6 +1573,7 @@ dependencies = [
  "redis-protocol",
  "serde",
  "serde_json",
+ "serde_with",
  "spire_enum",
  "testcontainers",
  "thiserror 2.0.12",

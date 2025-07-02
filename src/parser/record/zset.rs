@@ -84,7 +84,7 @@ impl StateParser for ZSetZipListRecordParser {
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
         let entry_count = self.entrust.call(buffer)?;
         ensure!(
-            entry_count % 2 == 0,
+            entry_count.is_multiple_of(2),
             "zset ziplist entry count should be even"
         );
         let member_count = entry_count / 2;
@@ -129,7 +129,7 @@ impl StateParser for ZSetListPackRecordParser {
         // Determine member count.
         let member_count = self.entrust.call(buffer)?;
         ensure!(
-            member_count % 2 == 0,
+            member_count.is_multiple_of(2),
             "zset listpack entry count should be even"
         );
         let member_count = member_count / 2;

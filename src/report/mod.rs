@@ -271,7 +271,7 @@ mod tests {
             cluster: "test-cluster".to_string(),
             batch: "2024-01-01T00:00:00Z".to_string(),
             prefix_records: vec![querier::PrefixRecord {
-                prefix: "user:".to_string(),
+                prefix_base64: bytes::Bytes::from("user:"),
                 instance: "127.0.0.1:6379".to_string(),
                 db: 0,
                 r#type: "string".to_string(),

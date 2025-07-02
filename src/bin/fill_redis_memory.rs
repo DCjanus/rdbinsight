@@ -494,12 +494,28 @@ impl MemoryFiller {
         let mut rng = rand::rng();
 
         // Add commands for different data types to the pipeline
-        for _ in 0..batch_size {
+        for _i in 0..batch_size {
             let data_type = self.distribution.select_type(&mut rng);
             let random_id: u64 = rng.random();
-            let key = format!("{}:{}:{}", self.prefix, data_type.as_str(), random_id);
 
-            let has_expiration = self.add_data_to_pipeline(&mut pipe, &key, data_type, &mut rng);
+            // Generate special keys with non-UTF8 bytes for about 1% of keys
+            let should_generate_non_utf8 = rng.random::<f64>() < 0.01;
+            let key_bytes = if should_generate_non_utf8 {
+                // Create a key with invalid UTF-8 sequence and make it big
+                let mut key_bytes = format!("big_key_{random_id}:").into_bytes();
+                key_bytes.extend_from_slice(&[0xf0, 0x28, 0x8c, 0xbc]); // Invalid UTF-8 sequence
+                key_bytes
+            } else {
+                format!("{}:{}:{}", self.prefix, data_type.as_str(), random_id).into_bytes()
+            };
+
+            let has_expiration = self.add_data_to_pipeline(
+                &mut pipe,
+                &key_bytes,
+                data_type,
+                &mut rng,
+                should_generate_non_utf8,
+            );
 
             // Update counters
             *self.type_counters.get_mut(&data_type).unwrap() += 1;
@@ -520,9 +536,10 @@ impl MemoryFiller {
     fn add_data_to_pipeline(
         &self,
         pipe: &mut redis::Pipeline,
-        key: &str,
+        key: &[u8],
         data_type: DataType,
         rng: &mut impl Rng,
+        should_generate_large_value: bool,
     ) -> bool {
         // 60% of keys should have expiration (more than half)
         let should_expire = rng.random::<f64>() < 0.6;
@@ -534,52 +551,118 @@ impl MemoryFiller {
 
         match data_type {
             DataType::String => {
-                let value = format!("value_{}", rng.random::<u32>());
+                let value = if should_generate_large_value {
+                    // Generate approximately 10KB of random data
+                    let mut large_value = vec![0u8; 10240];
+                    rng.fill(&mut large_value[..]);
+                    large_value
+                } else {
+                    format!("value_{}", rng.random::<u32>()).into_bytes()
+                };
                 pipe.set(key, value).ignore();
             }
             DataType::Hash => {
-                let field_count = rng.random_range(1..=16);
+                let field_count = if should_generate_large_value {
+                    rng.random_range(50..=100) // More fields for large keys
+                } else {
+                    rng.random_range(1..=16)
+                };
                 for i in 0..field_count {
-                    pipe.hset(
-                        key,
-                        format!("field{i}"),
-                        format!("value_{}", rng.random::<u32>()),
-                    )
-                    .ignore();
+                    let value = if should_generate_large_value {
+                        // Each field value is ~100 bytes
+                        let mut field_value = vec![0u8; 100];
+                        rng.fill(&mut field_value[..]);
+                        field_value
+                    } else {
+                        format!("value_{}", rng.random::<u32>()).into_bytes()
+                    };
+                    pipe.hset(key, format!("field{i}"), value).ignore();
                 }
             }
             DataType::List => {
-                let item_count = rng.random_range(1..=16);
+                let item_count = if should_generate_large_value {
+                    rng.random_range(50..=100) // More items for large keys
+                } else {
+                    rng.random_range(1..=16)
+                };
                 for i in 0..item_count {
-                    pipe.lpush(key, format!("item_{}_{}", i, rng.random::<u16>()))
-                        .ignore();
+                    let item_value = if should_generate_large_value {
+                        // Each item is ~100 bytes
+                        let mut item_data = vec![0u8; 100];
+                        rng.fill(&mut item_data[..]);
+                        item_data
+                    } else {
+                        format!("item_{}_{}", i, rng.random::<u16>()).into_bytes()
+                    };
+                    pipe.lpush(key, item_value).ignore();
                 }
             }
             DataType::Set => {
-                let member_count = rng.random_range(1..=16);
+                let member_count = if should_generate_large_value {
+                    rng.random_range(50..=100) // More members for large keys
+                } else {
+                    rng.random_range(1..=16)
+                };
                 for i in 0..member_count {
-                    pipe.sadd(key, format!("member_{}_{}", i, rng.random::<u16>()))
-                        .ignore();
+                    let member_value = if should_generate_large_value {
+                        // Each member is ~100 bytes
+                        let mut member_data = vec![0u8; 100];
+                        rng.fill(&mut member_data[..]);
+                        member_data
+                    } else {
+                        format!("member_{}_{}", i, rng.random::<u16>()).into_bytes()
+                    };
+                    pipe.sadd(key, member_value).ignore();
                 }
             }
             DataType::ZSet => {
-                let member_count = rng.random_range(1..=16);
+                let member_count = if should_generate_large_value {
+                    rng.random_range(50..=100) // More members for large keys
+                } else {
+                    rng.random_range(1..=16)
+                };
                 for i in 0..member_count {
                     let score = rng.random::<f64>() * 100.0;
-                    let member = format!("player_{}_{}", i, rng.random::<u16>());
+                    let member = if should_generate_large_value {
+                        // Each member is ~100 bytes
+                        let mut member_data = vec![0u8; 100];
+                        rng.fill(&mut member_data[..]);
+                        member_data
+                    } else {
+                        format!("player_{}_{}", i, rng.random::<u16>()).into_bytes()
+                    };
                     pipe.zadd(key, member, score).ignore();
                 }
             }
             DataType::Stream => {
-                let entry_count = rng.random_range(1..=16);
+                let entry_count = if should_generate_large_value {
+                    rng.random_range(50..=100) // More entries for large keys
+                } else {
+                    rng.random_range(1..=16)
+                };
                 for i in 0..entry_count {
                     let mut cmd = redis::cmd("XADD");
+                    let field1_value = if should_generate_large_value {
+                        // Each field value is ~100 bytes
+                        let mut field_data = vec![0u8; 100];
+                        rng.fill(&mut field_data[..]);
+                        field_data
+                    } else {
+                        format!("value_{}_{}", i, rng.random::<u16>()).into_bytes()
+                    };
+                    let field2_value = if should_generate_large_value {
+                        let mut field_data = vec![0u8; 100];
+                        rng.fill(&mut field_data[..]);
+                        field_data
+                    } else {
+                        format!("value_{}_{}", i, rng.random::<u16>()).into_bytes()
+                    };
                     cmd.arg(key)
                         .arg("*")
                         .arg("field1")
-                        .arg(format!("value_{}_{}", i, rng.random::<u16>()))
+                        .arg(field1_value)
                         .arg("field2")
-                        .arg(format!("value_{}_{}", i, rng.random::<u16>()));
+                        .arg(field2_value);
                     pipe.add_command(cmd).ignore();
                 }
             }

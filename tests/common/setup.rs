@@ -123,8 +123,10 @@ impl RedisInstance {
             .output()
             .await?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8(output.stdout)
+            .map_err(|e| anyhow!("Invalid UTF-8 in stdout: {}", e))?;
+        let stderr = String::from_utf8(output.stderr)
+            .map_err(|e| anyhow!("Invalid UTF-8 in stderr: {}", e))?;
 
         Ok(format!(
             "=== STDOUT ===\n{}\n=== STDERR ===\n{}",
@@ -240,7 +242,9 @@ impl RedisInstance {
             "docker cp {}:{}/dump.rdb {}",
             container_id,
             dump_dir_in_container,
-            local_rdb_path.to_string_lossy()
+            local_rdb_path
+                .to_str()
+                .expect("Given path is not a valid UTF-8 string")
         );
 
         let output = tokio::process::Command::new("sh")
@@ -250,9 +254,11 @@ impl RedisInstance {
             .await?;
 
         if !output.status.success() {
+            let stderr = String::from_utf8(output.stderr)
+                .unwrap_or_else(|_| "<invalid UTF-8 in stderr>".to_string());
             return Err(anyhow!(
                 "Failed to copy RDB file from container: {}",
-                String::from_utf8_lossy(&output.stderr)
+                stderr
             ));
         }
 

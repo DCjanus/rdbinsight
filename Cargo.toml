@@ -6,14 +6,18 @@ description = "A command-line tool for parsing and analyzing Redis RDB."
 
 default-run = "rdbinsight"
 
+[package.metadata.cargo-machete]
+ignored = ["serde_with"]
+
 [dependencies]
 anyhow = "1.0.98"
 async_async_io = "0.2.3"
 backoff = { version = "0.4", features = ["tokio"] }
-bytes = "1.10.1"
-clap = { version = "4.5.0", features = ["derive"] }
+bytes = { version = "1.10.1", features = ["serde"] }
+clap = { version = "4.5.0", features = ["derive", "env"] }
 clickhouse = { version = "0.13.0", features = ["time"] }
 futures-util = "0.3.31"
+hex = "0.4.3"
 lzf = "1.0.0"
 memchr = "2.7.5"
 num_enum = "0.7.3"
@@ -22,6 +26,7 @@ redis = { version = "0.32.0", features = ["tokio-comp"] }
 redis-protocol = { version = "6.0.0", features = ["codec"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
+serde_with = { version = "3.11.0", features = ["base64"] }
 spire_enum = "0.6.0"
 thiserror = "2.0.12"
 time = { version = "0.3.41", features = ["formatting", "parsing", "macros"] }

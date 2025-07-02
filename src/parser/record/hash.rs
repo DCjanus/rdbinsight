@@ -87,7 +87,7 @@ impl StateParser for HashZipListRecordParser {
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
         let entry_count = self.entrust.call(buffer)?;
         ensure!(
-            entry_count % 2 == 0,
+            entry_count.is_multiple_of(2),
             "ziplist entry count should be even for hash"
         );
         let field_count = entry_count / 2;
@@ -125,7 +125,7 @@ impl StateParser for HashListPackRecordParser {
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
         let entry_count = self.entrust.call(buffer)?;
         ensure!(
-            entry_count % 2 == 0,
+            entry_count.is_multiple_of(2),
             "listpack entry count should be even for hash"
         );
         let field_count = entry_count / 2;
@@ -165,7 +165,7 @@ impl StateParser for HashListPackExRecordParser {
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
         let entry_count = self.entrust.call(buffer)?;
         ensure!(
-            entry_count % 3 == 0,
+            entry_count.is_multiple_of(3),
             "listpack entry count should be divisible by 3 for hash listpack-ex (field, value, ttl)"
         );
         let pair_count = entry_count / 3;

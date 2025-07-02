@@ -17,5 +17,5 @@ CREATE TABLE IF NOT EXISTS redis_records_raw
 ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMMDD(batch)
 ORDER BY (cluster, batch, instance, db, key)
-TTL batch + INTERVAL 3 DAY
+TTL toDateTime(batch) + INTERVAL 3 DAY
 COMMENT 'Raw data table storing all Redis records parsed from RDB' 

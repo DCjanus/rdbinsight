@@ -1,5 +1,6 @@
 use anyhow::{Context, bail, ensure};
 use spire_enum::prelude::{delegate_impl, delegated_enum};
+use tracing::debug;
 
 use crate::{
     helper::AnyResult,
@@ -73,6 +74,9 @@ impl StateParser for ItemParser {
 pub struct RDBFileParser {
     version: u64,
     entrust: Option<ItemParser>,
+    // Add state tracking for better error reporting
+    current_db: Option<u64>,
+    items_parsed: u64,
 }
 
 impl RDBFileParser {
@@ -88,6 +92,12 @@ impl RDBFileParser {
         self.version = version;
         buffer.consume_to(input.as_ptr());
         Ok(())
+    }
+
+    // Helper method to return an item and increment the counter
+    fn return_item(&mut self, item: Item) -> AnyResult<Option<Item>> {
+        self.items_parsed += 1;
+        Ok(Some(item))
     }
 
     // Execute a child parser immediately if possible, otherwise stash it for later.
@@ -109,7 +119,7 @@ impl RDBFileParser {
         if let Some(entrust) = self.entrust.as_mut() {
             let item = entrust.call(buffer)?;
             self.entrust = None;
-            return Ok(Some(item));
+            return self.return_item(item);
         }
 
         if self.version == 0 {
@@ -127,16 +137,17 @@ impl RDBFileParser {
                     let (input, aux_key) = read_rdb_str(input).context("read aux key")?;
                     let (input, aux_val) = read_rdb_str(input).context("read aux val")?;
                     buffer.consume_to(input.as_ptr());
-                    Ok(Some(Item::Aux {
+                    self.return_item(Item::Aux {
                         key: aux_key,
                         val: aux_val,
-                    }))
+                    })
                 }
                 RDBOpcode::SelectDB => {
                     let (input, db) = read_rdb_len(input).context("read select db number")?;
                     let db = db.as_u64().context("db should be a number")?;
                     buffer.consume_to(input.as_ptr());
-                    Ok(Some(Item::SelectDB { db }))
+                    self.current_db = Some(db);
+                    self.return_item(Item::SelectDB { db })
                 }
                 RDBOpcode::ResizeDB => {
                     let (input, table_size) =
@@ -144,22 +155,26 @@ impl RDBFileParser {
                     let (input, ttl_table_size) =
                         read_rdb_len(input).context("read ttl table size")?;
                     buffer.consume_to(input.as_ptr());
-                    Ok(Some(Item::ResizeDB {
+                    self.return_item(Item::ResizeDB {
                         table_size: table_size
                             .as_u64()
                             .context("table size should be a number")?,
                         ttl_table_size: ttl_table_size
                             .as_u64()
                             .context("ttl table size should be a number")?,
-                    }))
+                    })
                 }
                 RDBOpcode::Eof => {
                     if buffer.is_finished() && input.is_empty() {
+                        debug!("EOF opcode, buffer is finished and input is empty");
+                        ensure!(input.is_empty(), "input should be empty after EOF checksum");
                         buffer.consume_to(input.as_ptr());
                         return Ok(None);
                     }
 
                     let (input, _checksum) = read_exact(input, 8)?;
+                    debug!("EOF opcode, meet checksum with {:?}", _checksum);
+                    ensure!(input.is_empty(), "input should be empty after EOF checksum");
                     // TODO: check checksum
                     buffer.consume_to(input.as_ptr());
                     Ok(None)
@@ -175,24 +190,24 @@ impl RDBFileParser {
                         .as_u64()
                         .context("expires slot size should be a number")?;
                     buffer.consume_to(input.as_ptr());
-                    Ok(Some(Item::SlotInfo {
+                    self.return_item(Item::SlotInfo {
                         slot_id,
                         slot_size,
                         expires_slot_size,
-                    }))
+                    })
                 }
                 RDBOpcode::Function2 => {
                     let (input, entrust) = Function2RecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBOpcode::FunctionPreGA => bail!("not supported opcode: FunctionPreGA"),
                 RDBOpcode::ModuleAux => {
                     let (input, entrust) = ModuleAuxParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBOpcode::Idle => {
                     let (input, idle_seconds) = read_rdb_len(input).context("read idle seconds")?;
@@ -200,19 +215,19 @@ impl RDBFileParser {
                         .as_u64()
                         .context("idle seconds should be a number")?;
                     buffer.consume_to(input.as_ptr());
-                    Ok(Some(Item::Idle { idle_seconds }))
+                    self.return_item(Item::Idle { idle_seconds })
                 }
                 RDBOpcode::Freq => {
                     let (input, freq) = read_u8(input).context("read freq")?;
                     buffer.consume_to(input.as_ptr());
-                    Ok(Some(Item::Freq { freq }))
+                    self.return_item(Item::Freq { freq })
                 }
                 RDBOpcode::ExpireTimeMs => {
                     let (input, expire_at_ms) =
                         read_le_u64(input).context("read expire time ms")?;
                     buffer.consume_to(input.as_ptr());
                     crate::parser_trace!("expiry.ms");
-                    Ok(Some(Item::ExpiryMs { expire_at_ms }))
+                    self.return_item(Item::ExpiryMs { expire_at_ms })
                 }
                 RDBOpcode::ExpireTime => {
                     // since RDB 3.0, Redis save expire time in milliseconds instead of seconds
@@ -222,7 +237,7 @@ impl RDBFileParser {
                     let expire_at_ms = expire_at_s as u64 * 1000;
                     buffer.consume_to(input.as_ptr());
                     crate::parser_trace!("expiry.s");
-                    Ok(Some(Item::ExpiryMs { expire_at_ms }))
+                    self.return_item(Item::ExpiryMs { expire_at_ms })
                 }
             };
         }
@@ -234,110 +249,110 @@ impl RDBFileParser {
                     let (input, entrust) = StringRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::List => {
                     let (input, entrust) = ListRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::ListZipList => {
                     let (input, entrust) = ListZipListRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::ListQuickList => {
                     let (input, entrust) = ListQuickListRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::ListQuickList2 => {
                     let (input, entrust) = ListQuickList2RecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::Set => {
                     let (input, entrust) = SetRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::SetIntSet => {
                     let (input, entrust) = SetIntSetRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::SetListPack => {
                     let (input, entrust) = SetListPackRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::ZSet => {
                     let (input, entrust) = ZSetRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::ZSet2 => {
                     let (input, entrust) = ZSet2RecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::ZSetListPack => {
                     let (input, entrust) = ZSetListPackRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::Hash => {
                     let (input, entrust) = HashRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::ModulePreGA => bail!("not supported type: ModulePreGA"),
                 RDBType::Module2 => {
                     let (input, entrust) = Module2RecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::HashZipMap => {
                     let (input, entrust) = HashZipMapRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::HashZipList => {
                     let (input, entrust) = HashZipListRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::HashListPack => {
                     let (input, entrust) = HashListPackRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::HashListPackEx => {
                     let (input, entrust) = HashListPackExRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::HashMetadata => {
                     let (input, entrust) = HashMetadataRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::StreamListPacks => {
                     let (input, entrust) = StreamListPackRecordParser::<
@@ -345,7 +360,7 @@ impl RDBFileParser {
                     >::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::StreamListPacks2 => {
                     let (input, entrust) = StreamListPackRecordParser::<
@@ -353,7 +368,7 @@ impl RDBFileParser {
                     >::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::StreamListPacks3 => {
                     let (input, entrust) = StreamListPackRecordParser::<
@@ -361,7 +376,7 @@ impl RDBFileParser {
                     >::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
                 RDBType::HashMetadataPreGA => bail!("unsupported type: HashMetadataPreGA"),
                 RDBType::HashListPackExPreGA => bail!("unsupported type: HashListPackExPreGA"),
@@ -369,11 +384,36 @@ impl RDBFileParser {
                     let (input, entrust) = ZSetZipListRecordParser::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;
-                    Ok(Some(item))
+                    self.return_item(item)
                 }
             };
         }
 
-        bail!("unknown RDB flag: {:#04x}", flag)
+        // Enhanced error message with diagnostic information
+        let buffer_position = buffer.tell();
+        let remaining_bytes = input.len();
+        let context_bytes = &input[..remaining_bytes.min(16)]; // Show up to 16 bytes of context
+        let hex_context = context_bytes
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let db_info = match self.current_db {
+            Some(db) => format!(" (current DB: {db})"),
+            None => " (no DB selected)".to_string(),
+        };
+
+        bail!(
+            "unknown RDB flag: {:#04x} (decimal: {}) at buffer position {}, RDB version: {}, items parsed: {}{}, remaining bytes: {}, context: [{}]",
+            flag,
+            flag,
+            buffer_position,
+            self.version,
+            self.items_parsed,
+            db_info,
+            remaining_bytes,
+            hex_context
+        );
     }
 }

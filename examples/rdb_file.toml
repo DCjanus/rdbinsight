@@ -9,6 +9,8 @@ instance = "192.168.1.100:6379"
 
 [output]
 type = "clickhouse"
-address = "127.0.0.1:9000"
-username = "default"
-password = "123456"
+address = "http://127.0.0.1:8124"
+username = "rdbinsight"
+password = "rdbinsight"
+database = "rdbinsight"
+auto_create_tables = true  # Set to true to automatically create tables if they don't exist 

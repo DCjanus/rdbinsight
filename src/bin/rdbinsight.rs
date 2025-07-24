@@ -1,14 +1,14 @@
-use std::{path::PathBuf, time::Instant};
+use std::{path::PathBuf, pin::Pin, time::Instant};
 
 use anyhow::{Context, Result, anyhow};
 use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 use clap::{Parser, Subcommand};
-use futures_util::StreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
     config::{Config, OutputConfig, SourceConfig},
     output::clickhouse::{BatchInfo, ClickHouseOutput},
     record::{Record, RecordStream},
-    source::{RdbSourceConfig, file::Config as FileConfig, standalone::Config as StandaloneConfig},
+    source::{RDBStream, RdbSourceConfig},
 };
 use time::OffsetDateTime;
 use tracing::{debug, error, info, warn};
@@ -121,7 +121,7 @@ fn print_clickhouse_schema() {
 }
 
 async fn dump_to_clickhouse(args: DumpArgs) -> Result<()> {
-    info!("Loading configuration from: {}", args.config.display());
+    debug!("Loading configuration from: {}", args.config.display());
 
     let config_content = tokio::fs::read_to_string(&args.config)
         .await
@@ -130,11 +130,9 @@ async fn dump_to_clickhouse(args: DumpArgs) -> Result<()> {
     let config: Config =
         toml::from_str(&config_content).with_context(|| "Failed to parse configuration file")?;
 
-    info!("Configuration loaded successfully");
+    debug!("Configuration parsed successfully");
 
     let cluster_name = get_cluster_name(&config.source);
-    info!("Cluster: {}", cluster_name);
-    info!("Concurrency: {}", config.concurrency);
 
     let batch_timestamp = if let Some(timestamp_str) = args.batch_timestamp {
         let parsed_timestamp = OffsetDateTime::parse(
@@ -142,17 +140,24 @@ async fn dump_to_clickhouse(args: DumpArgs) -> Result<()> {
             &time::format_description::well_known::Rfc3339,
         )
         .with_context(|| anyhow!("Failed to parse batch timestamp: {timestamp_str}"))?;
+        debug!("Using provided batch timestamp: {}", timestamp_str);
         parsed_timestamp.to_offset(time::UtcOffset::UTC)
     } else {
-        OffsetDateTime::now_utc()
+        let now = OffsetDateTime::now_utc();
+        debug!("Using current time as batch timestamp: {}", now);
+        now
     };
-    info!("Batch timestamp (UTC): {}", batch_timestamp);
+
+    info!(
+        "Starting dump for cluster '{}' (concurrency: {})",
+        cluster_name, config.concurrency
+    );
 
     let clickhouse_output = match &config.output {
         OutputConfig::Clickhouse(clickhouse_config) => {
-            info!(
-                "Initializing ClickHouse connection to: {}",
-                clickhouse_config.address
+            debug!(
+                "Initializing ClickHouse output with config: {:?}",
+                clickhouse_config
             );
             ClickHouseOutput::new(clickhouse_config.clone())
                 .await
@@ -160,60 +165,73 @@ async fn dump_to_clickhouse(args: DumpArgs) -> Result<()> {
         }
     };
 
-    let instance = get_instance_identifier(&config.source);
-    info!("Instance: {}", instance);
-
     let batch_info = BatchInfo {
         cluster: cluster_name.to_string(),
         batch: batch_timestamp,
-        instance,
     };
 
-    let stream = match &config.source {
-        SourceConfig::RDBFile { path, .. } => {
-            info!("Reading from RDB file: {}", path);
-            let file_config = FileConfig {
-                path: PathBuf::from(path),
-            };
-            file_config
-                .get_rdb_stream()
-                .await
-                .with_context(|| format!("Failed to open RDB file: {path}"))?
-        }
-        SourceConfig::RedisStandalone {
-            address,
-            username,
-            password,
-            ..
-        } => {
-            info!("Connecting to Redis standalone: {}", address);
-            let standalone_config = StandaloneConfig {
-                address: address.clone(),
-                username: username.clone(),
-                password: password.clone(),
-            };
-            standalone_config
-                .get_rdb_stream()
-                .await
-                .with_context(|| format!("Failed to connect to Redis: {address}"))?
-        }
-    };
+    debug!(
+        "Batch info: cluster={}, timestamp={}",
+        batch_info.cluster, batch_info.batch
+    );
 
-    process_records_to_clickhouse(stream, clickhouse_output, batch_info).await
+    let source_config = config.source;
+
+    debug!("Getting RDB streams from source configuration...");
+    let streams = source_config
+        .get_rdb_streams()
+        .await
+        .with_context(|| "Failed to get RDB streams")?;
+
+    debug!(
+        "Starting concurrent processing of {} RDB streams",
+        streams.len()
+    );
+    let total_streams = streams.len();
+
+    futures_util::stream::iter(streams)
+        .map(Ok)
+        .try_for_each_concurrent(config.concurrency, |stream| {
+            let clickhouse_output = clickhouse_output.clone();
+            let batch_info = batch_info.clone();
+            async move {
+                let instance = stream.instance();
+                info!("[{}] Starting processing", instance);
+
+                process_records_to_clickhouse(stream, clickhouse_output, batch_info)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to process RDB stream from instance: {instance}")
+                    })
+            }
+        })
+        .await
+        .with_context(|| {
+            format!("Failed to process RDB streams ({total_streams} total instances)")
+        })?;
+
+    debug!("All RDB streams processed successfully");
+    Ok(())
 }
 
 async fn process_records_to_clickhouse(
-    stream: std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send>>,
+    mut stream: Pin<Box<dyn RDBStream>>,
     clickhouse_output: ClickHouseOutput,
     batch_info: BatchInfo,
 ) -> Result<()> {
+    // Get the instance identifier from the stream
+    let instance = stream.instance();
+
+    stream
+        .prepare()
+        .await
+        .context("Failed to prepare RDB stream")?;
+
     const BATCH_SIZE: usize = 1_000_000;
 
     let start_time = Instant::now();
     let mut total_records = 0u64;
     let mut record_buffer: Vec<Record> = Vec::with_capacity(BATCH_SIZE);
-
-    info!("Starting RDB parsing and ClickHouse writing...");
 
     let mut record_stream = RecordStream::new(stream);
 
@@ -234,11 +252,13 @@ async fn process_records_to_clickhouse(
                         &clickhouse_output,
                         &record_buffer,
                         &batch_info,
+                        &instance,
                         &backoff_strategy,
                     )
                     .await?;
                     info!(
-                        "Wrote batch of {} records (total: {})",
+                        "[{}] Wrote batch of {} records (total: {})",
+                        instance,
                         record_buffer.len(),
                         total_records
                     );
@@ -246,12 +266,31 @@ async fn process_records_to_clickhouse(
                 }
 
                 if total_records.is_multiple_of(100_000) {
-                    debug!("Processed {} records", total_records);
+                    debug!("[{}] Processed {} records", instance, total_records);
                 }
             }
             Some(Err(e)) => {
-                error!("Parser error: {}", e);
-                return Err(e);
+                let elapsed = start_time.elapsed();
+                error!(
+                    "[{}] Parser error after processing {} records in {:?}: {:?}",
+                    instance, total_records, elapsed, e
+                );
+
+                // Add root cause chain information
+                let mut cause_chain = Vec::new();
+                let mut current_error: &dyn std::error::Error = e.as_ref();
+                while let Some(cause) = current_error.source() {
+                    cause_chain.push(format!("{cause}"));
+                    current_error = cause;
+                }
+
+                if !cause_chain.is_empty() {
+                    error!("[{}] Error chain: {}", instance, cause_chain.join(" -> "));
+                }
+
+                return Err(e.context(format!(
+                    "Failed to process RDB stream from instance {instance} after {total_records} records in {elapsed:?}"
+                )));
             }
             None => {
                 if !record_buffer.is_empty() {
@@ -259,22 +298,22 @@ async fn process_records_to_clickhouse(
                         &clickhouse_output,
                         &record_buffer,
                         &batch_info,
+                        &instance,
                         &backoff_strategy,
                     )
                     .await?;
-                    info!("Wrote final batch of {} records", record_buffer.len());
                 }
                 break;
             }
         }
     }
 
-    info!("Committing batch to mark import as complete...");
     commit_batch_with_retry(&clickhouse_output, &batch_info, &backoff_strategy).await?;
 
     let duration = start_time.elapsed();
     info!(
-        "Successfully processed {} records in {:.2} seconds ({:.2} records/sec)",
+        "[{}] Completed: {} records in {:.2}s ({:.0} records/sec)",
+        instance,
         total_records,
         duration.as_secs_f64(),
         total_records as f64 / duration.as_secs_f64()
@@ -287,11 +326,12 @@ async fn write_batch_with_retry(
     clickhouse_output: &ClickHouseOutput,
     records: &[Record],
     batch_info: &BatchInfo,
+    instance: &str,
     backoff_strategy: &ExponentialBackoff,
 ) -> Result<()> {
     let operation = || async {
         clickhouse_output
-            .write(records, batch_info)
+            .write(records, batch_info, instance)
             .await
             .map_err(|e| {
                 warn!("Failed to write batch to ClickHouse: {}", e);
@@ -327,42 +367,8 @@ async fn commit_batch_with_retry(
 fn get_cluster_name(source: &SourceConfig) -> &str {
     match source {
         SourceConfig::RedisStandalone { cluster_name, .. } => cluster_name,
+        SourceConfig::RedisCluster { cluster_name, .. } => cluster_name,
         SourceConfig::RDBFile { cluster_name, .. } => cluster_name,
-    }
-}
-
-fn get_instance_identifier(source: &SourceConfig) -> String {
-    match source {
-        SourceConfig::RedisStandalone { address, .. } => address.clone(),
-        SourceConfig::RDBFile { instance, .. } => instance.clone(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_get_instance_identifier() {
-        let standalone_config = SourceConfig::RedisStandalone {
-            cluster_name: "test".to_string(),
-            batch_id: None,
-            address: "127.0.0.1:6379".to_string(),
-            username: None,
-            password: None,
-        };
-        assert_eq!(
-            get_instance_identifier(&standalone_config),
-            "127.0.0.1:6379"
-        );
-
-        let rdb_config = SourceConfig::RDBFile {
-            cluster_name: "test".to_string(),
-            batch_id: None,
-            path: "/path/to/file.rdb".to_string(),
-            instance: "192.168.1.100:6379".to_string(),
-        };
-        assert_eq!(get_instance_identifier(&rdb_config), "192.168.1.100:6379");
     }
 }
 

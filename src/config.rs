@@ -1,10 +1,100 @@
+use std::{path::PathBuf, pin::Pin};
+
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    helper::AnyResult,
+    source::{RDBStream, RdbSourceConfig},
+};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     pub source: SourceConfig,
     pub output: OutputConfig,
-    pub concurrency: u32,
+    #[serde(default = "default_concurrency")]
+    pub concurrency: usize,
+}
+
+impl Config {
+    /// Get the effective concurrency based on configuration and source type
+    pub async fn effective_concurrency(&self) -> usize {
+        // If explicitly set to a non-default value, respect it
+        if self.concurrency != default_concurrency() {
+            return self.concurrency;
+        }
+
+        // For cluster sources, try to get recommendation
+        match &self.source {
+            SourceConfig::RedisCluster { addrs, .. } => {
+                // For clusters, use number of expected shards as hint, but cap it
+                addrs.len().min(num_cpus::get()).max(1)
+            }
+            _ => self.concurrency,
+        }
+    }
+
+    /// Validate the entire configuration
+    pub fn validate(&self) -> AnyResult<()> {
+        use anyhow::ensure;
+
+        // Validate concurrency
+        ensure!(
+            self.concurrency > 0,
+            "Concurrency must be greater than 0, got: {}",
+            self.concurrency
+        );
+
+        ensure!(
+            self.concurrency <= 1000,
+            "Concurrency too high: {}. Maximum recommended is 1000",
+            self.concurrency
+        );
+
+        // Validate source configuration
+        match &self.source {
+            SourceConfig::RedisStandalone {
+                cluster_name,
+                address,
+                ..
+            } => {
+                ensure!(!cluster_name.is_empty(), "Cluster name cannot be empty");
+                ensure!(!address.is_empty(), "Redis address cannot be empty");
+            }
+            SourceConfig::RedisCluster {
+                cluster_name,
+                addrs,
+                ..
+            } => {
+                ensure!(!cluster_name.is_empty(), "Cluster name cannot be empty");
+                ensure!(!addrs.is_empty(), "Redis cluster addresses cannot be empty");
+            }
+            SourceConfig::RDBFile {
+                cluster_name,
+                path,
+                instance,
+                ..
+            } => {
+                ensure!(!cluster_name.is_empty(), "Cluster name cannot be empty");
+                ensure!(!path.is_empty(), "RDB file path cannot be empty");
+                ensure!(!instance.is_empty(), "Instance name cannot be empty");
+            }
+        }
+
+        // Validate output configuration
+        match &self.output {
+            OutputConfig::Clickhouse(clickhouse_config) => {
+                clickhouse_config.validate()?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn default_concurrency() -> usize {
+    // Conservative default that works well for both single instances and small clusters
+    (num_cpus::get() / 2).clamp(1, 8)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -17,6 +107,13 @@ pub enum SourceConfig {
         username: Option<String>,
         password: Option<String>,
     },
+    RedisCluster {
+        cluster_name: String,
+        batch_id: Option<String>,
+        addrs: Vec<String>,
+        username: Option<String>,
+        password: Option<String>,
+    },
     #[serde(rename = "rdb_file")]
     RDBFile {
         cluster_name: String,
@@ -24,6 +121,50 @@ pub enum SourceConfig {
         path: String,
         instance: String,
     },
+}
+
+#[async_trait]
+impl RdbSourceConfig for SourceConfig {
+    async fn get_rdb_streams(&self) -> AnyResult<Vec<Pin<Box<dyn RDBStream>>>> {
+        match self {
+            SourceConfig::RedisStandalone {
+                address,
+                username,
+                password,
+                ..
+            } => {
+                let source = crate::source::standalone::Config {
+                    address: address.clone(),
+                    username: username.clone(),
+                    password: password.clone(),
+                };
+                let streams = source.get_rdb_streams().await?;
+                Ok(streams)
+            }
+            SourceConfig::RedisCluster {
+                addrs,
+                username,
+                password,
+                ..
+            } => {
+                let source = crate::source::cluster::Config {
+                    addrs: addrs.clone(),
+                    username: username.clone(),
+                    password: password.clone(),
+                };
+                let streams = source.get_rdb_streams().await?;
+                Ok(streams)
+            }
+            SourceConfig::RDBFile { path, instance, .. } => {
+                let source = crate::source::file::Config {
+                    path: PathBuf::from(path),
+                    instance: instance.clone(),
+                };
+                let streams = source.get_rdb_streams().await?;
+                Ok(streams)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -41,6 +182,44 @@ pub struct ClickHouseConfig {
     pub database: Option<String>,
     #[serde(default)]
     pub auto_create_tables: bool,
+}
+
+impl ClickHouseConfig {
+    /// Validate the ClickHouse configuration
+    pub fn validate(&self) -> AnyResult<()> {
+        use anyhow::ensure;
+
+        ensure!(
+            !self.address.is_empty(),
+            "ClickHouse address cannot be empty"
+        );
+
+        // Basic URL format validation
+        ensure!(
+            self.address.starts_with("http://") || self.address.starts_with("https://"),
+            "ClickHouse address must start with http:// or https://, got: '{}'",
+            self.address
+        );
+
+        // Validate database name if provided
+        if let Some(database) = &self.database {
+            ensure!(
+                !database.is_empty(),
+                "ClickHouse database name cannot be empty string"
+            );
+
+            // Basic database name validation (alphanumeric, underscore, hyphen)
+            ensure!(
+                database
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-'),
+                "ClickHouse database name '{}' contains invalid characters. Only alphanumeric, underscore, and hyphen are allowed",
+                database
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -73,10 +252,10 @@ mod tests {
 
         match &config.output {
             OutputConfig::Clickhouse(clickhouse_config) => {
-                assert_eq!(clickhouse_config.address, "127.0.0.1:9000");
-                assert_eq!(clickhouse_config.username, Some("default".to_string()));
-                assert_eq!(clickhouse_config.password, Some("123456".to_string()));
-                assert_eq!(clickhouse_config.auto_create_tables, false); // Default value
+                assert_eq!(clickhouse_config.address, "http://127.0.0.1:8124");
+                assert_eq!(clickhouse_config.username, Some("rdbinsight".to_string()));
+                assert_eq!(clickhouse_config.password, Some("rdbinsight".to_string()));
+                assert_eq!(clickhouse_config.auto_create_tables, true);
             }
         }
     }
@@ -105,10 +284,10 @@ mod tests {
 
         match &config.output {
             OutputConfig::Clickhouse(clickhouse_config) => {
-                assert_eq!(clickhouse_config.address, "127.0.0.1:9000");
-                assert_eq!(clickhouse_config.username, Some("default".to_string()));
-                assert_eq!(clickhouse_config.password, Some("123456".to_string()));
-                assert_eq!(clickhouse_config.auto_create_tables, false);
+                assert_eq!(clickhouse_config.address, "http://127.0.0.1:8124");
+                assert_eq!(clickhouse_config.username, Some("rdbinsight".to_string()));
+                assert_eq!(clickhouse_config.password, Some("rdbinsight".to_string()));
+                assert_eq!(clickhouse_config.auto_create_tables, true);
             }
         }
     }
@@ -136,6 +315,44 @@ auto_create_tables = true
 
         match &config.output {
             OutputConfig::Clickhouse(clickhouse_config) => {
+                assert_eq!(clickhouse_config.auto_create_tables, true);
+            }
+        }
+    }
+
+    #[test]
+    fn test_deserialize_cluster_config() {
+        let toml_str = include_str!("../examples/redis_cluster.toml");
+        let config: Config = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(config.concurrency, 8);
+
+        match config.source {
+            SourceConfig::RedisCluster {
+                cluster_name,
+                batch_id,
+                addrs,
+                username,
+                password,
+            } => {
+                assert_eq!(cluster_name, "my-redis-cluster");
+                assert_eq!(batch_id, None);
+                assert_eq!(addrs, vec![
+                    "127.0.0.1:7000".to_string(),
+                    "127.0.0.1:7001".to_string(),
+                    "127.0.0.1:7002".to_string()
+                ]);
+                assert_eq!(username, Some("default".to_string()));
+                assert_eq!(password, Some("123456".to_string()));
+            }
+            _ => panic!("Incorrect source type"),
+        }
+
+        match &config.output {
+            OutputConfig::Clickhouse(clickhouse_config) => {
+                assert_eq!(clickhouse_config.address, "http://127.0.0.1:8124");
+                assert_eq!(clickhouse_config.username, Some("rdbinsight".to_string()));
+                assert_eq!(clickhouse_config.password, Some("rdbinsight".to_string()));
                 assert_eq!(clickhouse_config.auto_create_tables, true);
             }
         }

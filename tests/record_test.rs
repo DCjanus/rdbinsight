@@ -66,10 +66,13 @@ async fn test_record_stream_integration() -> Result<()> {
     };
 
     // Get RDB stream
-    let stream = standalone_config.get_rdb_stream().await?;
+    let mut streams = standalone_config.get_rdb_streams().await?;
+    assert_eq!(streams.len(), 1, "Expected exactly one RDB stream");
+    let mut stream = streams.remove(0);
+    stream.as_mut().prepare().await?;
 
     // Create record stream that manages buffer internally
-    let mut record_stream = RecordStream::new(stream);
+    let mut record_stream = RecordStream::new(Box::pin(stream));
     let mut records = Vec::new();
 
     // Read all records from the stream
@@ -488,8 +491,10 @@ async fn test_record_stream_with_expiry() -> Result<()> {
         password: None,
     };
 
-    let stream = standalone_config.get_rdb_stream().await?;
-    let mut record_stream = RecordStream::new(stream);
+    let mut streams = standalone_config.get_rdb_streams().await?;
+    let mut stream = streams.remove(0);
+    stream.as_mut().prepare().await?;
+    let mut record_stream = RecordStream::new(Box::pin(stream));
     let mut records_with_expiry = Vec::new();
 
     // Collect all records
@@ -555,8 +560,10 @@ async fn test_record_stream_empty_database() -> Result<()> {
         password: None,
     };
 
-    let stream = standalone_config.get_rdb_stream().await?;
-    let mut record_stream = RecordStream::new(stream);
+    let mut streams = standalone_config.get_rdb_streams().await?;
+    let mut stream = streams.remove(0);
+    stream.as_mut().prepare().await?;
+    let mut record_stream = RecordStream::new(Box::pin(stream));
     let mut record_count = 0;
 
     // Try to read records from empty database

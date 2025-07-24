@@ -87,3 +87,8 @@ ORDER BY key_cnt DESC;
 ```
 
 整个过程不依赖 Redis 在线命令，后续类似需求只需改改 SQL，**零开发成本**。
+
+## TODO
+
+- 支持 [Codis](https://github.com/CodisLabs/codis) 作为数据源
+- ClickHouse 支持代理配置，兼容 SOCKS5 和 HTTP 代理

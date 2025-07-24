@@ -9,7 +9,8 @@ password = "123456"
 
 [output]
 type = "clickhouse"
-address = "127.0.0.1:9000"
-username = "default"
-password = "123456"
-# auto_create_tables = true  # Set to true to automatically create tables if they don't exist
+address = "http://127.0.0.1:8124"
+username = "rdbinsight"
+password = "rdbinsight"
+database = "rdbinsight"
+auto_create_tables = true  # Set to true to automatically create tables if they don't exist 

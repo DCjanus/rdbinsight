@@ -11,6 +11,7 @@ ignored = ["serde_with"]
 
 [dependencies]
 anyhow = "1.0.98"
+async-trait = "0.1.88"
 async_async_io = "0.2.3"
 backoff = { version = "0.4", features = ["tokio"] }
 bytes = { version = "1.10.1", features = ["serde"] }
@@ -20,9 +21,10 @@ futures-util = "0.3.31"
 hex = "0.4.3"
 lzf = "1.0.0"
 memchr = "2.7.5"
+num_cpus = "1.17.0"
 num_enum = "0.7.3"
 rand = "0.9.1"
-redis = { version = "0.32.0", features = ["tokio-comp"] }
+redis = { version = "0.32.4", features = ["cluster", "tokio-comp"] }
 redis-protocol = { version = "6.0.0", features = ["codec"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
@@ -32,7 +34,7 @@ thiserror = "2.0.12"
 time = { version = "0.3.41", features = ["formatting", "parsing", "macros"] }
 tokio = { version = "1.45.1", features = ["full"] }
 tokio-util = { version = "0.7.15", features = ["time"] }
-toml = "0.8.23"
+toml = "0.9.2"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = [
     "local-time",
@@ -42,3 +44,4 @@ typed-builder = "0.21.0"
 
 [dev-dependencies]
 testcontainers = "0.24.0"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }

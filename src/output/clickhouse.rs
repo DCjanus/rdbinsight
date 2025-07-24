@@ -9,9 +9,9 @@ use crate::{config::ClickHouseConfig, helper::AnyResult, record::Record};
 pub struct BatchInfo {
     pub cluster: String,
     pub batch: OffsetDateTime,
-    pub instance: String,
 }
 
+#[derive(Clone)]
 pub struct ClickHouseOutput {
     client: Client,
     config: ClickHouseConfig,
@@ -44,17 +44,27 @@ pub struct BatchCompletedRow {
 
 impl ClickHouseOutput {
     pub async fn new(config: ClickHouseConfig) -> AnyResult<Self> {
+        use tracing::debug;
+
+        debug!(
+            "Initializing ClickHouse client with address: {}",
+            config.address
+        );
+
         let mut client_builder = Client::default().with_url(&config.address);
 
         if let Some(username) = &config.username {
+            debug!("Using ClickHouse username: {}", username);
             client_builder = client_builder.with_user(username);
         }
 
         if let Some(password) = &config.password {
+            debug!("Using ClickHouse password authentication");
             client_builder = client_builder.with_password(password);
         }
 
         if let Some(database) = &config.database {
+            debug!("Using ClickHouse database: {}", database);
             client_builder = client_builder.with_database(database);
         }
 
@@ -63,12 +73,19 @@ impl ClickHouseOutput {
             client,
             config: config.clone(),
         };
+
+        debug!("Validating ClickHouse tables and schema...");
         output.validate_or_create_tables().await?;
+        debug!("ClickHouse initialization completed successfully");
 
         Ok(output)
     }
 
     async fn validate_or_create_tables(&self) -> AnyResult<()> {
+        use tracing::debug;
+
+        debug!("Checking existence of required ClickHouse tables...");
+
         // Check existence of all required tables/views
         let raw_table_exists: u64 = self
             .client
@@ -88,6 +105,13 @@ impl ClickHouseOutput {
             .fetch_one()
             .await?;
 
+        debug!(
+            "Table existence check - redis_records_raw: {}, import_batches_completed: {}, redis_records_view: {}",
+            raw_table_exists > 0,
+            batch_table_exists > 0,
+            view_exists > 0
+        );
+
         let tables_exist = [
             raw_table_exists > 0,
             batch_table_exists > 0,
@@ -97,17 +121,18 @@ impl ClickHouseOutput {
         let none_exist = tables_exist.iter().all(|&exists| !exists);
 
         if all_exist {
-            // All tables exist, we're good to go
+            debug!("All required ClickHouse tables exist");
             return Ok(());
         }
 
         if none_exist {
-            // No tables exist
+            debug!("No ClickHouse tables exist");
             if self.config.auto_create_tables {
-                // Create all tables at once
+                debug!("auto_create_tables is enabled, creating tables...");
                 self.create_all_tables().await?;
                 return Ok(());
             } else {
+                debug!("auto_create_tables is disabled, failing with missing tables error");
                 return Err(anyhow::anyhow!(
                     "Required ClickHouse tables do not exist. Please run 'rdbinsight misc print-clickhouse-schema' to get the DDL statements and create the required tables, or set 'auto_create_tables = true' in your configuration."
                 ));
@@ -123,6 +148,11 @@ impl ClickHouseOutput {
         .iter()
         .filter_map(|(name, missing)| if *missing { Some(*name) } else { None })
         .collect();
+
+        debug!(
+            "Partial ClickHouse schema state detected, missing: {:?}",
+            missing_tables
+        );
 
         Err(anyhow::anyhow!(
             "Inconsistent ClickHouse schema state. Missing tables/views: {}. Please manually fix the schema by running 'rdbinsight misc print-clickhouse-schema' and creating the missing objects, or drop all existing tables and set 'auto_create_tables = true' to recreate everything.",
@@ -160,14 +190,19 @@ impl ClickHouseOutput {
         Ok(())
     }
 
-    pub async fn write(&self, records: &[Record], batch_info: &BatchInfo) -> AnyResult<()> {
+    pub async fn write(
+        &self,
+        records: &[Record],
+        batch_info: &BatchInfo,
+        instance: &str,
+    ) -> AnyResult<()> {
         if records.is_empty() {
             return Ok(());
         }
 
         let rows: Vec<RedisRecordRow> = records
             .iter()
-            .map(|record| self.record_to_row(record, batch_info))
+            .map(|record| self.record_to_row(record, batch_info, instance))
             .collect();
 
         let mut insert = self.client.insert("redis_records_raw")?;
@@ -192,7 +227,12 @@ impl ClickHouseOutput {
         Ok(())
     }
 
-    fn record_to_row(&self, record: &Record, batch_info: &BatchInfo) -> RedisRecordRow {
+    fn record_to_row(
+        &self,
+        record: &Record,
+        batch_info: &BatchInfo,
+        instance: &str,
+    ) -> RedisRecordRow {
         let key_bytes = match &record.key {
             crate::parser::core::raw::RDBStr::Str(bytes) => bytes.clone(),
             crate::parser::core::raw::RDBStr::Int(i) => Bytes::from(i.to_string()),
@@ -201,7 +241,7 @@ impl ClickHouseOutput {
         RedisRecordRow {
             cluster: batch_info.cluster.clone(),
             batch: batch_info.batch,
-            instance: batch_info.instance.clone(),
+            instance: instance.to_string(),
             db: record.db,
             key: key_bytes,
             r#type: record.type_name().to_string(),
@@ -242,7 +282,6 @@ mod tests {
         let batch_info = BatchInfo {
             cluster: "test-cluster".to_string(),
             batch: OffsetDateTime::from_unix_timestamp(1640995200).unwrap(), // 2022-01-01
-            instance: "127.0.0.1:6379".to_string(),
         };
 
         let record = Record::builder()
@@ -257,7 +296,7 @@ mod tests {
             .freq(Some(5))
             .build();
 
-        let row = output.record_to_row(&record, &batch_info);
+        let row = output.record_to_row(&record, &batch_info, "127.0.0.1:6379");
 
         assert_eq!(row.cluster, "test-cluster");
         assert_eq!(row.batch, batch_info.batch);
@@ -284,7 +323,7 @@ mod tests {
             .member_count(Some(10))
             .build();
 
-        let int_row = output.record_to_row(&int_record, &batch_info);
+        let int_row = output.record_to_row(&int_record, &batch_info, "127.0.0.1:6379");
         assert_eq!(int_row.key, Bytes::from("42"));
         assert_eq!(int_row.db, 1);
         assert_eq!(int_row.r#type, "hash");

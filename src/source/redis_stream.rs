@@ -50,7 +50,11 @@ impl DelimiterReader {
     pub fn new(inner: TcpStream, delimiter: [u8; 40], mut buff: RingBuffer) -> Self {
         let mut done = false;
         if let Some(pos) = memmem::find(buff.filled(), &delimiter) {
-            debug!(name: "delimiter_reader.done", "delimiter found in function DelimiterReader::new");
+            debug!(
+                operation = "delimiter_reader_new",
+                delimiter_found = true,
+                "delimiter found during DelimiterReader initialization"
+            );
             done = true;
             buff.truncate(pos);
         }
@@ -105,7 +109,11 @@ impl DelimiterReader {
             self.done = true;
             let delimiter_pos = search_start + relative_pos;
             self.buff.truncate(delimiter_pos);
-            debug!(name: "delimiter_reader.done", "delimiter found in function DelimiterReader::feed_more");
+            debug!(
+                operation = "delimiter_reader_feed_more",
+                delimiter_found = true,
+                "delimiter found during data feeding"
+            );
         }
 
         Ok(())
@@ -200,8 +208,11 @@ impl LimitedReader {
 
         if buffered_size > 0 {
             debug!(
-                "LimitedReader: limit={}, buffered_size={}, adjusted_remaining={}",
-                limit, buffered_size, remaining
+                operation = "limited_reader_new",
+                limit = limit,
+                buffered_size = buffered_size,
+                adjusted_remaining = remaining,
+                "LimitedReader initialized with buffered data"
             );
         }
 
@@ -302,14 +313,21 @@ impl RDBStream for RedisRdbStream {
 
         ensure!(self.reader.is_none(), "RedisRdbStream already prepared");
 
-        debug!("[{}] Starting Redis connection...", self.address);
-        let mut stream = TcpStream::connect(&self.address).await.with_context(|| {
-            let address = &self.address;
-            format!("Failed to connect to Redis instance at {address}")
-        })?;
+        debug!(
+            operation = "redis_connection_start",
+            address = %self.address,
+            "Starting Redis connection"
+        );
+        let mut stream = TcpStream::connect(&self.address)
+            .await
+            .with_context(|| format!("Failed to connect to Redis instance at {}", self.address))?;
         let mut buffer = RingBuffer::default();
 
-        debug!("[{}] Starting RDB handshake...", self.address);
+        debug!(
+            operation = "rdb_handshake_start",
+            address = %self.address,
+            "Starting RDB handshake"
+        );
         perform_rdb_handshake(
             &mut buffer,
             &mut stream,
@@ -317,34 +335,39 @@ impl RDBStream for RedisRdbStream {
             self.password.as_deref(),
         )
         .await
-        .with_context(|| {
-            let address = &self.address;
-            format!("RDB handshake failed for instance {address}")
-        })?;
+        .with_context(|| format!("RDB handshake failed for instance {}", self.address))?;
 
-        debug!("[{}] Reading RDB mode...", self.address);
+        debug!(
+            operation = "rdb_mode_read",
+            address = %self.address,
+            "Reading RDB mode"
+        );
         let mode = read_rdb_mode(&mut buffer, &mut stream)
             .await
             .context("read rdb mode")
             .with_context(|| {
-                let address = &self.address;
-                format!("Failed to determine RDB mode for instance {address}")
+                format!("Failed to determine RDB mode for instance {}", self.address)
             })?;
 
         let reader = match mode {
             RDBMode::Disk { remain } => {
                 info!(
-                    "[{}] Using disk-based RDB mode, size: {} bytes",
-                    self.address, remain
+                    operation = "rdb_mode_detected",
+                    address = %self.address,
+                    mode = "disk",
+                    size_bytes = remain,
+                    "Using disk-based RDB mode"
                 );
                 let async_reader = LimitedReader::new(stream, remain, buffer);
                 RedisReader::Disk(PollRead::new(async_reader))
             }
             RDBMode::Diskless { delimiter } => {
                 info!(
-                    "[{}] Using diskless RDB mode, delimiter: {:?}",
-                    self.address,
-                    &delimiter[..8]
+                    operation = "rdb_mode_detected",
+                    address = %self.address,
+                    mode = "diskless",
+                    delimiter = %hex::encode(delimiter),
+                    "Using diskless RDB mode"
                 );
                 let async_reader = DelimiterReader::new(stream, delimiter, buffer);
                 RedisReader::Diskless(PollRead::new(async_reader))
@@ -353,8 +376,9 @@ impl RDBStream for RedisRdbStream {
 
         self.reader = Some(reader);
         debug!(
-            "[{}] RDB stream preparation completed successfully",
-            self.address
+            operation = "rdb_stream_preparation_complete",
+            address = %self.address,
+            "RDB stream preparation completed successfully"
         );
         Ok(())
     }
@@ -410,23 +434,38 @@ pub async fn perform_rdb_handshake_with_retry(
 
     loop {
         attempt += 1;
-        debug!("RDB handshake attempt {}/{}", attempt, max_retries + 1);
+        debug!(
+            operation = "rdb_handshake_attempt",
+            attempt = attempt,
+            max_attempts = max_retries + 1,
+            "RDB handshake attempt"
+        );
 
         match perform_rdb_handshake_internal(buf, stream, username, password).await {
             Ok(()) => {
                 if attempt > 1 {
-                    debug!("RDB handshake succeeded after {} attempts", attempt);
+                    debug!(
+                        operation = "rdb_handshake_retry_success",
+                        final_attempt = attempt,
+                        "RDB handshake succeeded after retries"
+                    );
                 }
                 return Ok(());
             }
             Err(e) if attempt <= max_retries && is_retryable_error(&e) => {
                 warn!(
-                    "RDB handshake attempt {} failed (retryable): {}",
-                    attempt, e
+                    operation = "rdb_handshake_retry",
+                    attempt = attempt,
+                    error = %e,
+                    "RDB handshake attempt failed (retryable)"
                 );
 
                 if let Some(delay) = backoff.next_backoff() {
-                    debug!("Waiting {:?} before retry...", delay);
+                    debug!(
+                        operation = "rdb_handshake_retry_delay",
+                        delay_ms = delay.as_millis() as u64,
+                        "Waiting before retry"
+                    );
                     tokio::time::sleep(delay).await;
                     continue;
                 } else {
@@ -472,15 +511,26 @@ async fn perform_rdb_handshake_internal(
     use tracing::debug;
 
     if let Some(password) = password {
-        debug!("Performing Redis authentication...");
+        debug!(
+            operation = "redis_auth_start",
+            has_username = username.is_some(),
+            "Starting Redis authentication"
+        );
         let mut parts = vec!["AUTH"];
         let username = username.unwrap_or("");
         if !username.is_empty() {
-            debug!("Using username authentication for user: {}", username);
+            debug!(
+                operation = "redis_auth_with_username",
+                username = username,
+                "Using username authentication"
+            );
             parser_trace!("auth.with_username");
             parts.push(username);
         } else {
-            debug!("Using password-only authentication");
+            debug!(
+                operation = "redis_auth_password_only",
+                "Using password-only authentication"
+            );
             parser_trace!("auth.password_only");
         }
         parts.push(password);
@@ -496,12 +546,15 @@ async fn perform_rdb_handshake_internal(
             "unexpected response from auth: {:?}",
             response
         );
-        debug!("Redis authentication successful");
+        debug!(
+            operation = "redis_auth_success",
+            "Redis authentication successful"
+        );
     } else {
-        debug!("No authentication required");
+        debug!(operation = "redis_auth_skip", "No authentication required");
     }
 
-    debug!("Sending PING command...");
+    debug!(operation = "redis_ping_start", "Sending PING command");
     send_command(stream, "PING")
         .await
         .context("send ping command")?;
@@ -513,9 +566,12 @@ async fn perform_rdb_handshake_internal(
         "unexpected response from ping: {:?}",
         response
     );
-    debug!("PING successful");
+    debug!(operation = "redis_ping_success", "PING successful");
 
-    debug!("Sending REPLCONF capa eof command...");
+    debug!(
+        operation = "redis_replconf_eof_start",
+        "Sending REPLCONF capa eof command"
+    );
     send_command(stream, "REPLCONF capa eof")
         .await
         .context("send replconf command")?;
@@ -527,9 +583,15 @@ async fn perform_rdb_handshake_internal(
         "unexpected response from replconf: {:?}",
         response
     );
-    debug!("REPLCONF capa eof successful");
+    debug!(
+        operation = "redis_replconf_eof_success",
+        "REPLCONF capa eof successful"
+    );
 
-    debug!("Sending REPLCONF rdb-only 1 command...");
+    debug!(
+        operation = "redis_replconf_rdb_only_start",
+        "Sending REPLCONF rdb-only 1 command"
+    );
     send_command(stream, "REPLCONF rdb-only 1")
         .await
         .context("send replconf rdb-only command")?;
@@ -539,22 +601,38 @@ async fn perform_rdb_handshake_internal(
     match response {
         OwnedFrame::SimpleString(s) if s == b"OK" => {
             parser_trace!("replconf.rdb_only.supported");
-            debug!(name: "replconf_rdb_only", "Master supports rdb-only option");
+            debug!(
+                operation = "redis_replconf_rdb_only",
+                supported = true,
+                "Master supports rdb-only option"
+            );
         }
         OwnedFrame::Error(s) if s.starts_with("ERR Unrecognized REPLCONF option") => {
             parser_trace!("replconf.rdb_only.unsupported");
-            debug!(name: "replconf_rdb_only", "Master does not support rdb-only option (non-critical): {:?}", s);
+            debug!(
+                operation = "redis_replconf_rdb_only",
+                supported = false,
+                error = ?s,
+                "Master does not support rdb-only option (non-critical)"
+            );
         }
         _ => anyhow::bail!("unexpected response from replconf rdb-only: {:?}", response),
     }
 
-    debug!("Sending PSYNC ? -1 command...");
+    debug!(
+        operation = "redis_psync_start",
+        "Sending PSYNC ? -1 command"
+    );
     send_command(stream, "PSYNC ? -1")
         .await
         .context("send psync command")?;
 
     // repl-diskless-sync-delay may cause a long time to wait for response
-    debug!("Waiting for PSYNC response (timeout: 30s)...");
+    debug!(
+        operation = "redis_psync_wait",
+        timeout_seconds = 30,
+        "Waiting for PSYNC response"
+    );
     let response = read_response(buf, stream, Duration::from_secs(30))
         .await
         .context("read psync response")?;
@@ -566,7 +644,10 @@ async fn perform_rdb_handshake_internal(
         "unexpected response from psync: {:?}",
         response
     );
-    debug!("PSYNC successful, received FULLRESYNC response");
+    debug!(
+        operation = "redis_psync_success",
+        "PSYNC successful, received FULLRESYNC response"
+    );
 
     Ok(())
 }
@@ -623,7 +704,12 @@ fn try_read_rdb_mode(input: &[u8]) -> AnyResult<(&[u8], RDBMode)> {
         let mut output = [0u8; 40];
         output.copy_from_slice(delimiter);
         parser_trace!("rdb.diskless");
-        debug!(name: "rdb_mode", mode = "diskless");
+        debug!(
+            operation = "rdb_mode_parse",
+            mode = "diskless",
+            delimiter = %hex::encode(output),
+            "RDB mode determined"
+        );
         Ok((input, RDBMode::Diskless { delimiter: output }))
     } else {
         let input = read_tag(input, b"$").context("read $")?;
@@ -634,13 +720,22 @@ fn try_read_rdb_mode(input: &[u8]) -> AnyResult<(&[u8], RDBMode)> {
             .context("rdb length is not a valid number")?;
         let input = read_tag(input, b"\r\n").context("read \\r\\n")?;
         parser_trace!("rdb.disk");
-        debug!(name: "rdb_mode", mode = "disk", len = len);
+        debug!(
+            operation = "rdb_mode_parse",
+            mode = "disk",
+            size_bytes = len,
+            "RDB mode determined"
+        );
         Ok((input, RDBMode::Disk { remain: len }))
     }
 }
 
 pub async fn send_command(stream: &mut TcpStream, command: &str) -> AnyResult<()> {
-    debug!(name: "send_command", command = command);
+    debug!(
+        operation = "redis_send_command",
+        command = command,
+        "Sending Redis command"
+    );
     let command = resp2_encode_command(command);
     let mut buffer = vec![0u8; command.encode_len(false)];
     let wrote = encode_bytes(&mut buffer, &command, false).context("encode command")?;
@@ -673,11 +768,11 @@ pub async fn read_response(
         match decode_result? {
             Some(frame) => {
                 buf.consume(bytes_to_consume);
-                if let Some(frame) = frame.as_str() {
-                    debug!(name: "read_response", frame = ?frame);
-                } else {
-                    debug!(name: "read_response", frame = ?frame);
-                }
+                debug!(
+                    operation = "redis_read_response",
+                    frame = ?frame,
+                    "Received Redis response"
+                );
                 return Ok(frame);
             }
             None => {

@@ -2,7 +2,7 @@ use std::{collections::HashMap, pin::Pin, time::Duration};
 
 use anyhow::{Context as AnyhowContext, ensure};
 use async_trait::async_trait;
-use redis::Client;
+use redis::cluster::ClusterClientBuilder;
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -16,6 +16,7 @@ pub struct Config {
     pub addrs: Vec<String>,
     pub username: Option<String>,
     pub password: Option<String>,
+    pub require_slave: bool,
 }
 
 impl Config {
@@ -51,6 +52,41 @@ impl Config {
         // Suggest concurrency based on cluster size, but respect system limits
         self.addrs.len().min(num_cpus::get()).max(1)
     }
+
+    /// Select the appropriate node for a shard based on require_slave setting
+    fn select_node_for_shard<'a>(
+        &self,
+        master: &'a ClusterNode,
+        master_to_slaves: &HashMap<String, Vec<&'a ClusterNode>>,
+    ) -> AnyResult<&'a ClusterNode> {
+        let short_shard_id = &master.node_id[..8.min(master.node_id.len())];
+
+        let empty_vec = vec![];
+        let slaves = master_to_slaves.get(&master.node_id).unwrap_or(&empty_vec);
+
+        let slave_candidate = slaves
+            .iter()
+            .find(|slave| slave.is_healthy())
+            .copied()
+            .or_else(|| slaves.first().copied());
+
+        if let Some(slave) = slave_candidate {
+            return Ok(slave);
+        }
+
+        if self.require_slave {
+            anyhow::bail!(
+                "Shard {} has no available slaves, but require_slave is true",
+                short_shard_id
+            );
+        }
+
+        warn!(
+            "No available slaves found for master {}, using master itself (this may impact performance)",
+            master.node_id
+        );
+        Ok(master)
+    }
 }
 
 #[async_trait]
@@ -60,35 +96,30 @@ impl RdbSourceConfig for Config {
         self.validate()
             .context("Invalid Redis cluster configuration")?;
 
-        debug!(
-            "Connecting to Redis Cluster with {} addresses: {:?}",
-            self.addrs.len(),
-            self.addrs
-        );
+        debug!("Building Redis cluster client...");
+        let mut builder =
+            ClusterClientBuilder::new(self.addrs.iter().map(|addr| format!("redis://{addr}")))
+                .connection_timeout(Duration::from_secs(5))
+                .response_timeout(Duration::from_secs(3));
 
-        let url = format!(
-            "redis://{}:{}@{}",
-            self.username.as_deref().unwrap_or(""),
-            self.password.as_deref().unwrap_or(""),
-            self.addrs.join(",")
-        );
+        if let Some(ref username) = self.username {
+            builder = builder.username(username.clone());
+        }
 
-        debug!(
-            "Using Redis connection URL: redis://{}:***@{}",
-            self.username.as_deref().unwrap_or(""),
-            self.addrs.join(",")
-        );
+        if let Some(ref password) = self.password {
+            builder = builder.password(password.clone());
+        }
 
-        let client: Client = Client::open(url).with_context(|| {
+        let cluster_client = builder.build().with_context(|| {
             format!(
-                "Failed to create Redis client for cluster addresses: {:?}",
+                "Failed to create Redis cluster client for addresses: {:?}",
                 self.addrs
             )
         })?;
 
         debug!("Establishing connection to Redis cluster...");
-        let mut conn = client
-            .get_multiplexed_tokio_connection()
+        let mut conn = cluster_client
+            .get_async_connection()
             .await
             .with_context(|| {
                 format!(
@@ -96,7 +127,6 @@ impl RdbSourceConfig for Config {
                     self.addrs
                 )
             })?;
-        conn.set_response_timeout(Duration::from_secs(3));
 
         debug!("Executing CLUSTER NODES command...");
         let nodes_info: String = redis::cmd("CLUSTER")
@@ -110,7 +140,11 @@ impl RdbSourceConfig for Config {
                 )
             })?;
 
-        debug!("Cluster nodes info:\n{}", nodes_info);
+        debug!(
+            operation = "cluster_nodes_info_received",
+            nodes_info = %nodes_info,
+            "Cluster nodes information received"
+        );
 
         let nodes = parse_cluster_nodes(&nodes_info)
             .context("Failed to parse cluster nodes information")?;
@@ -144,21 +178,7 @@ impl RdbSourceConfig for Config {
         let mut shard_info = Vec::new();
 
         for master in master_nodes {
-            let source_node = master_to_slaves
-                .get(&master.node_id)
-                .and_then(|slaves| {
-                    debug!("Master {} has {} slaves", master.node_id, slaves.len());
-                    // Prefer healthy slaves
-                    slaves.iter().find(|slave| slave.is_healthy()).copied()
-                        .or_else(|| slaves.first().copied())
-                })
-                .unwrap_or_else(|| {
-                    warn!(
-                        "No available slaves found for master {}, using master itself (this may impact performance)",
-                        master.node_id
-                    );
-                    master
-                });
+            let source_node = self.select_node_for_shard(master, &master_to_slaves)?;
 
             // Use first 8 characters of shard ID for cleaner logging
             let short_shard_id = &master.node_id[..8.min(master.node_id.len())];
@@ -196,9 +216,10 @@ impl RdbSourceConfig for Config {
         }
 
         info!(
-            "Found cluster with {} shards: [{}]",
-            streams.len(),
-            shard_info.join(", ")
+            operation = "cluster_shards_found",
+            shard_count = streams.len(),
+            shard_info = %shard_info.join(", "),
+            "Found cluster shards"
         );
         Ok(streams)
     }
@@ -206,25 +227,25 @@ impl RdbSourceConfig for Config {
 
 /// Represents a node in Redis cluster
 #[derive(Debug, Clone)]
-struct ClusterNode {
-    node_id: String,
-    address: String,
-    flags: Vec<String>,
-    master_id: Option<String>,
+pub struct ClusterNode {
+    pub node_id: String,
+    pub address: String,
+    pub flags: Vec<String>,
+    pub master_id: Option<String>,
 }
 
 impl ClusterNode {
-    fn is_master(&self) -> bool {
+    pub fn is_master(&self) -> bool {
         self.flags.contains(&"master".to_string())
     }
 
-    fn is_healthy(&self) -> bool {
+    pub fn is_healthy(&self) -> bool {
         // Check if node is not in fail state
         !self.flags.iter().any(|flag| flag.contains("fail"))
     }
 }
 
-fn parse_cluster_nodes(nodes_info: &str) -> AnyResult<Vec<ClusterNode>> {
+pub fn parse_cluster_nodes(nodes_info: &str) -> AnyResult<Vec<ClusterNode>> {
     let mut nodes = Vec::new();
 
     for (line_num, line) in nodes_info.lines().enumerate() {

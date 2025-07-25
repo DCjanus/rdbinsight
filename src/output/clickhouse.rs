@@ -47,24 +47,36 @@ impl ClickHouseOutput {
         use tracing::debug;
 
         debug!(
-            "Initializing ClickHouse client with address: {}",
-            config.address
+            operation = "clickhouse_client_init",
+            address = %config.address,
+            "Initializing ClickHouse client"
         );
 
         let mut client_builder = Client::default().with_url(&config.address);
 
         if let Some(username) = &config.username {
-            debug!("Using ClickHouse username: {}", username);
+            debug!(
+                operation = "clickhouse_auth_username",
+                username = %username,
+                "Using ClickHouse username"
+            );
             client_builder = client_builder.with_user(username);
         }
 
         if let Some(password) = &config.password {
-            debug!("Using ClickHouse password authentication");
+            debug!(
+                operation = "clickhouse_auth_password",
+                "Using ClickHouse password authentication"
+            );
             client_builder = client_builder.with_password(password);
         }
 
         if let Some(database) = &config.database {
-            debug!("Using ClickHouse database: {}", database);
+            debug!(
+                operation = "clickhouse_database_config",
+                database = %database,
+                "Using ClickHouse database"
+            );
             client_builder = client_builder.with_database(database);
         }
 
@@ -106,10 +118,11 @@ impl ClickHouseOutput {
             .await?;
 
         debug!(
-            "Table existence check - redis_records_raw: {}, import_batches_completed: {}, redis_records_view: {}",
-            raw_table_exists > 0,
-            batch_table_exists > 0,
-            view_exists > 0
+            operation = "clickhouse_table_existence_check",
+            raw_table_exists = raw_table_exists > 0,
+            batch_table_exists = batch_table_exists > 0,
+            view_exists = view_exists > 0,
+            "Table existence check"
         );
 
         let tables_exist = [
@@ -121,18 +134,30 @@ impl ClickHouseOutput {
         let none_exist = tables_exist.iter().all(|&exists| !exists);
 
         if all_exist {
-            debug!("All required ClickHouse tables exist");
+            debug!(
+                operation = "clickhouse_tables_exist",
+                "All required ClickHouse tables exist"
+            );
             return Ok(());
         }
 
         if none_exist {
-            debug!("No ClickHouse tables exist");
+            debug!(
+                operation = "clickhouse_tables_missing",
+                "No ClickHouse tables exist"
+            );
             if self.config.auto_create_tables {
-                debug!("auto_create_tables is enabled, creating tables...");
+                debug!(
+                    operation = "clickhouse_auto_create_tables_enabled",
+                    "auto_create_tables is enabled, creating tables..."
+                );
                 self.create_all_tables().await?;
                 return Ok(());
             } else {
-                debug!("auto_create_tables is disabled, failing with missing tables error");
+                debug!(
+                    operation = "clickhouse_auto_create_tables_disabled",
+                    "auto_create_tables is disabled, failing with missing tables error"
+                );
                 return Err(anyhow::anyhow!(
                     "Required ClickHouse tables do not exist. Please run 'rdbinsight misc print-clickhouse-schema' to get the DDL statements and create the required tables, or set 'auto_create_tables = true' in your configuration."
                 ));
@@ -150,8 +175,9 @@ impl ClickHouseOutput {
         .collect();
 
         debug!(
-            "Partial ClickHouse schema state detected, missing: {:?}",
-            missing_tables
+            operation = "clickhouse_partial_schema_state",
+            missing_tables = %missing_tables.join(", "),
+            "Partial ClickHouse schema state detected"
         );
 
         Err(anyhow::anyhow!(
@@ -163,7 +189,10 @@ impl ClickHouseOutput {
     async fn create_all_tables(&self) -> AnyResult<()> {
         use tracing::info;
 
-        info!("Auto-creating ClickHouse tables and views...");
+        info!(
+            operation = "clickhouse_tables_auto_create_start",
+            "Auto-creating ClickHouse tables and views..."
+        );
 
         // Execute SQL files in order
         let sql_files = [
@@ -182,11 +211,18 @@ impl ClickHouseOutput {
         ];
 
         for (description, sql) in sql_files {
-            info!("Creating {}", description);
+            info!(
+                operation = "clickhouse_table_create",
+                description = %description,
+                "Creating ClickHouse table/view"
+            );
             self.client.query(sql).execute().await?;
         }
 
-        info!("Successfully created all ClickHouse tables and views");
+        info!(
+            operation = "clickhouse_tables_created",
+            "Successfully created all ClickHouse tables and views"
+        );
         Ok(())
     }
 

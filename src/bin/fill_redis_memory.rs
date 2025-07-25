@@ -305,15 +305,20 @@ impl MemoryFiller {
 
             if self.batch_count == 0 {
                 info!(
-                    "Initial memory usage: {}",
-                    format_binary_size(current_memory)
+                    operation = "initial_memory_usage",
+                    current_memory_bytes = current_memory,
+                    current_memory_formatted = %format_binary_size(current_memory),
+                    "Initial memory usage"
                 );
             }
 
             // Check if target is reached
             if current_memory >= self.target_bytes {
                 if self.batch_count == 0 {
-                    info!("No data writing needed. Exiting.");
+                    info!(
+                        operation = "no_data_writing_needed",
+                        "No data writing needed. Exiting."
+                    );
                 } else {
                     self.report_completion(current_memory);
                 }
@@ -330,8 +335,12 @@ impl MemoryFiller {
                 Ok(written) => {
                     self.total_keys_written += written;
                     debug!(
-                        "Wrote {} keys in batch {} (total: {}) - batch size: {}",
-                        written, self.batch_count, self.total_keys_written, batch_size
+                        operation = "wrote_keys_in_batch",
+                        written_keys = written,
+                        batch_count = self.batch_count,
+                        total_keys_written = self.total_keys_written,
+                        batch_size = batch_size,
+                        "Wrote keys in batch"
                     );
 
                     if self.should_report_progress() {
@@ -339,8 +348,16 @@ impl MemoryFiller {
                     }
                 }
                 Err(e) => {
-                    error!("Failed to write batch {}: {}", self.batch_count, e);
-                    error!("Exiting due to write failure");
+                    error!(
+                        operation = "batch_write_failed",
+                        batch_count = self.batch_count,
+                        error = %e,
+                        "Failed to write batch"
+                    );
+                    error!(
+                        operation = "exit_write_failure",
+                        "Exiting due to write failure"
+                    );
                     return Err(e);
                 }
             }
@@ -369,31 +386,54 @@ impl MemoryFiller {
 
         info!("Redis memory configuration:");
         info!(
-            "  Current memory usage: {}",
-            format_binary_size(current_memory)
+            operation = "redis_memory_config",
+            current_memory_bytes = current_memory,
+            current_memory_formatted = %format_binary_size(current_memory),
+            "Current memory usage"
         );
 
         if max_memory > 0 {
-            info!("  Max memory limit: {}", format_binary_size(max_memory));
+            info!(
+                operation = "redis_memory_limit",
+                max_memory_bytes = max_memory,
+                max_memory_formatted = %format_binary_size(max_memory),
+                "Redis max memory limit"
+            );
             let usage_percentage = (current_memory as f64 / max_memory as f64) * 100.0;
-            info!("  Memory usage: {:.1}%", usage_percentage);
+            info!(
+                operation = "redis_memory_usage",
+                usage_percentage = usage_percentage,
+                "Memory usage percentage"
+            );
 
             // Get memory policy if available
             if let Some(policy) = info.get::<String>("maxmemory_policy") {
-                info!("  Eviction policy: {}", policy);
+                info!(
+                    operation = "redis_eviction_policy",
+                    policy = %policy,
+                    "Eviction policy configured"
+                );
             }
 
             // Adjust target if it exceeds max memory
             if self.target_bytes > max_memory {
                 info!(
-                    "  Target memory ({}) exceeds maxmemory limit, adjusting to {}",
+                    operation = "target_exceeds_maxmemory",
+                    target_bytes = self.target_bytes,
+                    max_memory_bytes = max_memory,
+                    target_formatted = %format_binary_size(self.target_bytes),
+                    max_memory_formatted = %format_binary_size(max_memory),
+                    "Target memory ({}) exceeds maxmemory limit, adjusting to {}",
                     format_binary_size(self.target_bytes),
                     format_binary_size(max_memory)
                 );
                 self.target_bytes = max_memory;
             }
         } else {
-            info!("  Max memory limit: No limit set");
+            info!(
+                operation = "redis_memory_limit",
+                "Max memory limit: No limit set"
+            );
         }
 
         Ok(())
@@ -412,6 +452,11 @@ impl MemoryFiller {
         // Check if Redis has a memory limit configured and adjust target if needed
         if max_memory > 0 && self.target_bytes > max_memory {
             debug!(
+                operation = "target_exceeds_redis_maxmemory",
+                target_bytes = self.target_bytes,
+                max_memory_bytes = max_memory,
+                target_formatted = %format_binary_size(self.target_bytes),
+                max_memory_formatted = %format_binary_size(max_memory),
                 "Target memory size ({}) exceeds Redis maxmemory limit ({}). \
                  Adjusting target to maxmemory limit.",
                 format_binary_size(self.target_bytes),
@@ -423,6 +468,11 @@ impl MemoryFiller {
         // Warn if we're getting close to the limit
         if max_memory > 0 && current_memory > max_memory * 9 / 10 {
             debug!(
+                operation = "current_memory_approaching_limit",
+                current_memory_bytes = current_memory,
+                max_memory_bytes = max_memory,
+                current_memory_formatted = %format_binary_size(current_memory),
+                max_memory_formatted = %format_binary_size(max_memory),
                 "Current memory usage ({}) is approaching Redis maxmemory limit ({})",
                 format_binary_size(current_memory),
                 format_binary_size(max_memory)
@@ -439,34 +489,47 @@ impl MemoryFiller {
     fn report_progress(&mut self, current_memory: u64, batch_size: u64) {
         let progress = (current_memory as f64 / self.target_bytes as f64) * 100.0;
         info!(
-            "Batch {}: Memory usage: {} / {} ({:.1}%) - {} keys written (batch size: {})",
-            self.batch_count,
-            format_binary_size(current_memory),
-            format_binary_size(self.target_bytes),
-            progress,
-            self.total_keys_written,
-            batch_size
+            operation = "batch_progress",
+            batch_count = self.batch_count,
+            current_memory_bytes = current_memory,
+            current_memory_formatted = %format_binary_size(current_memory),
+            target_memory_bytes = self.target_bytes,
+            target_memory_formatted = %format_binary_size(self.target_bytes),
+            progress_percentage = progress,
+            total_keys_written = self.total_keys_written,
+            batch_size = batch_size,
+            "Batch progress"
         );
         self.last_report_time = Instant::now();
     }
 
     fn report_completion(&self, current_memory: u64) {
         let progress = (current_memory as f64 / self.target_bytes as f64) * 100.0;
-        info!("Target memory size reached!");
         info!(
-            "Final: Memory usage: {} / {} ({:.1}%) - {} keys written in {} batches",
-            format_binary_size(current_memory),
-            format_binary_size(self.target_bytes),
-            progress,
-            self.total_keys_written,
-            self.batch_count
+            operation = "target_memory_reached",
+            "Target memory size reached!"
+        );
+        info!(
+            operation = "final_memory_stats",
+            current_memory_bytes = current_memory,
+            current_memory_formatted = %format_binary_size(current_memory),
+            target_memory_bytes = self.target_bytes,
+            target_memory_formatted = %format_binary_size(self.target_bytes),
+            progress_percentage = progress,
+            total_keys_written = self.total_keys_written,
+            batch_count = self.batch_count,
+            "Final memory stats"
         );
     }
 
     fn report_final_stats(&self) {
         info!(
+            operation = "memory_fill_completed",
+            total_keys_written = self.total_keys_written,
+            batch_count = self.batch_count,
             "Memory fill completed. Total keys written: {} in {} batches",
-            self.total_keys_written, self.batch_count
+            self.total_keys_written,
+            self.batch_count
         );
 
         // Report expiration statistics
@@ -476,15 +539,28 @@ impl MemoryFiller {
             0.0
         };
         info!(
+            operation = "expiration_stats",
+            keys_with_expiration = self.keys_with_expiration,
+            expiration_percentage = expiration_percentage,
             "Keys with expiration (7 days): {} ({:.1}%)",
-            self.keys_with_expiration, expiration_percentage
+            self.keys_with_expiration,
+            expiration_percentage
         );
 
-        info!("Keys by data type:");
+        info!(operation = "keys_by_data_type", "Keys by data type:");
         for (data_type, count) in &self.type_counters {
             if *count > 0 {
                 let percentage = (*count as f64 / self.total_keys_written as f64) * 100.0;
-                info!("  {}: {} ({:.1}%)", data_type.as_str(), count, percentage);
+                info!(
+                    operation = "data_type_stats",
+                    data_type = data_type.as_str(),
+                    count = *count,
+                    percentage = percentage,
+                    "  {}: {} ({:.1}%)",
+                    data_type.as_str(),
+                    count,
+                    percentage
+                );
             }
         }
     }
@@ -695,12 +771,16 @@ async fn main() -> Result<()> {
     // Parse target memory size using custom parser for binary units
     let target_bytes = parse_memory_size(&cli.target_memory)?;
 
-    info!("Starting Redis memory fill tool with multiple data types");
-    info!("Redis URL: {}", cli.redis_url);
     info!(
-        "Target memory: {} ({} bytes)",
-        format_binary_size(target_bytes),
-        target_bytes
+        operation = "tool_start",
+        redis_url = %cli.redis_url,
+        "Starting Redis memory fill tool with multiple data types"
+    );
+    info!(
+        operation = "target_memory_config",
+        target_bytes = target_bytes,
+        target_formatted = %format_binary_size(target_bytes),
+        "Target memory configuration"
     );
 
     // Connect to Redis
@@ -717,7 +797,10 @@ async fn main() -> Result<()> {
         .query_async(&mut conn.clone())
         .await
         .with_context(|| "Failed to ping Redis server")?;
-    info!("Successfully connected to Redis");
+    info!(
+        operation = "redis_connection_success",
+        "Successfully connected to Redis"
+    );
 
     // Start filling memory
     let mut filler = MemoryFiller::new(conn, target_bytes, &cli);

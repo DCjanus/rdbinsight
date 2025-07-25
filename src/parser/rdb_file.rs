@@ -173,7 +173,11 @@ impl RDBFileParser {
                     }
 
                     let (input, _checksum) = read_exact(input, 8)?;
-                    debug!("EOF opcode, meet checksum with {:?}", _checksum);
+                    debug!(
+                        operation = "rdb_eof_checksum",
+                        checksum = ?_checksum,
+                        "EOF opcode encountered with checksum"
+                    );
                     ensure!(input.is_empty(), "input should be empty after EOF checksum");
                     // TODO: check checksum
                     buffer.consume_to(input.as_ptr());

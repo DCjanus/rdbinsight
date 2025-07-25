@@ -6,6 +6,7 @@ use tokio::io::AsyncRead;
 use crate::helper::AnyResult;
 
 pub mod cluster;
+pub mod codis;
 pub mod file;
 pub mod redis_stream;
 pub mod standalone;
@@ -31,4 +32,12 @@ pub trait RdbSourceConfig {
     /// This method is responsible for discovering all the RDB sources,
     /// for example, all master nodes in a Redis Cluster.
     async fn get_rdb_streams(&self) -> AnyResult<Vec<Pin<Box<dyn RDBStream>>>>;
+
+    /// Preprocesses the source configuration to handle dynamic values.
+    /// This method should be called before using the configuration.
+    /// For example, it can fetch cluster_name from external APIs.
+    async fn preprocess(&mut self) -> AnyResult<()> {
+        // Default implementation does nothing
+        Ok(())
+    }
 }

@@ -5,7 +5,7 @@ use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 use clap::{Parser, Subcommand};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
-    config::{Config, OutputConfig, SourceConfig},
+    config::{Config, OutputConfig},
     output::clickhouse::{BatchInfo, ClickHouseOutput},
     record::{Record, RecordStream},
     source::{RDBStream, RdbSourceConfig},
@@ -121,18 +121,43 @@ fn print_clickhouse_schema() {
 }
 
 async fn dump_to_clickhouse(args: DumpArgs) -> Result<()> {
-    debug!("Loading configuration from: {}", args.config.display());
+    debug!(
+        operation = "config_loading",
+        config_path = %args.config.display(),
+        "Loading configuration"
+    );
 
     let config_content = tokio::fs::read_to_string(&args.config)
         .await
-        .with_context(|| format!("Failed to read config file: {}", args.config.display()))?;
+        .with_context(|| {
+            format!(
+                "Failed to read config file: {config_path}",
+                config_path = args.config.display()
+            )
+        })?;
 
-    let config: Config =
+    let mut config: Config =
         toml::from_str(&config_content).with_context(|| "Failed to parse configuration file")?;
 
-    debug!("Configuration parsed successfully");
+    debug!(
+        operation = "config_parsed",
+        "Configuration parsed successfully"
+    );
 
-    let cluster_name = get_cluster_name(&config.source);
+    // Preprocess the source configuration to handle dynamic values
+    config
+        .source
+        .preprocess()
+        .await
+        .with_context(|| "Failed to preprocess source configuration")?;
+
+    debug!(
+        operation = "source_preprocessed",
+        "Source configuration preprocessed successfully"
+    );
+
+    let cluster_name = config.source.cluster_name().to_string();
+    let source_config = config.source;
 
     let batch_timestamp = if let Some(timestamp_str) = args.batch_timestamp {
         let parsed_timestamp = OffsetDateTime::parse(
@@ -140,24 +165,35 @@ async fn dump_to_clickhouse(args: DumpArgs) -> Result<()> {
             &time::format_description::well_known::Rfc3339,
         )
         .with_context(|| anyhow!("Failed to parse batch timestamp: {timestamp_str}"))?;
-        debug!("Using provided batch timestamp: {}", timestamp_str);
+        debug!(
+            operation = "batch_timestamp_provided",
+            timestamp = %timestamp_str,
+            "Using provided batch timestamp"
+        );
         parsed_timestamp.to_offset(time::UtcOffset::UTC)
     } else {
         let now = OffsetDateTime::now_utc();
-        debug!("Using current time as batch timestamp: {}", now);
+        debug!(
+            operation = "batch_timestamp_current",
+            timestamp = %now,
+            "Using current time as batch timestamp"
+        );
         now
     };
 
     info!(
-        "Starting dump for cluster '{}' (concurrency: {})",
-        cluster_name, config.concurrency
+        operation = "cluster_dump_start",
+        cluster = %cluster_name,
+        concurrency = %config.concurrency,
+        "Starting dump for cluster"
     );
 
     let clickhouse_output = match &config.output {
         OutputConfig::Clickhouse(clickhouse_config) => {
             debug!(
-                "Initializing ClickHouse output with config: {:?}",
-                clickhouse_config
+                operation = "clickhouse_output_init",
+                config = ?clickhouse_config,
+                "Initializing ClickHouse output"
             );
             ClickHouseOutput::new(clickhouse_config.clone())
                 .await
@@ -171,21 +207,25 @@ async fn dump_to_clickhouse(args: DumpArgs) -> Result<()> {
     };
 
     debug!(
-        "Batch info: cluster={}, timestamp={}",
-        batch_info.cluster, batch_info.batch
+        operation = "batch_info_created",
+        cluster = %batch_info.cluster,
+        timestamp = %batch_info.batch,
+        "Batch info created"
     );
 
-    let source_config = config.source;
-
-    debug!("Getting RDB streams from source configuration...");
+    debug!(
+        operation = "rdb_streams_fetch",
+        "Getting RDB streams from source configuration"
+    );
     let streams = source_config
         .get_rdb_streams()
         .await
         .with_context(|| "Failed to get RDB streams")?;
 
     debug!(
-        "Starting concurrent processing of {} RDB streams",
-        streams.len()
+        operation = "concurrent_processing_start",
+        stream_count = %streams.len(),
+        "Starting concurrent processing of RDB streams"
     );
     let total_streams = streams.len();
 
@@ -196,7 +236,11 @@ async fn dump_to_clickhouse(args: DumpArgs) -> Result<()> {
             let batch_info = batch_info.clone();
             async move {
                 let instance = stream.instance();
-                info!("[{}] Starting processing", instance);
+                info!(
+                    operation = "instance_processing_start",
+                    instance = %instance,
+                    "Starting processing"
+                );
 
                 process_records_to_clickhouse(stream, clickhouse_output, batch_info)
                     .await
@@ -210,7 +254,38 @@ async fn dump_to_clickhouse(args: DumpArgs) -> Result<()> {
             format!("Failed to process RDB streams ({total_streams} total instances)")
         })?;
 
-    debug!("All RDB streams processed successfully");
+    debug!(
+        operation = "all_streams_processed",
+        total_instances = total_streams,
+        "All RDB streams processed successfully"
+    );
+
+    // Commit the batch only after all streams have been processed successfully
+    debug!(
+        operation = "committing_batch",
+        cluster = %batch_info.cluster,
+        batch = %batch_info.batch,
+        total_instances = total_streams,
+        "Committing batch after all instances completed"
+    );
+
+    let backoff_strategy = ExponentialBackoffBuilder::new()
+        .with_initial_interval(std::time::Duration::from_secs(1))
+        .with_max_interval(std::time::Duration::from_secs(10))
+        .with_max_elapsed_time(Some(std::time::Duration::from_secs(60)))
+        .build();
+
+    commit_batch_with_retry(&clickhouse_output, &batch_info, &backoff_strategy)
+        .await
+        .with_context(|| "Failed to commit batch after processing all streams")?;
+
+    info!(
+        operation = "batch_committed",
+        cluster = %batch_info.cluster,
+        batch = %batch_info.batch,
+        total_instances = total_streams,
+        "Batch committed successfully for all instances"
+    );
     Ok(())
 }
 
@@ -257,23 +332,33 @@ async fn process_records_to_clickhouse(
                     )
                     .await?;
                     info!(
-                        "[{}] Wrote batch of {} records (total: {})",
-                        instance,
-                        record_buffer.len(),
-                        total_records
+                        operation = "batch_written",
+                        instance = %instance,
+                        batch_size = record_buffer.len(),
+                        total_records = total_records,
+                        "Wrote batch of records"
                     );
                     record_buffer.clear();
                 }
 
                 if total_records.is_multiple_of(100_000) {
-                    debug!("[{}] Processed {} records", instance, total_records);
+                    debug!(
+                        operation = "progress_update",
+                        instance = %instance,
+                        processed_records = total_records,
+                        "Processing progress"
+                    );
                 }
             }
             Some(Err(e)) => {
                 let elapsed = start_time.elapsed();
                 error!(
-                    "[{}] Parser error after processing {} records in {:?}: {:?}",
-                    instance, total_records, elapsed, e
+                    operation = "parser_error",
+                    instance = %instance,
+                    processed_records = total_records,
+                    elapsed_seconds = elapsed.as_secs(),
+                    error = %e,
+                    "Parser error during processing"
                 );
 
                 // Add root cause chain information
@@ -285,7 +370,12 @@ async fn process_records_to_clickhouse(
                 }
 
                 if !cause_chain.is_empty() {
-                    error!("[{}] Error chain: {}", instance, cause_chain.join(" -> "));
+                    error!(
+                        operation = "error_chain",
+                        instance = %instance,
+                        error_chain = %cause_chain.join(" -> "),
+                        "Error chain details"
+                    );
                 }
 
                 return Err(e.context(format!(
@@ -308,15 +398,14 @@ async fn process_records_to_clickhouse(
         }
     }
 
-    commit_batch_with_retry(&clickhouse_output, &batch_info, &backoff_strategy).await?;
-
     let duration = start_time.elapsed();
     info!(
-        "[{}] Completed: {} records in {:.2}s ({:.0} records/sec)",
-        instance,
-        total_records,
-        duration.as_secs_f64(),
-        total_records as f64 / duration.as_secs_f64()
+        operation = "instance_processing_completed",
+        instance = %instance,
+        total_records = total_records,
+        duration_seconds = duration.as_secs_f64(),
+        records_per_second = total_records as f64 / duration.as_secs_f64(),
+        "Instance processing completed"
     );
 
     Ok(())
@@ -334,7 +423,12 @@ async fn write_batch_with_retry(
             .write(records, batch_info, instance)
             .await
             .map_err(|e| {
-                warn!("Failed to write batch to ClickHouse: {}", e);
+                warn!(
+                    operation = "batch_write_retry",
+                    instance = %instance,
+                    error = %e,
+                    "Failed to write batch to ClickHouse, will retry"
+                );
                 backoff::Error::transient(e)
             })
     };
@@ -354,7 +448,13 @@ async fn commit_batch_with_retry(
             .commit_batch(batch_info)
             .await
             .map_err(|e| {
-                warn!("Failed to commit batch to ClickHouse: {}", e);
+                warn!(
+                    operation = "batch_commit_retry",
+                    cluster = %batch_info.cluster,
+                    batch = %batch_info.batch,
+                    error = %e,
+                    "Failed to commit batch to ClickHouse, will retry"
+                );
                 backoff::Error::transient(e)
             })
     };
@@ -362,14 +462,6 @@ async fn commit_batch_with_retry(
     backoff::future::retry(backoff_strategy.clone(), operation)
         .await
         .with_context(|| "Failed to commit batch to ClickHouse after retries")
-}
-
-fn get_cluster_name(source: &SourceConfig) -> &str {
-    match source {
-        SourceConfig::RedisStandalone { cluster_name, .. } => cluster_name,
-        SourceConfig::RedisCluster { cluster_name, .. } => cluster_name,
-        SourceConfig::RDBFile { cluster_name, .. } => cluster_name,
-    }
 }
 
 async fn run_report(args: ReportArgs) -> Result<()> {

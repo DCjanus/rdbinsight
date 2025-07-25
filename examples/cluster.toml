@@ -10,6 +10,7 @@ addrs = [
 ]
 username = "default"
 password = "123456"
+require_slave = true  # Optional: Require slave instances (default: false)
 
 [output]
 type = "clickhouse"

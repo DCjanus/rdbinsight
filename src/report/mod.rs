@@ -44,9 +44,10 @@ impl ReportGenerator {
 
     pub async fn generate(&self) -> Result<String> {
         tracing::info!(
-            "Starting report generation for cluster: {}, batch: {}",
-            self.cluster,
-            self.batch
+            operation = "report_generation_start",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            "Starting report generation"
         );
 
         // Use the new unified prefix report data generation
@@ -57,8 +58,10 @@ impl ReportGenerator {
             .context("Failed to generate prefix report data from ClickHouse")?;
 
         tracing::info!(
-            "Generated {} prefix records for unified report",
-            prefix_records.len()
+            operation = "prefix_records_generated",
+            cluster = %self.cluster,
+            count = prefix_records.len(),
+            "Generated prefix records for unified report"
         );
 
         // Get top 100 big keys for all classifications
@@ -68,7 +71,12 @@ impl ReportGenerator {
             .await
             .context("Failed to get top keys data from ClickHouse")?;
 
-        tracing::info!("Generated {} top key records for report", top_keys.len());
+        tracing::info!(
+            operation = "top_keys_generated",
+            cluster = %self.cluster,
+            count = top_keys.len(),
+            "Generated top key records for report"
+        );
 
         let report_data = ReportData {
             cluster: self.cluster.clone(),
@@ -174,7 +182,11 @@ pub async fn run_report(
     batch: Option<String>,
     output: Option<PathBuf>,
 ) -> Result<()> {
-    tracing::info!("Loading configuration from: {}", config_path.display());
+    tracing::info!(
+        operation = "config_loading",
+        config_path = %config_path.display(),
+        "Loading configuration"
+    );
 
     let config_content = tokio::fs::read_to_string(&config_path)
         .await
@@ -198,8 +210,9 @@ pub async fn run_report(
         }
         None => {
             tracing::info!(
-                "No batch specified, fetching latest batch for cluster: {}",
-                cluster
+                operation = "latest_batch_fetch",
+                cluster = %cluster,
+                "No batch specified, fetching latest batch for cluster"
             );
             get_latest_batch_for_cluster(&clickhouse_config, &cluster)
                 .await
@@ -207,7 +220,12 @@ pub async fn run_report(
         }
     };
 
-    tracing::info!("Using batch: {}", actual_batch);
+    tracing::info!(
+        operation = "batch_selected",
+        cluster = %cluster,
+        batch = %actual_batch,
+        "Using batch for report generation"
+    );
 
     let generator = ReportGenerator::new(clickhouse_config, cluster.clone(), actual_batch.clone())
         .await
@@ -232,7 +250,13 @@ pub async fn run_report(
         .await
         .with_context(|| format!("Failed to write report to: {}", output_path.display()))?;
 
-    tracing::info!("Report generated successfully: {}", output_path.display());
+    tracing::info!(
+        operation = "report_generated",
+        cluster = %cluster,
+        batch = %actual_batch,
+        output_path = %output_path.display(),
+        "Report generated successfully"
+    );
     Ok(())
 }
 

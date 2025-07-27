@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM rustlang/rust:nightly-alpine AS builder
 
 RUN apk add --no-cache musl-dev

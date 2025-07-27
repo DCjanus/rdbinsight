@@ -255,6 +255,7 @@ pub struct ClickHouseConfig {
     pub database: Option<String>,
     #[serde(default)]
     pub auto_create_tables: bool,
+    pub proxy_url: Option<String>,
 }
 
 impl ClickHouseConfig {

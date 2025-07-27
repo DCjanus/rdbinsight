@@ -90,6 +90,5 @@ ORDER BY key_cnt DESC;
 
 ## TODO
 
-- ClickHouse 支持代理配置，兼容 SOCKS5 和 HTTP 代理
 - 集成测试将使用 testcontainers 验证 Redis cluster 场景
 - 集成测试将使用 testcontainers 创建 Codis 集群，使用 `pikadb/codis:v3.5.5` 镜像

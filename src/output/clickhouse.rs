@@ -1,9 +1,15 @@
 use bytes::Bytes;
 use clickhouse::{Client, Row};
+use hyper_util::{client::legacy::Client as LegacyClient, rt::TokioExecutor};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use tracing::info;
 
-use crate::{config::ClickHouseConfig, helper::AnyResult, record::Record};
+use crate::{
+    config::ClickHouseConfig,
+    helper::{AnyResult, proxy_connector::ProxyConnector, sanitize_url},
+    record::Record,
+};
 
 #[derive(Debug, Clone)]
 pub struct BatchInfo {
@@ -52,35 +58,7 @@ impl ClickHouseOutput {
             "Initializing ClickHouse client"
         );
 
-        let mut client_builder = Client::default().with_url(&config.address);
-
-        if let Some(username) = &config.username {
-            debug!(
-                operation = "clickhouse_auth_username",
-                username = %username,
-                "Using ClickHouse username"
-            );
-            client_builder = client_builder.with_user(username);
-        }
-
-        if let Some(password) = &config.password {
-            debug!(
-                operation = "clickhouse_auth_password",
-                "Using ClickHouse password authentication"
-            );
-            client_builder = client_builder.with_password(password);
-        }
-
-        if let Some(database) = &config.database {
-            debug!(
-                operation = "clickhouse_database_config",
-                database = %database,
-                "Using ClickHouse database"
-            );
-            client_builder = client_builder.with_database(database);
-        }
-
-        let client = client_builder;
+        let client = Self::create_client(&config)?;
         let output = Self {
             client,
             config: config.clone(),
@@ -91,6 +69,43 @@ impl ClickHouseOutput {
         debug!("ClickHouse initialization completed successfully");
 
         Ok(output)
+    }
+
+    #[doc(hidden)]
+    pub fn create_client(config: &ClickHouseConfig) -> AnyResult<Client> {
+        use std::time::Duration;
+
+        if let Some(proxy_url) = config.proxy_url.as_ref() {
+            let safe_url = sanitize_url(proxy_url);
+            info!(operation = "create_clickhouse_client", proxy_host = %safe_url, "Creating ClickHouse client with proxy");
+        } else {
+            info!(
+                operation = "create_clickhouse_client",
+                "Creating ClickHouse client without proxy"
+            );
+        }
+
+        let proxy_connector = ProxyConnector::new(config.proxy_url.as_deref())
+            .map_err(|e| anyhow::anyhow!("Failed to create proxy connector: {e}"))?;
+        let http_client = LegacyClient::builder(TokioExecutor::new())
+            .pool_idle_timeout(Duration::from_secs(90))
+            .build(proxy_connector);
+
+        let mut client = Client::with_http_client(http_client).with_url(&config.address);
+
+        if let Some(username) = &config.username {
+            client = client.with_user(username);
+        }
+
+        if let Some(password) = &config.password {
+            client = client.with_password(password);
+        }
+
+        if let Some(database) = &config.database {
+            client = client.with_database(database);
+        }
+
+        Ok(client)
     }
 
     async fn validate_or_create_tables(&self) -> AnyResult<()> {
@@ -312,6 +327,7 @@ mod tests {
             password: None,
             database: None,
             auto_create_tables: false,
+            proxy_url: None,
         };
         let output = ClickHouseOutput { client, config };
 

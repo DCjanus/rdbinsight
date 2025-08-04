@@ -251,13 +251,9 @@ impl ClickHouseOutput {
             return Ok(());
         }
 
-        let rows: Vec<RedisRecordRow> = records
-            .iter()
-            .map(|record| self.record_to_row(record, batch_info, instance))
-            .collect();
-
         let mut insert = self.client.insert("redis_records_raw")?;
-        for row in rows {
+        for record in records {
+            let row = self.record_to_row(record, batch_info, instance);
             insert.write(&row).await?;
         }
         insert.end().await?;

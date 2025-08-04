@@ -1,5 +1,5 @@
-use anyhow::Result;
-use rdbinsight::output::clickhouse::ClickHouseOutput;
+use anyhow::{Context, Result};
+use rdbinsight::{helper::AnyResult, output::clickhouse::ClickHouseOutput};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
     core::{IntoContainerPort, WaitFor, wait::HttpWaitStrategy},
@@ -56,10 +56,16 @@ impl TestInfrastructure {
         let test_id = rand::random::<u32>().to_be_bytes();
         let network_name = format!("rdbinsight-test-{}", hex::encode(test_id));
 
-        let clickhouse = Self::setup_clickhouse(&network_name).await?;
+        let clickhouse = Self::setup_clickhouse(&network_name)
+            .await
+            .context("Failed to setup ClickHouse")?;
 
         let proxy = if config.proxy_enabled {
-            Some(Self::setup_proxy(&network_name, &config).await?)
+            Some(
+                Self::setup_proxy(&network_name, &config)
+                    .await
+                    .context("Failed to setup proxy")?,
+            )
         } else {
             None
         };
@@ -81,14 +87,21 @@ impl TestInfrastructure {
             ))
             .with_network(network_name.to_string());
 
-        let clickhouse_container = clickhouse_image.start().await?;
+        let clickhouse_container = clickhouse_image
+            .start()
+            .await
+            .context("Failed to start ClickHouse container")?;
         debug!("ClickHouse container started");
 
         let clickhouse_host_port = clickhouse_container
             .get_host_port_ipv4(CLICKHOUSE_PORT)
-            .await?;
+            .await
+            .context("Failed to get ClickHouse container host port")?;
 
-        let clickhouse_internal_ip = clickhouse_container.get_bridge_ip_address().await?;
+        let clickhouse_internal_ip = clickhouse_container
+            .get_bridge_ip_address()
+            .await
+            .context("Failed to get ClickHouse container bridge IP address")?;
 
         let internal_url = format!("http://{clickhouse_internal_ip}:{CLICKHOUSE_PORT}");
         let host_url = format!("http://127.0.0.1:{clickhouse_host_port}");
@@ -194,10 +207,12 @@ struct TestCase {
     config: TestInfrastructureConfig,
 }
 
-async fn run_clickhouse_test(test_case: &TestCase) -> Result<()> {
+async fn run_clickhouse_test(test_case: &TestCase) -> AnyResult {
     common::init_log_for_debug();
 
-    let infrastructure = TestInfrastructure::start(test_case.config.clone()).await?;
+    let infrastructure = TestInfrastructure::start(test_case.config.clone())
+        .await
+        .context("Failed to start test infrastructure")?;
 
     let clickhouse_url = if test_case.config.proxy_enabled {
         infrastructure.clickhouse_internal_url()
@@ -221,7 +236,11 @@ async fn run_clickhouse_test(test_case: &TestCase) -> Result<()> {
         proxy_url,
     })?;
 
-    let result: u8 = client.query("SELECT 1+1").fetch_one().await?;
+    let result: u8 = client
+        .query("SELECT 1+1")
+        .fetch_one()
+        .await
+        .context("Failed to execute query")?;
     assert_eq!(result, 2);
 
     println!("✅ {} test passed", test_case.name);
@@ -286,6 +305,6 @@ async fn test_clickhouse_connections() {
     for test_case in &test_cases {
         run_clickhouse_test(test_case)
             .await
-            .unwrap_or_else(|e| panic!("Test '{}' failed: {e}", test_case.name));
+            .unwrap_or_else(|e| panic!("Test '{}' failed, error:\n {:?}", test_case.name, e));
     }
 }

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clickhouse::{Client, Row};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use time::OffsetDateTime;
 
 pub mod querier;
@@ -10,14 +10,6 @@ pub mod querier;
 use querier::ClickHouseQuerier;
 
 use crate::config::{ClickHouseConfig, Config, OutputConfig};
-
-#[derive(Serialize)]
-pub struct ReportData {
-    pub cluster: String,
-    pub batch: String,
-    pub prefix_records: Vec<querier::PrefixRecord>,
-    pub top_keys: Vec<querier::TopKeyRecord>,
-}
 
 pub struct ReportGenerator {
     querier: ClickHouseQuerier,
@@ -50,53 +42,34 @@ impl ReportGenerator {
             "Starting report generation"
         );
 
-        // Use the new unified prefix report data generation
-        let prefix_records = self
+        let report_data = self
             .querier
-            .generate_prefix_report_data()
+            .generate_report_data()
             .await
-            .context("Failed to generate prefix report data from ClickHouse")?;
+            .context("Failed to generate report data from ClickHouse")?;
 
         tracing::info!(
-            operation = "prefix_records_generated",
+            operation = "report_generated",
             cluster = %self.cluster,
-            count = prefix_records.len(),
-            "Generated prefix records for unified report"
+            batch = %self.batch,
+            db_count = report_data.db_aggregates.len(),
+            type_count = report_data.type_aggregates.len(),
+            instance_count = report_data.instance_aggregates.len(),
+            top_keys_count = report_data.top_keys.len(),
+            top_prefixes_count = report_data.top_prefixes.len(),
+            "Generated report data successfully"
         );
 
-        // Get top 100 big keys for all classifications
-        let top_keys = self
-            .querier
-            .get_top_keys_for_all_classifications()
-            .await
-            .context("Failed to get top keys data from ClickHouse")?;
+        // report_data already contains the aggregated data
 
-        tracing::info!(
-            operation = "top_keys_generated",
-            cluster = %self.cluster,
-            count = top_keys.len(),
-            "Generated top key records for report"
-        );
-
-        let report_data = ReportData {
-            cluster: self.cluster.clone(),
-            batch: self.batch.clone(),
-            prefix_records,
-            top_keys,
-        };
-
-        // Read HTML template
         let template_content = include_str!("../../templates/report.html");
 
-        // Serialize report data to JSON with pretty formatting for better readability
         let report_json = serde_json::to_string_pretty(&report_data)
             .context("Failed to serialize report data to JSON")?;
 
-        // Define the template pattern to replace
         let template_pattern =
             r#"<script id="rdbinsight-data" type="application/json" src="./report.json"></script>"#;
 
-        // Replace the entire script tag with inline data for production mode
         let html_content = template_content.replace(
             template_pattern,
             &format!(
@@ -106,7 +79,6 @@ impl ReportGenerator {
             ),
         );
 
-        // Verify that the replacement actually occurred
         if html_content == template_content {
             return Err(anyhow::anyhow!(
                 "Template replacement failed: pattern not found in template. \
@@ -199,10 +171,8 @@ pub async fn run_report(
         OutputConfig::Clickhouse(clickhouse_config) => clickhouse_config.clone(),
     };
 
-    // Get actual batch string - either provided or latest for the cluster
     let actual_batch = match batch {
         Some(batch_str) => {
-            // Validate the provided batch timestamp format
             let _batch_timestamp =
                 OffsetDateTime::parse(&batch_str, &time::format_description::well_known::Rfc3339)
                     .with_context(|| format!("Invalid batch timestamp format: {batch_str}"))?;
@@ -239,7 +209,6 @@ pub async fn run_report(
     let output_path = match output {
         Some(path) => path,
         None => {
-            // Generate default filename: {cluster}_{batch_in_rfc3339_with_tz}.html
             let safe_batch = actual_batch.replace(':', "-").replace('+', "_");
             let filename: String = format!("rdb_report_{cluster}_{safe_batch}.html");
             PathBuf::from(filename)
@@ -286,28 +255,5 @@ mod tests {
 
         // Should be in RFC3339 format
         assert_eq!(formatted, "2022-01-01T00:00:00Z");
-    }
-
-    #[test]
-    fn test_report_data_structure() {
-        // Test that ReportData can be properly serialized for the unified report
-        let report_data = ReportData {
-            cluster: "test-cluster".to_string(),
-            batch: "2024-01-01T00:00:00Z".to_string(),
-            prefix_records: vec![querier::PrefixRecord {
-                prefix_base64: bytes::Bytes::from("user:"),
-                instance: "127.0.0.1:6379".to_string(),
-                db: 0,
-                r#type: "string".to_string(),
-                rdb_size: 600,
-                key_count: 100,
-            }],
-            top_keys: vec![],
-        };
-
-        // Verify the structure is correct
-        assert_eq!(report_data.cluster, "test-cluster");
-        assert_eq!(report_data.batch, "2024-01-01T00:00:00Z");
-        assert!(!report_data.prefix_records.is_empty());
     }
 }

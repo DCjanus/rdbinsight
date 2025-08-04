@@ -109,6 +109,7 @@ impl_serde_str_conversion!(StreamEncoding);
 pub enum StringEncoding {
     Raw,
     Int,
+    #[serde(rename = "lzf")]
     LZF,
 }
 

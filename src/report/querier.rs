@@ -1,6 +1,4 @@
-use std::collections::HashSet;
-
-use anyhow::{Context, Result as AnyResult};
+use anyhow::Result as AnyResult;
 use bytes::Bytes;
 use clickhouse::{Client, Row};
 use serde::{Deserialize, Serialize};
@@ -21,18 +19,12 @@ pub struct PrefixRecord {
     pub key_count: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Classification {
-    pub r#type: String,
-    pub instance: String,
-    pub db: u64,
-}
-
 #[serde_as]
 #[derive(Debug, Clone, Serialize)]
 pub struct TopKeyRecord {
     #[serde_as(as = "Base64")]
-    pub key_base64: Bytes,
+    #[serde(rename = "key_base64")]
+    pub key: Bytes,
     pub rdb_size: u64,
     pub member_count: Option<u64>,
     pub r#type: String,
@@ -47,6 +39,45 @@ pub struct PrefixNode {
     pub prefix: String, // Complete prefix path from root to this node
     pub value: u64,
     pub children: Vec<PrefixNode>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DbAggregate {
+    pub db: u64,
+    pub key_count: u64,
+    pub total_size: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TypeAggregate {
+    pub data_type: String,
+    pub key_count: u64,
+    pub total_size: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InstanceAggregate {
+    pub instance: String,
+    pub key_count: u64,
+    pub total_size: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PrefixAggregate {
+    pub prefix: String,
+    pub total_size: u64,
+    pub key_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReportData {
+    pub cluster: String,
+    pub batch: String,
+    pub db_aggregates: Vec<DbAggregate>,
+    pub type_aggregates: Vec<TypeAggregate>,
+    pub instance_aggregates: Vec<InstanceAggregate>,
+    pub top_keys: Vec<TopKeyRecord>,
+    pub top_prefixes: Vec<PrefixAggregate>,
 }
 
 pub struct ClickHouseQuerier {
@@ -80,28 +111,33 @@ impl ClickHouseQuerier {
         })
     }
 
-    pub async fn get_all_classifications(&self) -> AnyResult<Vec<(Classification, u64)>> {
+    pub async fn get_db_aggregates(&self) -> AnyResult<Vec<DbAggregate>> {
         #[derive(Debug, Row, Deserialize)]
-        struct ClassificationRow {
-            r#type: String,
-            instance: String,
+        struct DbAggregateRow {
             db: u64,
+            key_count: u64,
             total_size: u64,
         }
 
         let query = "
             SELECT 
-                type, 
-                instance, 
                 db,
+                COUNT(*) as key_count,
                 SUM(rdb_size) as total_size
             FROM redis_records_view
             WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC')
-            GROUP BY type, instance, db
-            ORDER BY type, instance, db
+            GROUP BY db
+            ORDER BY db
         ";
 
-        let rows: Vec<ClassificationRow> = self
+        tracing::info!(
+            operation = "db_aggregates_query_start",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            "Executing DB aggregates query"
+        );
+
+        let rows: Vec<DbAggregateRow> = self
             .client
             .query(query)
             .bind(&self.cluster)
@@ -109,276 +145,239 @@ impl ClickHouseQuerier {
             .fetch_all()
             .await?;
 
-        let classifications = rows
+        let result: Vec<_> = rows
             .into_iter()
-            .map(|row| {
-                (
-                    Classification {
-                        r#type: row.r#type,
-                        instance: row.instance,
-                        db: row.db,
-                    },
-                    row.total_size,
-                )
+            .map(|row| DbAggregate {
+                db: row.db,
+                key_count: row.key_count,
+                total_size: row.total_size,
             })
             .collect();
 
-        Ok(classifications)
+        tracing::info!(
+            operation = "db_aggregates_query_complete",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            result_count = result.len(),
+            "DB aggregates query completed"
+        );
+
+        Ok(result)
     }
 
-    /// Generate unified prefix report data using two-stage aggregation
-    /// Stage 1: Get empty prefix records for all classifications (cluster totals)
-    /// Stage 2: Discover important prefixes and get their cross-classification details
-    pub async fn generate_prefix_report_data(&self) -> AnyResult<Vec<PrefixRecord>> {
-        // Stage 1: Get empty prefix records for all classifications
-        // This provides cluster total data and can be reused in the aggregation process
-        let mut final_records = self
-            .get_prefix_cross_classification_details(&Bytes::new())
-            .await
-            .context("Failed to get bootstrapping records")?;
-
-        // Configurable threshold: prefix is important if it's > 1% of classification total
-        let significance_threshold_ratio = 0.01;
-
-        // Stage 2: Discover important prefixes and get their cross-classification details
-        let mut discovered_prefixes = HashSet::new();
-        let mut classification_prefix_records = Vec::new();
-
-        // First, collect all the classification total records to avoid borrowing issues
-        let classification_totals: Vec<_> = final_records.clone();
-
-        for record in &classification_totals {
-            let classification = Classification {
-                instance: record.instance.clone(),
-                db: record.db,
-                r#type: record.r#type.clone(),
-            };
-
-            let total_size = record.rdb_size;
-            let significance_threshold = (total_size as f64 * significance_threshold_ratio) as u64;
-
-            // Discover important prefixes for this classification
-            let important_prefix_records = self
-                .discover_important_prefixes_bfs(&classification, significance_threshold)
-                .await?;
-
-            // Collect unique prefixes and store the records
-            for prefix_record in important_prefix_records {
-                discovered_prefixes.insert(prefix_record.prefix_base64.clone());
-                classification_prefix_records.push(prefix_record);
-            }
-        }
-
-        // Add all the classification-specific prefix records
-        final_records.extend(classification_prefix_records);
-
-        // Get cross-classification details for all discovered prefixes
-        // Note: We already have data for the classification where each prefix was discovered,
-        // now we need to get data for other classifications
-        for prefix in discovered_prefixes {
-            let cross_classification_records = self
-                .get_prefix_cross_classification_details(&prefix)
-                .await?;
-
-            // Add all records, we'll deduplicate at the end
-            final_records.extend(cross_classification_records);
-        }
-
-        // Deduplicate records based on unique combination of prefix, instance, db, and type
-        final_records.sort_by(|a, b| {
-            a.prefix_base64
-                .cmp(&b.prefix_base64)
-                .then_with(|| a.instance.cmp(&b.instance))
-                .then_with(|| a.db.cmp(&b.db))
-                .then_with(|| a.r#type.cmp(&b.r#type))
-        });
-        final_records.dedup_by(|a, b| {
-            a.prefix_base64 == b.prefix_base64
-                && a.instance == b.instance
-                && a.db == b.db
-                && a.r#type == b.r#type
-        });
-
-        Ok(final_records)
-    }
-
-    /// Discover important prefixes within a single classification using BFS
-    async fn discover_important_prefixes_bfs(
-        &self,
-        classification: &Classification,
-        significance_threshold: u64,
-    ) -> AnyResult<Vec<PrefixRecord>> {
-        let mut important_prefixes = Vec::new();
-        let mut prefixes_to_explore = vec![Bytes::new()]; // Start with empty prefix (root level)
-
-        while !prefixes_to_explore.is_empty() {
-            let mut next_level_prefixes = Vec::new();
-
-            for current_prefix in prefixes_to_explore {
-                let child_prefixes = self
-                    .get_child_prefixes_with_count(classification, &current_prefix)
-                    .await?;
-
-                for (prefix, rdb_size, key_count) in child_prefixes {
-                    if rdb_size >= significance_threshold {
-                        // This prefix is important, record it with full statistics
-                        important_prefixes.push(PrefixRecord {
-                            prefix_base64: prefix.clone(),
-                            instance: classification.instance.clone(),
-                            db: classification.db,
-                            r#type: classification.r#type.clone(),
-                            rdb_size,
-                            key_count,
-                        });
-
-                        // Add to next level for further exploration
-                        next_level_prefixes.push(prefix);
-                    }
-                    // If not significant, we prune this branch (don't explore further)
-                }
-            }
-
-            prefixes_to_explore = next_level_prefixes;
-        }
-
-        Ok(important_prefixes)
-    }
-
-    /// Get child prefixes with both size and count for a classification
-    /// Also includes min/max keys for path compression optimization
-    async fn get_child_prefixes_with_count(
-        &self,
-        classification: &Classification,
-        current_prefix: &[u8],
-    ) -> AnyResult<Vec<(Bytes, u64, u64)>> {
+    pub async fn get_type_aggregates(&self) -> AnyResult<Vec<TypeAggregate>> {
         #[derive(Debug, Row, Deserialize)]
-        struct PrefixAggregateWithCountRow {
-            prefix: Bytes,
-            total_size: u64,
+        struct TypeAggregateRow {
+            r#type: String,
             key_count: u64,
-            min_key: Bytes,
-            max_key: Bytes,
+            total_size: u64,
         }
-
-        let prefix_length = if current_prefix.is_empty() {
-            1
-        } else {
-            current_prefix.len() + 1
-        };
 
         let query = "
             SELECT 
-                substring(key, 1, ?) as prefix,
-                SUM(rdb_size) as total_size,
+                type,
                 COUNT(*) as key_count,
-                MIN(key) as min_key,
-                MAX(key) as max_key
+                SUM(rdb_size) as total_size
             FROM redis_records_view
-            WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC') AND type = ? AND instance = ? AND db = ?
-              AND startsWith(hex(key), ?)
-              AND length(key) > ?
-            GROUP BY prefix
+            WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC')
+            GROUP BY type
             ORDER BY total_size DESC
         ";
 
-        let rows: Vec<PrefixAggregateWithCountRow> = self
+        tracing::info!(
+            operation = "type_aggregates_query_start",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            "Executing type aggregates query"
+        );
+
+        let rows: Vec<TypeAggregateRow> = self
             .client
             .query(query)
-            .bind(prefix_length)
             .bind(&self.cluster)
             .bind(&self.batch)
-            .bind(&classification.r#type)
-            .bind(&classification.instance)
-            .bind(classification.db)
-            // Use hex encoding to work around ClickHouse driver issue with empty &[u8]
-            // which would be bound as [] instead of "" without encoding
-            .bind(hex::encode(current_prefix))
-            .bind(current_prefix.len())
             .fetch_all()
             .await?;
 
-        // Apply path compression optimization
-        Ok(rows
+        let result: Vec<_> = rows
             .into_iter()
-            .map(|row| {
-                let common_prefix_len =
-                    self.longest_common_prefix_length(&row.min_key, &row.max_key);
-                let compressed_prefix = row.min_key.slice(0..common_prefix_len);
-                assert!(compressed_prefix.len() >= row.prefix.len());
-
-                (compressed_prefix, row.total_size, row.key_count)
+            .map(|row| TypeAggregate {
+                data_type: row.r#type,
+                key_count: row.key_count,
+                total_size: row.total_size,
             })
-            .collect())
+            .collect();
+
+        tracing::info!(
+            operation = "type_aggregates_query_complete",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            result_count = result.len(),
+            "Type aggregates query completed"
+        );
+
+        Ok(result)
     }
 
-    /// Find the length of the longest common prefix between two byte sequences
-    /// More efficient than creating intermediate Bytes objects
-    fn longest_common_prefix_length(&self, s1: &Bytes, s2: &Bytes) -> usize {
-        let bytes1 = s1.as_ref();
-        let bytes2 = s2.as_ref();
-        let min_len = bytes1.len().min(bytes2.len());
-
-        // Use iterator's position method for better performance
-        bytes1[..min_len]
-            .iter()
-            .zip(&bytes2[..min_len])
-            .position(|(a, b)| a != b)
-            .unwrap_or(min_len)
-    }
-
-    /// Get cross-classification details for a specific prefix
-    async fn get_prefix_cross_classification_details(
-        &self,
-        prefix: &Bytes,
-    ) -> AnyResult<Vec<PrefixRecord>> {
+    pub async fn get_instance_aggregates(&self) -> AnyResult<Vec<InstanceAggregate>> {
         #[derive(Debug, Row, Deserialize)]
-        struct CrossClassificationRow {
+        struct InstanceAggregateRow {
             instance: String,
-            db: u64,
-            r#type: String,
             key_count: u64,
-            rdb_size: u64,
+            total_size: u64,
         }
 
         let query = "
-            SELECT
+            SELECT 
                 instance,
-                db,
-                type,
-                count(*) AS key_count,
-                sum(rdb_size) AS rdb_size
+                COUNT(*) as key_count,
+                SUM(rdb_size) as total_size
             FROM redis_records_view
-            WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC') AND startsWith(hex(key), ?)
-            GROUP BY instance, db, type
+            WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC')
+            GROUP BY instance
+            ORDER BY total_size DESC
         ";
 
-        let rows: Vec<CrossClassificationRow> = self
+        tracing::info!(
+            operation = "instance_aggregates_query_start",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            "Executing instance aggregates query"
+        );
+
+        let rows: Vec<InstanceAggregateRow> = self
             .client
             .query(query)
             .bind(&self.cluster)
             .bind(&self.batch)
-            // Use hex encoding to work around ClickHouse driver issue with empty &[u8]
-            // which would be bound as [] instead of "" without encoding
-            .bind(hex::encode(prefix))
             .fetch_all()
-            .await
-            .context("Failed to get cross-classification details")?;
+            .await?;
 
-        Ok(rows
+        let result: Vec<_> = rows
             .into_iter()
-            .map(|row| PrefixRecord {
-                prefix_base64: prefix.clone(),
+            .map(|row| InstanceAggregate {
                 instance: row.instance,
-                db: row.db,
-                r#type: row.r#type,
-                rdb_size: row.rdb_size,
                 key_count: row.key_count,
+                total_size: row.total_size,
             })
-            .collect())
+            .collect();
+
+        tracing::info!(
+            operation = "instance_aggregates_query_complete",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            result_count = result.len(),
+            "Instance aggregates query completed"
+        );
+
+        Ok(result)
     }
 
-    /// Get top 100 big keys for all classifications using a simpler approach
-    pub async fn get_top_keys_for_all_classifications(&self) -> AnyResult<Vec<TopKeyRecord>> {
+    pub async fn get_top_prefixes(&self) -> AnyResult<Vec<PrefixAggregate>> {
+        // TODO: correctly calculate top prefixes based on 1% of total size
+        #[derive(Debug, Row, Deserialize)]
+        struct TotalSizeRow {
+            total_size: u64,
+        }
+
+        let total_query = "
+            SELECT SUM(rdb_size) as total_size
+            FROM redis_records_view
+            WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC')
+        ";
+
+        let total_result: Vec<TotalSizeRow> = self
+            .client
+            .query(total_query)
+            .bind(&self.cluster)
+            .bind(&self.batch)
+            .fetch_all()
+            .await?;
+
+        let total_size = total_result.first().map(|r| r.total_size).unwrap_or(0);
+        let threshold = total_size / 100; // 1% threshold
+
+        tracing::info!(
+            operation = "top_prefixes_calculation",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            total_size = total_size,
+            threshold = threshold,
+            "Calculated 1% threshold for top prefixes"
+        );
+
+        #[derive(Debug, Row, Deserialize)]
+        struct PrefixAggregateRow {
+            prefix: String,
+            key_count: u64,
+            total_size: u64,
+        }
+
+        let prefix_query = "
+            WITH prefix_extraction AS (
+                SELECT 
+                    CASE 
+                        WHEN positionUTF8(toString(key), ':') > 0 THEN 
+                            substringUTF8(toString(key), 1, positionUTF8(toString(key), ':'))
+                        WHEN positionUTF8(toString(key), '_') > 0 THEN 
+                            substringUTF8(toString(key), 1, positionUTF8(toString(key), '_'))
+                        WHEN positionUTF8(toString(key), '/') > 0 THEN 
+                            substringUTF8(toString(key), 1, positionUTF8(toString(key), '/'))
+                        ELSE toString(key)
+                    END as prefix,
+                    rdb_size
+                FROM redis_records_view
+                WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC')
+            )
+            SELECT 
+                prefix,
+                COUNT(*) as key_count,
+                SUM(rdb_size) as total_size
+            FROM prefix_extraction
+            GROUP BY prefix
+            HAVING total_size >= ?
+            ORDER BY total_size DESC
+        ";
+
+        tracing::info!(
+            operation = "top_prefixes_query_start",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            threshold = threshold,
+            "Executing top prefixes query"
+        );
+
+        let rows: Vec<PrefixAggregateRow> = self
+            .client
+            .query(prefix_query)
+            .bind(&self.cluster)
+            .bind(&self.batch)
+            .bind(threshold)
+            .fetch_all()
+            .await?;
+
+        let result: Vec<_> = rows
+            .into_iter()
+            .map(|row| PrefixAggregate {
+                prefix: row.prefix,
+                total_size: row.total_size,
+                key_count: row.key_count,
+            })
+            .collect();
+
+        tracing::info!(
+            operation = "top_prefixes_query_complete",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            result_count = result.len(),
+            threshold = threshold,
+            "Top prefixes query completed"
+        );
+
+        Ok(result)
+    }
+
+    pub async fn get_top_keys(&self) -> AnyResult<Vec<TopKeyRecord>> {
         #[derive(Debug, Row, Deserialize)]
         struct TopKeyRow {
             key: Bytes,
@@ -392,7 +391,6 @@ impl ClickHouseQuerier {
             expire_at: Option<OffsetDateTime>,
         }
 
-        // Simplified query without window function to avoid potential network issues
         let query = "
             SELECT 
                 key,
@@ -406,8 +404,15 @@ impl ClickHouseQuerier {
             FROM redis_records_view
             WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC')
             ORDER BY rdb_size DESC
-            LIMIT 1000
+            LIMIT 100
         ";
+
+        tracing::info!(
+            operation = "top_keys_query_start",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            "Executing top 100 keys query"
+        );
 
         let rows: Vec<TopKeyRow> = self
             .client
@@ -417,10 +422,10 @@ impl ClickHouseQuerier {
             .fetch_all()
             .await?;
 
-        Ok(rows
+        let result: Vec<_> = rows
             .into_iter()
             .map(|row| TopKeyRecord {
-                key_base64: row.key,
+                key: row.key,
                 rdb_size: row.rdb_size,
                 member_count: Some(row.member_count),
                 r#type: row.r#type,
@@ -432,65 +437,57 @@ impl ClickHouseQuerier {
                         .unwrap_or_default()
                 }),
             })
-            .collect())
-    }
-}
+            .collect();
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+        tracing::info!(
+            operation = "top_keys_query_complete",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            result_count = result.len(),
+            "Top keys query completed"
+        );
 
-    fn create_test_querier() -> ClickHouseQuerier {
-        ClickHouseQuerier {
-            client: Client::default(),
-            cluster: "test".to_string(),
-            batch: "test".to_string(),
-        }
+        Ok(result)
     }
 
-    #[test]
-    fn test_longest_common_prefix_length() {
-        let querier = create_test_querier();
-
-        // Normal case with common prefix
-        assert_eq!(
-            querier.longest_common_prefix_length(
-                &Bytes::from("hello_alice"),
-                &Bytes::from("hello_zarah")
-            ),
-            6 // "hello_"
+    pub async fn generate_report_data(&self) -> AnyResult<ReportData> {
+        tracing::info!(
+            operation = "report_generation_start",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            "Starting report generation"
         );
 
-        // No common prefix
-        assert_eq!(
-            querier.longest_common_prefix_length(&Bytes::from("apple"), &Bytes::from("banana")),
-            0
+        let (db_aggregates, type_aggregates, instance_aggregates, top_keys, top_prefixes) = tokio::try_join!(
+            self.get_db_aggregates(),
+            self.get_type_aggregates(),
+            self.get_instance_aggregates(),
+            self.get_top_keys(),
+            self.get_top_prefixes()
+        )?;
+
+        let report_data = ReportData {
+            cluster: self.cluster.clone(),
+            batch: self.batch.clone(),
+            db_aggregates,
+            type_aggregates,
+            instance_aggregates,
+            top_keys,
+            top_prefixes,
+        };
+
+        tracing::info!(
+            operation = "report_generation_complete",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            db_count = report_data.db_aggregates.len(),
+            type_count = report_data.type_aggregates.len(),
+            instance_count = report_data.instance_aggregates.len(),
+            top_keys_count = report_data.top_keys.len(),
+            top_prefixes_count = report_data.top_prefixes.len(),
+            "Report generation completed"
         );
 
-        // One string is prefix of another
-        assert_eq!(
-            querier
-                .longest_common_prefix_length(&Bytes::from("user"), &Bytes::from("user_profile")),
-            4 // "user"
-        );
-
-        // Identical strings
-        assert_eq!(
-            querier
-                .longest_common_prefix_length(&Bytes::from("cache:key"), &Bytes::from("cache:key")),
-            9 // "cache:key"
-        );
-
-        // Empty strings
-        assert_eq!(
-            querier.longest_common_prefix_length(&Bytes::from(""), &Bytes::from("")),
-            0
-        );
-
-        // One empty string
-        assert_eq!(
-            querier.longest_common_prefix_length(&Bytes::from(""), &Bytes::from("test")),
-            0
-        );
+        Ok(report_data)
     }
 }

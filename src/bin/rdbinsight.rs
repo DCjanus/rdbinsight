@@ -12,7 +12,7 @@ use rdbinsight::{
 };
 use time::OffsetDateTime;
 use tracing::{debug, error, info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser)]
 struct Cli {
@@ -75,11 +75,11 @@ enum MiscCommand {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let level = if cli.verbose {
-        tracing::level_filters::LevelFilter::DEBUG
-    } else {
-        tracing::level_filters::LevelFilter::INFO
-    };
+    let default_directive = if cli.verbose { "debug" } else { "info" };
+    let level = EnvFilter::builder()
+        .with_default_directive(default_directive.parse().expect("Failed to parse level"))
+        .from_env()
+        .expect("Failed to parse level");
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_target(false))
         .with(level)

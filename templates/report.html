@@ -203,13 +203,19 @@
                         <h2 class="text-xl">Top 100 Big Keys</h2>
                         <p class="text-sm font-normal text-base-content/70">Showing {{ sortedTopKeys.length }} of {{ raw.top_keys.length }} keys. Click headers to sort.</p>
                     </div>
-                    <input type="text" v-model="topKeysSearchTerm" placeholder="Search key names..." class="input input-bordered input-sm w-full md:w-64">
+                    <div class="flex flex-col md:flex-row gap-2 items-stretch md:items-center w-full md:w-auto">
+                        <input type="text" v-model="topKeysSearchTerm" placeholder="Search key names..." class="input input-bordered input-sm w-full md:w-64">
+                        <button class="btn btn-ghost btn-sm" @click="exportTopKeysCSV">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                            Export CSV
+                        </button>
+                    </div>
                 </div>
-                <div class="overflow-x-auto">
+                <div class="overflow-auto max-h-96">
                     <table class="table table-sm table-zebra w-full">
-                        <thead>
+                        <thead class="sticky top-0 z-10">
                             <tr>
-                                <th v-for="col in topKeysTableColumns" :key="col.key" @click="setSort(col.key)" class="cursor-pointer">
+                                <th v-for="col in topKeysTableColumns" :key="col.key" @click="setSort(col.key)" class="cursor-pointer bg-base-100">
                                     <div class="flex items-center">
                                         {{ col.label }}
                                         <svg v-if="col.sortable" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 ml-1 sort-icon" :class="{ 'active': sort.key === col.key }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -421,6 +427,21 @@
                         return base64Key; // Fallback
                     }
                 };
+
+                const decodeAndFormatPrefix = (base64Prefix) => {
+                    try {
+                        const binaryString = atob(base64Prefix);
+                        const bytes = new Uint8Array(binaryString.length);
+                        for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+                        try {
+                            return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+                        } catch (error) {
+                            return Array.from(bytes).map(byte => byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : `\\x${byte.toString(16).padStart(2, '0')}`).join('');
+                        }
+                    } catch (error) {
+                        return base64Prefix; // Fallback
+                    }
+                };
                 
                 const formatExpireTimeForDisplay = (expireAt) => {
                     if (!expireAt) return 'Never';
@@ -440,44 +461,63 @@
                     // Build node map for efficient lookup
                     const nodeMap = new Map();
                     prefixes.forEach(item => {
-                        nodeMap.set(item.prefix, {
-                            prefix: item.prefix,
+                        const decodedPrefix = decodeAndFormatPrefix(item.prefix_base64);
+                        nodeMap.set(decodedPrefix, {
+                            prefix: decodedPrefix,
                             total_size: item.total_size,
                             key_count: item.key_count,
                             children: [],
-                            fullName: item.prefix
+                            fullName: decodedPrefix
                         });
                     });
 
-                    // Build tree structure by finding parent-child relationships
+                    // Build tree structure based on string prefix containment (not colon-delimited)
+                    // This works with dynamic LCP (Longest Common Prefix) algorithm results
                     const rootNodes = [];
-                    nodeMap.forEach(node => {
-                        const prefix = node.prefix;
-                        const lastColonIndex = prefix.slice(0, -1).lastIndexOf(':');
+                    const allPrefixes = Array.from(nodeMap.keys()).sort((a, b) => a.length - b.length);
+                    
+                    // For each prefix, find its immediate parent (longest prefix that contains it)
+                    allPrefixes.forEach(prefix => {
+                        const node = nodeMap.get(prefix);
+                        let parentNode = null;
+                        let longestParentLength = 0;
                         
-                        if (lastColonIndex === -1) {
-                            // No parent, this is a root node
-                            rootNodes.push(node);
-                        } else {
-                            // Find parent and add as child
-                            const parentPrefix = prefix.slice(0, lastColonIndex + 1);
-                            const parentNode = nodeMap.get(parentPrefix);
-                            if (parentNode) {
-                                parentNode.children.push(node);
-                            } else {
-                                // Parent doesn't exist, treat as root
-                                rootNodes.push(node);
+                        // Find the longest existing prefix that this prefix starts with
+                        for (const candidateParent of allPrefixes) {
+                            if (candidateParent !== prefix && 
+                                prefix.startsWith(candidateParent) && 
+                                candidateParent.length > longestParentLength) {
+                                parentNode = nodeMap.get(candidateParent);
+                                longestParentLength = candidateParent.length;
                             }
+                        }
+                        
+                        if (parentNode) {
+                            parentNode.children.push(node);
+                        } else {
+                            // No parent found, this is a root node
+                            rootNodes.push(node);
                         }
                     });
 
-                    // Extract short names for display
-                    nodeMap.forEach(node => {
-                        // Extract short name for display (last segment after ':')
-                        const prefix = node.prefix;
-                        const lastColonIndex = prefix.slice(0, -1).lastIndexOf(':');
-                        node.name = lastColonIndex === -1 ? prefix : prefix.substring(lastColonIndex + 1);
-                    });
+                    // Extract short names for display (relative to parent prefix)
+                    const computeDisplayNames = (nodes, parentPrefix = '') => {
+                        nodes.forEach(node => {
+                            // Display name is the part after removing parent prefix
+                            if (parentPrefix && node.prefix.startsWith(parentPrefix)) {
+                                node.name = node.prefix.substring(parentPrefix.length) || node.prefix;
+                            } else {
+                                node.name = node.prefix;
+                            }
+                            
+                            // Recursively compute names for children
+                            if (node.children.length > 0) {
+                                computeDisplayNames(node.children, node.prefix);
+                            }
+                        });
+                    };
+                    
+                    computeDisplayNames(rootNodes);
 
                     // Sort children alphabetically for consistent layout
                     const sortChildren = (node) => {
@@ -598,12 +638,69 @@
                 };
 
                 const exportJsonData = () => {
-                    const dataStr = JSON.stringify({ ...raw.value, exported_at: new Date().toISOString() }, null, 2);
+                    // Create a deep copy and enhance with human-readable fields
+                    const enhancedData = JSON.parse(JSON.stringify(raw.value));
+                    
+                    // Add human-readable key field to top_keys
+                    if (enhancedData.top_keys) {
+                        enhancedData.top_keys = enhancedData.top_keys.map(key => ({
+                            key: decodeAndFormatKey(key.key_base64),
+                            ...key
+                        }));
+                    }
+                    
+                    // Add human-readable prefix field to top_prefixes
+                    if (enhancedData.top_prefixes) {
+                        enhancedData.top_prefixes = enhancedData.top_prefixes.map(prefix => ({
+                            prefix: decodeAndFormatPrefix(prefix.prefix_base64),
+                            ...prefix
+                        }));
+                    }
+                    
+                    enhancedData.exported_at = new Date().toISOString();
+                    
+                    const dataStr = JSON.stringify(enhancedData, null, 2);
                     const blob = new Blob([dataStr], { type: 'application/json' });
                     const url = URL.createObjectURL(blob);
                     const link = document.createElement('a');
                     const safe_batch = raw.value.batch.replace(/[:.]/g, '-').replace(/\+/g, '_');
                     link.download = `rdb_report_${raw.value.cluster}_${safe_batch}.json`;
+                    link.href = url;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                };
+
+                const exportTopKeysCSV = () => {
+                    // CSV header - updated to include raw numeric columns
+                    const headers = [
+                        'Key Name', 'RDB Size (Bytes)', 'RDB Size (Human)', 'Type', 'Instance', 'DB', 
+                        'Member Count (Raw)', 'Member Count (Human)', 'Encoding', 'Expires'
+                    ];
+                    const csvContent = [headers.join(',')];
+                    
+                    // Export all top keys (sortedTopKeys includes filtering and sorting)
+                    sortedTopKeys.value.forEach(key => {
+                        const row = [
+                            `"${decodeAndFormatKey(key.key_base64).replace(/"/g, '""')}"`, // Escape quotes in CSV
+                            key.rdb_size, // Raw bytes (already numeric)
+                            `"${formatSize(key.rdb_size)}"`, // Human readable size
+                            key.type,
+                            `"${key.instance.replace(/"/g, '""')}"`,
+                            key.db,
+                            key.member_count || '', // Raw member count (numeric)
+                            `"${formatMemberCount(key.member_count)}"`, // Human readable member count
+                            key.encoding || '',
+                            `"${getExpireTimeForCopy(key.expire_at).replace(/"/g, '""')}"`
+                        ];
+                        csvContent.push(row.join(','));
+                    });
+                    
+                    const csvStr = csvContent.join('\n');
+                    const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    const safe_batch = raw.value.batch.replace(/[:.]/g, '-').replace(/\+/g, '_');
+                    link.download = `rdb_top_keys_${raw.value.cluster}_${safe_batch}.csv`;
                     link.href = url;
                     link.click();
                     URL.revokeObjectURL(url);
@@ -648,9 +745,9 @@
                     raw, dataLoaded, searchTerm, topKeysSearchTerm, sort,
                     totalSize, totalKeys, typeDistribution, dbDistribution, instanceDistribution,
                     topKeysTableColumns, sortedTopKeys,
-                    formatSize, formatMemberCount, getTypeTagColor, decodeAndFormatKey,
+                    formatSize, formatMemberCount, getTypeTagColor, decodeAndFormatKey, decodeAndFormatPrefix,
                     formatExpireTimeForDisplay, getExpireTimeForCopy,
-                    resetZoom, onSearchInput, exportJsonData, setSort
+                    resetZoom, onSearchInput, exportJsonData, exportTopKeysCSV, setSort
                 };
             }
         });

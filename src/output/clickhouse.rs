@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use clickhouse::{Client, Row};
+use clickhouse::{Client, Row, insert::Insert};
 use hyper_util::{client::legacy::Client as LegacyClient, rt::TokioExecutor};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -251,7 +251,7 @@ impl ClickHouseOutput {
             return Ok(());
         }
 
-        let mut insert = self.client.insert("redis_records_raw")?;
+        let mut insert: Insert<RedisRecordRow> = self.client.insert("redis_records_raw")?;
         for record in records {
             let row = self.record_to_row(record, batch_info, instance);
             insert.write(&row).await?;
@@ -267,7 +267,8 @@ impl ClickHouseOutput {
             batch: batch_info.batch,
         };
 
-        let mut insert = self.client.insert("import_batches_completed")?;
+        let mut insert: Insert<BatchCompletedRow> =
+            self.client.insert("import_batches_completed")?;
         insert.write(&completion_row).await?;
         insert.end().await?;
 

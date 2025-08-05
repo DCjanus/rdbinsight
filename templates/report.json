@@ -270,237 +270,237 @@
   "top_prefixes": [
     {
       "key_count": 1528,
-      "prefix": "(other)",
+      "prefix_base64": "KG90aGVyKQ==",
       "total_size": 771706
     },
     {
       "key_count": 251,
-      "prefix": "Legacy_Data:",
+      "prefix_base64": "TGVnYWN5X0RhdGE6",
       "total_size": 2461432
     },
     {
       "key_count": 503,
-      "prefix": "analytics:",
+      "prefix_base64": "YW5hbHl0aWNzOg==",
       "total_size": 26877238
     },
     {
       "key_count": 494,
-      "prefix": "analytics:daily:",
+      "prefix_base64": "YW5hbHl0aWNzOmRhaWx5Og==",
       "total_size": 24928895
     },
     {
       "key_count": 8104,
-      "prefix": "cache:",
+      "prefix_base64": "Y2FjaGU6",
       "total_size": 543905821
     },
     {
       "key_count": 8094,
-      "prefix": "cache:page:",
+      "prefix_base64": "Y2FjaGU6cGFnZTo=",
       "total_size": 524043020
     },
     {
       "key_count": 4049,
-      "prefix": "cache:page:desktop:",
+      "prefix_base64": "Y2FjaGU6cGFnZTpkZXNrdG9wOg==",
       "total_size": 316802600
     },
     {
       "key_count": 4036,
-      "prefix": "cache:page:mobile:",
+      "prefix_base64": "Y2FjaGU6cGFnZTptb2JpbGU6",
       "total_size": 163084825
     },
     {
       "key_count": 254,
-      "prefix": "config:",
+      "prefix_base64": "Y29uZmlnOg==",
       "total_size": 30123
     },
     {
       "key_count": 244,
-      "prefix": "config:feature:",
+      "prefix_base64": "Y29uZmlnOmZlYXR1cmU6",
       "total_size": 26195
     },
     {
       "key_count": 2041,
-      "prefix": "events:",
+      "prefix_base64": "ZXZlbnRzOg==",
       "total_size": 2600723506
     },
     {
       "key_count": 2039,
-      "prefix": "events:stream:",
+      "prefix_base64": "ZXZlbnRzOnN0cmVhbTo=",
       "total_size": 2385137832
     },
     {
       "key_count": 2031,
-      "prefix": "events:stream:raw:",
+      "prefix_base64": "ZXZlbnRzOnN0cmVhbTpyYXc6",
       "total_size": 2133936027
     },
     {
       "key_count": 408,
-      "prefix": "experiment:",
+      "prefix_base64": "ZXhwZXJpbWVudDo=",
       "total_size": 10641880
     },
     {
       "key_count": 403,
-      "prefix": "game:",
+      "prefix_base64": "Z2FtZTo=",
       "total_size": 17758965
     },
     {
       "key_count": 396,
-      "prefix": "game:daily:",
+      "prefix_base64": "Z2FtZTpkYWlseTo=",
       "total_size": 16178723
     },
     {
       "key_count": 492,
-      "prefix": "integration:",
+      "prefix_base64": "aW50ZWdyYXRpb246",
       "total_size": 27263048
     },
     {
       "key_count": 485,
-      "prefix": "integration:webhook:",
+      "prefix_base64": "aW50ZWdyYXRpb246d2ViaG9vazo=",
       "total_size": 25421019
     },
     {
       "key_count": 1084,
-      "prefix": "job:",
+      "prefix_base64": "am9iOg==",
       "total_size": 1264858
     },
     {
       "key_count": 1076,
-      "prefix": "job:state:",
+      "prefix_base64": "am9iOnN0YXRlOg==",
       "total_size": 1165743
     },
     {
       "key_count": 4128,
-      "prefix": "leaderboard:",
+      "prefix_base64": "bGVhZGVyYm9hcmQ6",
       "total_size": 320654840
     },
     {
       "key_count": 2083,
-      "prefix": "leaderboard:daily:",
+      "prefix_base64": "bGVhZGVyYm9hcmQ6ZGFpbHk6",
       "total_size": 52973038
     },
     {
       "key_count": 2038,
-      "prefix": "leaderboard:weekly:",
+      "prefix_base64": "bGVhZGVyYm9hcmQ6d2Vla2x5Og==",
       "total_size": 264570462
     },
     {
       "key_count": 526,
-      "prefix": "lock:",
+      "prefix_base64": "bG9jazo=",
       "total_size": 49612
     },
     {
       "key_count": 519,
-      "prefix": "lock:resource:",
+      "prefix_base64": "bG9jazpyZXNvdXJjZTo=",
       "total_size": 44148
     },
     {
       "key_count": 792,
-      "prefix": "metrics:",
+      "prefix_base64": "bWV0cmljczo=",
       "total_size": 4623731
     },
     {
       "key_count": 785,
-      "prefix": "metrics:hourly:",
+      "prefix_base64": "bWV0cmljczpob3VybHk6",
       "total_size": 4127967
     },
     {
       "key_count": 631,
-      "prefix": "notify:",
+      "prefix_base64": "bm90aWZ5Og==",
       "total_size": 17762605
     },
     {
       "key_count": 621,
-      "prefix": "notify:pending:",
+      "prefix_base64": "bm90aWZ5OnBlbmRpbmc6",
       "total_size": 15592725
     },
     {
       "key_count": 2516,
-      "prefix": "product:",
+      "prefix_base64": "cHJvZHVjdDo=",
       "total_size": 331059660
     },
     {
       "key_count": 2509,
-      "prefix": "product:catalog:",
+      "prefix_base64": "cHJvZHVjdDpjYXRhbG9nOg==",
       "total_size": 306972625
     },
     {
       "key_count": 947,
-      "prefix": "product:catalog:full:",
+      "prefix_base64": "cHJvZHVjdDpjYXRhbG9nOmZ1bGw6",
       "total_size": 238243659
     },
     {
       "key_count": 1559,
-      "prefix": "product:catalog:summary:",
+      "prefix_base64": "cHJvZHVjdDpjYXRhbG9nOnN1bW1hcnk6",
       "total_size": 39898806
     },
     {
       "key_count": 3131,
-      "prefix": "queue:",
+      "prefix_base64": "cXVldWU6",
       "total_size": 793423708
     },
     {
       "key_count": 3124,
-      "prefix": "queue:jobs:",
+      "prefix_base64": "cXVldWU6am9iczo=",
       "total_size": 761177480
     },
     {
       "key_count": 1552,
-      "prefix": "queue:jobs:high_prio:",
+      "prefix_base64": "cXVldWU6am9iczpoaWdoX3ByaW86",
       "total_size": 624219850
     },
     {
       "key_count": 1566,
-      "prefix": "queue:jobs:low_prio:",
+      "prefix_base64": "cXVldWU6am9iczpsb3dfcHJpbzo=",
       "total_size": 79506252
     },
     {
       "key_count": 1064,
-      "prefix": "rate:",
+      "prefix_base64": "cmF0ZTo=",
       "total_size": 60830
     },
     {
       "key_count": 1062,
-      "prefix": "rate:limit:",
+      "prefix_base64": "cmF0ZTpsaW1pdDo=",
       "total_size": 56720
     },
     {
       "key_count": 3085,
-      "prefix": "social:",
+      "prefix_base64": "c29jaWFsOg==",
       "total_size": 667868495
     },
     {
       "key_count": 3081,
-      "prefix": "social:followers:",
+      "prefix_base64": "c29jaWFsOmZvbGxvd2Vyczo=",
       "total_size": 620275515
     },
     {
       "key_count": 492,
-      "prefix": "tmp:",
+      "prefix_base64": "dG1wOg==",
       "total_size": 1236199
     },
     {
       "key_count": 18712,
-      "prefix": "user:",
+      "prefix_base64": "dXNlcjo=",
       "total_size": 34320200
     },
     {
       "key_count": 6221,
-      "prefix": "user:profile:",
+      "prefix_base64": "dXNlcjpwcm9maWxlOg==",
       "total_size": 26447687
     },
     {
       "key_count": 12481,
-      "prefix": "user:session:",
+      "prefix_base64": "dXNlcjpzZXNzaW9uOg==",
       "total_size": 4890540
     },
     {
       "key_count": 6271,
-      "prefix": "user:session:api:",
+      "prefix_base64": "dXNlcjpzZXNzaW9uOmFwaTo=",
       "total_size": 2811080
     },
     {
       "key_count": 6205,
-      "prefix": "user:session:web:",
+      "prefix_base64": "dXNlcjpzZXNzaW9uOndlYjo=",
       "total_size": 1701586
     }
   ],

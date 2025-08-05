@@ -242,11 +242,16 @@ async fn dump_to_clickhouse(args: DumpArgs) -> Result<()> {
                     "Starting processing"
                 );
 
-                process_records_to_clickhouse(stream, clickhouse_output, batch_info)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to process RDB stream from instance: {instance}")
-                    })
+                tokio::spawn(async move {
+                    process_records_to_clickhouse(stream, clickhouse_output, batch_info)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to process RDB stream from instance: {instance}")
+                        })
+                })
+                .await??;
+                
+                Ok::<(), anyhow::Error>(())
             }
         })
         .await

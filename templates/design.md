@@ -11,7 +11,22 @@
 - **Theme:** Supports light/dark mode and automatically switches based on system settings.
 - **Componentization:** Encapsulate and reuse interaction logic through Vue components (e.g., `CopyableText`).
 
-## 2. Page Layout
+## 2. Data Processing
+
+### 2.1. Prefix Data Handling
+
+The `top_prefixes` data structure uses binary-safe prefix handling:
+
+- **Backend:** The `PrefixAggregate` struct stores prefix data as `Bytes` type and serializes it as `prefix_base64` field using base64 encoding.
+- **Frontend:** The HTML template includes a `decodeAndFormatPrefix()` function that:
+  - Decodes base64-encoded prefix data back to binary
+  - Attempts UTF-8 decoding for displayable text
+  - Falls back to hex-escaped representation for non-UTF-8 data
+  - Handles binary prefixes safely without data corruption
+
+This approach ensures that Redis key prefixes containing non-UTF-8 bytes (such as compressed data, binary protocols, or encoded identifiers) are preserved accurately throughout the analysis pipeline.
+
+## 3. Page Layout
 
 Adopts a responsive dashboard layout.
 
@@ -22,11 +37,11 @@ Adopts a responsive dashboard layout.
 - **Main Content:**
   - Uses a responsive grid layout, with content composed of independent cards.
 
-## 3. Functional Modules
+## 4. Functional Modules
 
 Retains existing report features, refactoring with DaisyUI components.
 
-### 3.1. Overview Stats
+### 4.1. Overview Stats
 
 - **Component:** DaisyUI `stats`.
 - **Content:**
@@ -36,7 +51,7 @@ Retains existing report features, refactoring with DaisyUI components.
   - Number of Databases
 - **Interaction:** On mouse hover, provides detailed units or descriptions via a tooltip.
 
-### 3.2. Distribution Charts
+### 4.2. Distribution Charts
 
 - **Format:** Three side-by-side cards, using DaisyUI `progress` or bar charts.
 - **Content:**
@@ -46,11 +61,11 @@ Retains existing report features, refactoring with DaisyUI components.
 - **Visuals:** Displays percentages and specific sizes, using different colors for distinction.
 - **Layout:** When content overflows, the card's maximum height is `24rem` (384px), and vertical scrolling is enabled.
 
-### 3.3. Memory Flame Graph
+### 4.3. Memory Flame Graph
 
 - **Layout:** Bottom-up, with rectangle width proportional to memory percentage. All percentages are calculated based on the total cluster memory.
 - **Implementation:**
-  - **Data Processing:** The frontend parses `top_prefixes` data, builds a parent-child hierarchy using the colon delimiter, and recursively calculates the self-value for each node (`self-value = total_size - children's total_size`).
+  - **Data Processing:** The frontend parses `top_prefixes` data, decoding `prefix_base64` fields to get the original prefix strings. It then builds a parent-child hierarchy based on string prefix containment relationships (compatible with dynamic LCP algorithm results), and recursively calculates the self-value for each node (`self-value = total_size - children's total_size`).
   - **Rendering:** Uses the `d3-flame-graph` library and is configured with `selfValue(true)`.
 - **Interaction:**
   - **Zoom:** Click a node to drill down; a reset button is provided.
@@ -61,7 +76,16 @@ Retains existing report features, refactoring with DaisyUI components.
   - **Responsive Width:** Adapts to window changes.
   - **Rendering:** Limits the minimum render size to avoid displaying excessively small memory blocks.
 
-### 3.4. Top 100 Big Keys
+### 4.4. Data Export Features
+
+- **JSON Export:**
+  - Exports complete report data with enhanced human-readable fields.
+  - For `top_keys`: Adds decoded `key` field alongside original `key_base64`.
+  - For `top_prefixes`: Adds decoded `prefix` field alongside original `prefix_base64`.
+  - Uses `decodeAndFormatKey()` and `decodeAndFormatPrefix()` functions for consistent binary-safe decoding.
+  - File naming convention: `rdb_report_{cluster}_{batch}.json`.
+
+### 4.5. Top 100 Big Keys
 
 - **Component:** Responsive DaisyUI `table`.
 - **Features:**
@@ -69,9 +93,18 @@ Retains existing report features, refactoring with DaisyUI components.
   - **Interaction:**
     - The Key Name column supports real-time filtering.
     - All columns support click-to-sort.
+    - **Export:** CSV export functionality for the current filtered and sorted data.
+- **Layout:** When content overflows, the table's maximum height is `24rem` (384px), and vertical scrolling is enabled with sticky table headers for better navigation.
 - **Cell (`<td>`) Enhancements:**
   - **Copyable Content:** Key names, instance names, and expiry times use the `CopyableText` component to provide truncation, tooltips, and click-to-copy functionality.
   - **Data Display:**
     - Non-UTF-8 keys are hex-escaped.
     - RDB size and member count are formatted for human readability (e.g., `1.2 MB`, `10.5k`).
     - Expiry time is displayed in the local timezone format.
+  - **CSV Export:**
+    - Exports all currently displayed keys (respecting search filters and sort order).
+    - Includes both raw numeric values and human-readable formatted data:
+      - RDB Size: Raw bytes and human-readable format (e.g., `1048576` and `1.0 MB`)
+      - Member Count: Raw numbers and formatted counts (e.g., `15000` and `15.0K`)
+    - Properly handles CSV escaping for special characters in key names and instance names.
+    - File naming convention: `rdb_top_keys_{cluster}_{batch}.csv`.

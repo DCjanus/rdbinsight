@@ -356,13 +356,13 @@ checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 [[package]]
 name = "clickhouse"
 version = "0.13.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a9a81a1dffadd762ee662635ce409232258ce9beebd7cc0fa227df0b5e7efc0"
+source = "git+https://github.com/ClickHouse/clickhouse-rs.git#61c8159464df80b53717b69a0738ebc9d19732bd"
 dependencies = [
  "bstr",
  "bytes",
  "cityhash-rs",
  "clickhouse-derive",
+ "clickhouse-types",
  "futures",
  "futures-channel",
  "http-body-util",
@@ -373,7 +373,7 @@ dependencies = [
  "sealed",
  "serde",
  "static_assertions",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "time",
  "tokio",
  "url",
@@ -382,13 +382,21 @@ dependencies = [
 [[package]]
 name = "clickhouse-derive"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d70f3e2893f7d3e017eeacdc9a708fbc29a10488e3ebca21f9df6a5d2b616dbb"
+source = "git+https://github.com/ClickHouse/clickhouse-rs.git#61c8159464df80b53717b69a0738ebc9d19732bd"
 dependencies = [
  "proc-macro2",
  "quote",
  "serde_derive_internals",
  "syn",
+]
+
+[[package]]
+name = "clickhouse-types"
+version = "0.1.0"
+source = "git+https://github.com/ClickHouse/clickhouse-rs.git#61c8159464df80b53717b69a0738ebc9d19732bd"
+dependencies = [
+ "bytes",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1948,6 +1956,7 @@ dependencies = [
  "redis-protocol",
  "reqwest",
  "serde",
+ "serde_bytes",
  "serde_json",
  "serde_with",
  "spire_enum",
@@ -2352,6 +2361,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0e2c6ed6606019b4e29e69dbaba95b11854410e5347d525002456dbbb786b6"
 dependencies = [
  "serde_derive",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8437fd221bde2d4ca316d61b90e337e9e702b3820b87d63caa9ba6c02bd06d96"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

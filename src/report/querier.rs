@@ -35,13 +35,6 @@ pub struct TopKeyRecord {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct PrefixNode {
-    pub prefix: String, // Complete prefix path from root to this node
-    pub value: u64,
-    pub children: Vec<PrefixNode>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct DbAggregate {
     pub db: u64,
     pub key_count: u64,
@@ -62,11 +55,22 @@ pub struct InstanceAggregate {
     pub total_size: u64,
 }
 
+#[serde_as]
 #[derive(Debug, Clone, Serialize)]
 pub struct PrefixAggregate {
-    pub prefix: String,
+    #[serde_as(as = "Base64")]
+    #[serde(rename = "prefix_base64")]
+    pub prefix: Bytes,
     pub total_size: u64,
     pub key_count: u64,
+}
+
+#[derive(Debug)]
+struct PrefixPartition {
+    total_size: u64,
+    key_count: u64,
+    min_key: Bytes,
+    max_key: Bytes,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -274,107 +278,172 @@ impl ClickHouseQuerier {
     }
 
     pub async fn get_top_prefixes(&self) -> AnyResult<Vec<PrefixAggregate>> {
-        // TODO: correctly calculate top prefixes based on 1% of total size
-        #[derive(Debug, Row, Deserialize)]
-        struct TotalSizeRow {
-            total_size: u64,
-        }
+        // Step 1: Initialize discovery - calculate threshold and get initial partitions
+        let (threshold, initial_partitions) = self.initialize_prefix_discovery().await?;
 
-        let total_query = "
-            SELECT SUM(rdb_size) as total_size
-            FROM redis_records_view
-            WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC')
-        ";
-
-        let total_result: Vec<TotalSizeRow> = self
-            .client
-            .query(total_query)
-            .bind(&self.cluster)
-            .bind(&self.batch)
-            .fetch_all()
+        // Step 2: Explore prefix tree using depth-first search with LCP optimization
+        let mut significant_prefixes = self
+            .explore_prefix_tree(threshold, initial_partitions)
             .await?;
 
-        let total_size = total_result.first().map(|r| r.total_size).unwrap_or(0);
+        // Step 3: Finalize results - sort and log completion
+        self.finalize_discovery_results(&mut significant_prefixes, threshold);
+
+        Ok(significant_prefixes)
+    }
+
+    async fn initialize_prefix_discovery(&self) -> AnyResult<(u64, Vec<PrefixPartition>)> {
+        let initial_partitions = self.get_prefix_partitions(&Bytes::new()).await?;
+        let total_size: u64 = initial_partitions.iter().map(|p| p.total_size).sum();
         let threshold = total_size / 100; // 1% threshold
 
         tracing::info!(
-            operation = "top_prefixes_calculation",
+            operation = "dynamic_prefix_discovery_start",
             cluster = %self.cluster,
             batch = %self.batch,
             total_size = total_size,
             threshold = threshold,
-            "Calculated 1% threshold for top prefixes"
+            "Starting dynamic prefix discovery with LCP optimization"
         );
 
-        #[derive(Debug, Row, Deserialize)]
-        struct PrefixAggregateRow {
-            prefix: String,
-            key_count: u64,
-            total_size: u64,
+        Ok((threshold, initial_partitions))
+    }
+
+    async fn explore_prefix_tree(
+        &self,
+        threshold: u64,
+        initial_partitions: Vec<PrefixPartition>,
+    ) -> AnyResult<Vec<PrefixAggregate>> {
+        let mut exploration_stack: Vec<Bytes> = Vec::new();
+        let mut significant_prefixes: Vec<PrefixAggregate> = Vec::new();
+
+        // Process initial partitions directly
+        self.process_partitions(
+            initial_partitions,
+            threshold,
+            &mut significant_prefixes,
+            &mut exploration_stack,
+        )
+        .await;
+
+        // Continue exploring deeper prefixes
+        while let Some(current_prefix) = exploration_stack.pop() {
+            tracing::debug!(
+                operation = "prefix_exploration",
+                current_prefix = %String::from_utf8_lossy(&current_prefix),
+                stack_size = exploration_stack.len(),
+                "Exploring prefix"
+            );
+
+            let partitions = self.get_prefix_partitions(&current_prefix).await?;
+            self.process_partitions(
+                partitions,
+                threshold,
+                &mut significant_prefixes,
+                &mut exploration_stack,
+            )
+            .await;
         }
 
-        let prefix_query = "
-            WITH prefix_extraction AS (
-                SELECT 
-                    CASE 
-                        WHEN positionUTF8(toString(key), ':') > 0 THEN 
-                            substringUTF8(toString(key), 1, positionUTF8(toString(key), ':'))
-                        WHEN positionUTF8(toString(key), '_') > 0 THEN 
-                            substringUTF8(toString(key), 1, positionUTF8(toString(key), '_'))
-                        WHEN positionUTF8(toString(key), '/') > 0 THEN 
-                            substringUTF8(toString(key), 1, positionUTF8(toString(key), '/'))
-                        ELSE toString(key)
-                    END as prefix,
-                    rdb_size
-                FROM redis_records_view
-                WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC')
-            )
-            SELECT 
-                prefix,
-                COUNT(*) as key_count,
-                SUM(rdb_size) as total_size
-            FROM prefix_extraction
-            GROUP BY prefix
-            HAVING total_size >= ?
-            ORDER BY total_size DESC
-        ";
+        Ok(significant_prefixes)
+    }
+
+    async fn process_partitions(
+        &self,
+        partitions: Vec<PrefixPartition>,
+        threshold: u64,
+        significant_prefixes: &mut Vec<PrefixAggregate>,
+        exploration_stack: &mut Vec<Bytes>,
+    ) {
+        for partition in partitions {
+            if partition.total_size >= threshold {
+                let lcp = longest_common_prefix(&partition.min_key, &partition.max_key);
+
+                tracing::debug!(
+                    operation = "significant_prefix_found",
+                    prefix = %String::from_utf8_lossy(&lcp),
+                    total_size = partition.total_size,
+                    key_count = partition.key_count,
+                    "Found significant prefix using LCP"
+                );
+
+                significant_prefixes.push(PrefixAggregate {
+                    prefix: lcp.clone(),
+                    total_size: partition.total_size,
+                    key_count: partition.key_count,
+                });
+
+                exploration_stack.push(lcp);
+            }
+        }
+    }
+
+    fn finalize_discovery_results(
+        &self,
+        significant_prefixes: &mut [PrefixAggregate],
+        threshold: u64,
+    ) {
+        significant_prefixes.sort_by_key(|x| x.prefix.clone());
 
         tracing::info!(
-            operation = "top_prefixes_query_start",
+            operation = "dynamic_prefix_discovery_complete",
             cluster = %self.cluster,
             batch = %self.batch,
+            result_count = significant_prefixes.len(),
             threshold = threshold,
-            "Executing top prefixes query"
+            "Dynamic prefix discovery completed"
+        );
+    }
+
+    async fn get_prefix_partitions(
+        &self,
+        current_prefix: &Bytes,
+    ) -> AnyResult<Vec<PrefixPartition>> {
+        #[derive(Debug, Row, Deserialize)]
+        struct PartitionRow {
+            total_size: u64,
+            key_count: u64,
+            min_key: Bytes,
+            max_key: Bytes,
+        }
+
+        let prefix_len = current_prefix.len();
+        let query = format!(
+            "SELECT
+                sum(rdb_size) AS total_size,
+                count(*) AS key_count,
+                min(key) AS min_key,
+                max(key) AS max_key
+            FROM redis_records_view
+            WHERE
+                cluster = ? AND
+                batch = parseDateTime64BestEffort(?, 9, 'UTC') AND
+                startsWith(key, ?)
+            GROUP BY
+                substring(key, 1, {})",
+            prefix_len + 1
         );
 
-        let rows: Vec<PrefixAggregateRow> = self
+        let rows: Vec<PartitionRow> = self
             .client
-            .query(prefix_query)
+            .query(&query)
             .bind(&self.cluster)
             .bind(&self.batch)
-            .bind(threshold)
+            .bind(serde_bytes::Bytes::new(current_prefix.as_ref()))
             .fetch_all()
             .await?;
 
-        let result: Vec<_> = rows
+        let partitions = rows
             .into_iter()
-            .map(|row| PrefixAggregate {
-                prefix: row.prefix,
+            .map(|row| PrefixPartition {
                 total_size: row.total_size,
                 key_count: row.key_count,
+                min_key: row.min_key,
+                max_key: row.max_key,
             })
             .collect();
 
-        tracing::info!(
-            operation = "top_prefixes_query_complete",
-            cluster = %self.cluster,
-            batch = %self.batch,
-            result_count = result.len(),
-            threshold = threshold,
-            "Top prefixes query completed"
-        );
-
-        Ok(result)
+        Ok(partitions)
     }
 
     pub async fn get_top_keys(&self) -> AnyResult<Vec<TopKeyRecord>> {
@@ -489,5 +558,82 @@ impl ClickHouseQuerier {
         );
 
         Ok(report_data)
+    }
+}
+
+/// Calculate the longest common prefix (LCP) between two byte sequences
+/// This is the core optimization for dynamic prefix discovery
+fn longest_common_prefix(bytes1: &Bytes, bytes2: &Bytes) -> Bytes {
+    let min_len = bytes1.len().min(bytes2.len());
+    let mut common_len = 0;
+
+    for i in 0..min_len {
+        if bytes1[i] == bytes2[i] {
+            common_len += 1;
+        } else {
+            break;
+        }
+    }
+
+    bytes1.slice(0..common_len)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_longest_common_prefix() {
+        assert_eq!(
+            longest_common_prefix(
+                &Bytes::from("user:profile:active:1"),
+                &Bytes::from("user:profile:active:2")
+            ),
+            Bytes::from("user:profile:active:")
+        );
+        assert_eq!(
+            longest_common_prefix(
+                &Bytes::from("user:session:web:123"),
+                &Bytes::from("user:session:api:456")
+            ),
+            Bytes::from("user:session:")
+        );
+        assert_eq!(
+            longest_common_prefix(
+                &Bytes::from("cache:page:desktop"),
+                &Bytes::from("cache:page:mobile")
+            ),
+            Bytes::from("cache:page:")
+        );
+        assert_eq!(
+            longest_common_prefix(&Bytes::from("user123"), &Bytes::from("user456")),
+            Bytes::from("user")
+        );
+        assert_eq!(
+            longest_common_prefix(&Bytes::from("abc"), &Bytes::from("def")),
+            Bytes::new()
+        );
+        assert_eq!(
+            longest_common_prefix(&Bytes::new(), &Bytes::from("abc")),
+            Bytes::new()
+        );
+        assert_eq!(
+            longest_common_prefix(&Bytes::from("abc"), &Bytes::new()),
+            Bytes::new()
+        );
+        assert_eq!(
+            longest_common_prefix(&Bytes::new(), &Bytes::new()),
+            Bytes::new()
+        );
+        assert_eq!(
+            longest_common_prefix(&Bytes::from("same"), &Bytes::from("same")),
+            Bytes::from("same")
+        );
+
+        // Test with binary data
+        let binary1 = Bytes::from(vec![0x00, 0x01, 0x02, 0x03, 0x04]);
+        let binary2 = Bytes::from(vec![0x00, 0x01, 0x02, 0xFF, 0xFE]);
+        let expected = Bytes::from(vec![0x00, 0x01, 0x02]);
+        assert_eq!(longest_common_prefix(&binary1, &binary2), expected);
     }
 }

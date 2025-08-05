@@ -92,3 +92,5 @@ ORDER BY key_cnt DESC;
 
 - 集成测试将使用 testcontainers 验证 Redis cluster 场景
 - 集成测试将使用 testcontainers 创建 Codis 集群，使用 `pikadb/codis:v3.5.5` 镜像
+- 将 RDB 解析和 ClickHouse 写入拆分为两个独立协程，通过有界 Channel 连接以提升吞吐
+- 增加集群异常状态检测能力，如大 Key、跨节点的 Slot 等

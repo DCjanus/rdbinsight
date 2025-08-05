@@ -564,14 +564,14 @@ fn aggregate_top_prefixes(keys: &[KeyInfo]) -> Vec<PrefixAggregate> {
     let mut result: Vec<PrefixAggregate> = final_agg
         .into_iter()
         .map(|(prefix, (key_count, total_size))| PrefixAggregate {
-            prefix,
+            prefix: prefix.into(),
             total_size,
             key_count,
         })
         .collect();
 
     // Sort alphabetically for consistent flame graph order
-    result.sort_by(|a, b| a.prefix.cmp(&b.prefix));
+    result.sort_by(|a, b| a.prefix.as_ref().cmp(b.prefix.as_ref()));
 
     result
 }

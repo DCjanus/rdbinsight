@@ -17,7 +17,7 @@ backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.22.1"
 bytes = { version = "1.10.1", features = ["serde"] }
 clap = { version = "4.5.0", features = ["derive", "env"] }
-clickhouse = { version = "0.13.3", features = ["time"] }
+clickhouse = { git = "https://github.com/ClickHouse/clickhouse-rs.git", features = ["time"] } # relay on https://github.com/ClickHouse/clickhouse-rs/pull/250
 crc32fast = "1.5.0"
 futures-util = "0.3.31"
 hex = "0.4.3"
@@ -36,6 +36,7 @@ redis = { version = "0.32.4", features = [
 redis-protocol = { version = "6.0.0", features = ["codec"] }
 reqwest = { version = "0.12.22", features = ["json"] }
 serde = { version = "1.0.219", features = ["derive"] }
+serde_bytes = "0.11.17"
 serde_json = "1.0.140"
 serde_with = { version = "3.11.0", features = ["base64"] }
 spire_enum = "0.6.0"

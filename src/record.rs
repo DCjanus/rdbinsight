@@ -8,7 +8,7 @@ use tokio::io::AsyncRead;
 use typed_builder::TypedBuilder;
 
 use crate::{
-    helper::AnyResult,
+    helper::{AnyResult, codis_slot, redis_slot},
     parser::{
         NeedMoreData,
         core::{buffer::Buffer, raw::RDBStr},
@@ -18,6 +18,7 @@ use crate::{
         },
         rdb_file::RDBFileParser,
     },
+    source::SourceType,
 };
 
 /// Redis data type variants
@@ -74,6 +75,12 @@ pub struct Record {
     pub member_count: Option<u64>,
     /// Size of the record in bytes as stored in RDB
     pub rdb_size: u64,
+    /// Codis Slot ID (0-1023), only for Codis clusters
+    #[builder(default)]
+    pub codis_slot: Option<u16>,
+    /// Redis Cluster Slot ID (0-16383), only for Redis Cluster
+    #[builder(default)]
+    pub redis_slot: Option<u16>,
 }
 
 impl Record {
@@ -111,14 +118,12 @@ impl Record {
     }
 }
 
-/// Stream wrapper around RDBFileParser that outputs complete Record items
-///
-/// RecordStream maintains its own buffer and async reader internally,
-/// providing a clean Stream interface for processing RDB data.
+/// A stream that reads RDB data and yields Records
 pub struct RecordStream {
     parser: RDBFileParser,
     buffer: Buffer,
     reader: Pin<Box<dyn AsyncRead + Send>>,
+    source_type: SourceType,
     current_db: u64,
     pending_expiry: Option<u64>,
     pending_idle: Option<u64>,
@@ -127,12 +132,13 @@ pub struct RecordStream {
 }
 
 impl RecordStream {
-    /// Create a new RecordStream with an async reader
-    pub fn new(reader: Pin<Box<dyn AsyncRead + Send>>) -> Self {
+    /// Create a new RecordStream with an async reader and source type
+    pub fn new(reader: Pin<Box<dyn AsyncRead + Send>>, source_type: SourceType) -> Self {
         Self {
             parser: RDBFileParser::default(),
             buffer: Buffer::new(16 * 1024 * 1024), // 16MB buffer
             reader,
+            source_type,
             current_db: 0,
             pending_expiry: None,
             pending_idle: None,
@@ -226,6 +232,7 @@ impl RecordStream {
                 encoding,
                 rdb_size,
             } => {
+                let (codis_slot, redis_slot) = self.calculate_slot(&key);
                 Some(
                     Record::builder()
                         .db(self.current_db)
@@ -237,6 +244,8 @@ impl RecordStream {
                         .expire_at_ms(self.pending_expiry.take())
                         .idle_seconds(self.pending_idle.take())
                         .freq(self.pending_freq.take())
+                        .codis_slot(codis_slot)
+                        .redis_slot(redis_slot)
                         .build(),
                 )
             }
@@ -245,37 +254,47 @@ impl RecordStream {
                 encoding,
                 member_count,
                 rdb_size,
-            } => Some(
-                Record::builder()
-                    .db(self.current_db)
-                    .key(key)
-                    .r#type(RecordType::List)
-                    .encoding(RecordEncoding::List(encoding))
-                    .rdb_size(rdb_size)
-                    .member_count(Some(member_count))
-                    .expire_at_ms(self.pending_expiry.take())
-                    .idle_seconds(self.pending_idle.take())
-                    .freq(self.pending_freq.take())
-                    .build(),
-            ),
+            } => {
+                let (codis_slot, redis_slot) = self.calculate_slot(&key);
+                Some(
+                    Record::builder()
+                        .db(self.current_db)
+                        .key(key)
+                        .r#type(RecordType::List)
+                        .encoding(RecordEncoding::List(encoding))
+                        .rdb_size(rdb_size)
+                        .member_count(Some(member_count))
+                        .expire_at_ms(self.pending_expiry.take())
+                        .idle_seconds(self.pending_idle.take())
+                        .freq(self.pending_freq.take())
+                        .codis_slot(codis_slot)
+                        .redis_slot(redis_slot)
+                        .build(),
+                )
+            }
             Item::SetRecord {
                 key,
                 encoding,
                 member_count,
                 rdb_size,
-            } => Some(
-                Record::builder()
-                    .db(self.current_db)
-                    .key(key)
-                    .r#type(RecordType::Set)
-                    .encoding(RecordEncoding::Set(encoding))
-                    .rdb_size(rdb_size)
-                    .member_count(Some(member_count))
-                    .expire_at_ms(self.pending_expiry.take())
-                    .idle_seconds(self.pending_idle.take())
-                    .freq(self.pending_freq.take())
-                    .build(),
-            ),
+            } => {
+                let (codis_slot, redis_slot) = self.calculate_slot(&key);
+                Some(
+                    Record::builder()
+                        .db(self.current_db)
+                        .key(key)
+                        .r#type(RecordType::Set)
+                        .encoding(RecordEncoding::Set(encoding))
+                        .rdb_size(rdb_size)
+                        .member_count(Some(member_count))
+                        .expire_at_ms(self.pending_expiry.take())
+                        .idle_seconds(self.pending_idle.take())
+                        .freq(self.pending_freq.take())
+                        .codis_slot(codis_slot)
+                        .redis_slot(redis_slot)
+                        .build(),
+                )
+            }
             Item::ZSetRecord {
                 key,
                 encoding,
@@ -287,67 +306,87 @@ impl RecordStream {
                 encoding,
                 member_count,
                 rdb_size,
-            } => Some(
-                Record::builder()
-                    .db(self.current_db)
-                    .key(key)
-                    .r#type(RecordType::ZSet)
-                    .encoding(RecordEncoding::ZSet(encoding))
-                    .rdb_size(rdb_size)
-                    .member_count(Some(member_count))
-                    .expire_at_ms(self.pending_expiry.take())
-                    .idle_seconds(self.pending_idle.take())
-                    .freq(self.pending_freq.take())
-                    .build(),
-            ),
+            } => {
+                let (codis_slot, redis_slot) = self.calculate_slot(&key);
+                Some(
+                    Record::builder()
+                        .db(self.current_db)
+                        .key(key)
+                        .r#type(RecordType::ZSet)
+                        .encoding(RecordEncoding::ZSet(encoding))
+                        .rdb_size(rdb_size)
+                        .member_count(Some(member_count))
+                        .expire_at_ms(self.pending_expiry.take())
+                        .idle_seconds(self.pending_idle.take())
+                        .freq(self.pending_freq.take())
+                        .codis_slot(codis_slot)
+                        .redis_slot(redis_slot)
+                        .build(),
+                )
+            }
             Item::HashRecord {
                 key,
                 encoding,
                 pair_count,
                 rdb_size,
-            } => Some(
-                Record::builder()
-                    .db(self.current_db)
-                    .key(key)
-                    .r#type(RecordType::Hash)
-                    .encoding(RecordEncoding::Hash(encoding))
-                    .rdb_size(rdb_size)
-                    .member_count(Some(pair_count))
-                    .expire_at_ms(self.pending_expiry.take())
-                    .idle_seconds(self.pending_idle.take())
-                    .freq(self.pending_freq.take())
-                    .build(),
-            ),
+            } => {
+                let (codis_slot, redis_slot) = self.calculate_slot(&key);
+                Some(
+                    Record::builder()
+                        .db(self.current_db)
+                        .key(key)
+                        .r#type(RecordType::Hash)
+                        .encoding(RecordEncoding::Hash(encoding))
+                        .rdb_size(rdb_size)
+                        .member_count(Some(pair_count))
+                        .expire_at_ms(self.pending_expiry.take())
+                        .idle_seconds(self.pending_idle.take())
+                        .freq(self.pending_freq.take())
+                        .codis_slot(codis_slot)
+                        .redis_slot(redis_slot)
+                        .build(),
+                )
+            }
             Item::StreamRecord {
                 key,
                 encoding,
                 message_count,
                 rdb_size,
-            } => Some(
-                Record::builder()
-                    .db(self.current_db)
-                    .key(key)
-                    .r#type(RecordType::Stream)
-                    .encoding(RecordEncoding::Stream(encoding))
-                    .rdb_size(rdb_size)
-                    .member_count(Some(message_count))
-                    .expire_at_ms(self.pending_expiry.take())
-                    .idle_seconds(self.pending_idle.take())
-                    .freq(self.pending_freq.take())
-                    .build(),
-            ),
-            Item::ModuleRecord { key, rdb_size } => Some(
-                Record::builder()
-                    .db(self.current_db)
-                    .key(key)
-                    .r#type(RecordType::Module)
-                    .encoding(RecordEncoding::Module)
-                    .rdb_size(rdb_size)
-                    .expire_at_ms(self.pending_expiry.take())
-                    .idle_seconds(self.pending_idle.take())
-                    .freq(self.pending_freq.take())
-                    .build(),
-            ),
+            } => {
+                let (codis_slot, redis_slot) = self.calculate_slot(&key);
+                Some(
+                    Record::builder()
+                        .db(self.current_db)
+                        .key(key)
+                        .r#type(RecordType::Stream)
+                        .encoding(RecordEncoding::Stream(encoding))
+                        .rdb_size(rdb_size)
+                        .member_count(Some(message_count))
+                        .expire_at_ms(self.pending_expiry.take())
+                        .idle_seconds(self.pending_idle.take())
+                        .freq(self.pending_freq.take())
+                        .codis_slot(codis_slot)
+                        .redis_slot(redis_slot)
+                        .build(),
+                )
+            }
+            Item::ModuleRecord { key, rdb_size } => {
+                let (codis_slot, redis_slot) = self.calculate_slot(&key);
+                Some(
+                    Record::builder()
+                        .db(self.current_db)
+                        .key(key)
+                        .r#type(RecordType::Module)
+                        .encoding(RecordEncoding::Module)
+                        .rdb_size(rdb_size)
+                        .expire_at_ms(self.pending_expiry.take())
+                        .idle_seconds(self.pending_idle.take())
+                        .freq(self.pending_freq.take())
+                        .codis_slot(codis_slot)
+                        .redis_slot(redis_slot)
+                        .build(),
+                )
+            }
             // Skip auxiliary items, resize info, function records, etc.
             // These are not actual Redis keys
             Item::Aux { .. }
@@ -355,6 +394,35 @@ impl RecordStream {
             | Item::ResizeDB { .. }
             | Item::SlotInfo { .. }
             | Item::FunctionRecord { .. } => None,
+        }
+    }
+
+    /// Calculate slot IDs based on source type
+    fn calculate_slot(&self, key: &RDBStr) -> (Option<u16>, Option<u16>) {
+        match self.source_type {
+            SourceType::Codis => {
+                let slot = match key {
+                    RDBStr::Str(bytes) => codis_slot(bytes.as_ref()),
+                    RDBStr::Int(int_val) => {
+                        // Convert integer key to string representation for slot calculation
+                        let key_str = int_val.to_string();
+                        codis_slot(key_str.as_bytes())
+                    }
+                };
+                (Some(slot), None)
+            }
+            SourceType::Cluster => {
+                let slot = match key {
+                    RDBStr::Str(bytes) => redis_slot(bytes.as_ref()),
+                    RDBStr::Int(int_val) => {
+                        // Convert integer key to string representation for slot calculation
+                        let key_str = int_val.to_string();
+                        redis_slot(key_str.as_bytes())
+                    }
+                };
+                (None, Some(slot))
+            }
+            SourceType::Standalone | SourceType::File => (None, None),
         }
     }
 }
@@ -387,7 +455,7 @@ mod tests {
         // Create an empty cursor as a mock reader
         let cursor = Cursor::new(Vec::<u8>::new());
         let reader = Box::pin(cursor);
-        let mut stream = RecordStream::new(reader);
+        let mut stream = RecordStream::new(reader, SourceType::File);
 
         // Since we have no data, this should return None
         let result = stream.next_record().await;

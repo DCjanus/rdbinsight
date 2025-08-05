@@ -11,6 +11,19 @@ pub mod file;
 pub mod redis_stream;
 pub mod standalone;
 
+/// Source type enum to differentiate between different Redis deployment types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceType {
+    /// Standalone Redis instance
+    Standalone,
+    /// Redis Cluster
+    Cluster,
+    /// Codis cluster
+    Codis,
+    /// RDB file
+    File,
+}
+
 /// A stream of RDB data that can be read asynchronously.
 /// It might require an asynchronous preparation step before reading.
 #[async_trait]
@@ -24,6 +37,9 @@ pub trait RDBStream: AsyncRead + Send + Unpin {
     /// For standalone Redis, this is typically the address.
     /// For cluster, this is the address of the specific node.
     fn instance(&self) -> String;
+
+    /// Returns the source type for this stream.
+    fn source_type(&self) -> SourceType;
 }
 
 #[async_trait]

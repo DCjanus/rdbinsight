@@ -250,7 +250,7 @@ async fn dump_to_clickhouse(args: DumpArgs) -> Result<()> {
                         })
                 })
                 .await??;
-                
+
                 Ok::<(), anyhow::Error>(())
             }
         })
@@ -301,6 +301,7 @@ async fn process_records_to_clickhouse(
 ) -> Result<()> {
     // Get the instance identifier from the stream
     let instance = stream.instance();
+    let source_type = stream.source_type();
 
     stream
         .prepare()
@@ -313,7 +314,7 @@ async fn process_records_to_clickhouse(
     let mut total_records = 0u64;
     let mut record_buffer: Vec<Record> = Vec::with_capacity(BATCH_SIZE);
 
-    let mut record_stream = RecordStream::new(stream);
+    let mut record_stream = RecordStream::new(stream, source_type);
 
     let backoff_strategy = ExponentialBackoffBuilder::new()
         .with_initial_interval(std::time::Duration::from_secs(1))

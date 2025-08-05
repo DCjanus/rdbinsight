@@ -13,7 +13,7 @@ use tokio::{
 
 use crate::{
     helper::AnyResult,
-    source::{RDBStream, RdbSourceConfig},
+    source::{RDBStream, RdbSourceConfig, SourceType},
 };
 
 pub struct Config {
@@ -46,6 +46,10 @@ impl RDBStream for FileRDBStream {
 
     fn instance(&self) -> String {
         self.instance.clone()
+    }
+
+    fn source_type(&self) -> SourceType {
+        SourceType::File
     }
 }
 

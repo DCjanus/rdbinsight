@@ -39,6 +39,8 @@ pub struct RedisRecordRow {
     expire_at: Option<OffsetDateTime>,
     idle_seconds: Option<u64>,
     freq: Option<u8>,
+    codis_slot: Option<u16>,
+    redis_slot: Option<u16>,
 }
 
 #[derive(Debug, Clone, Row, Serialize, Deserialize)]
@@ -301,6 +303,8 @@ impl ClickHouseOutput {
             }),
             idle_seconds: record.idle_seconds,
             freq: record.freq,
+            codis_slot: record.codis_slot,
+            redis_slot: record.redis_slot,
         }
     }
 }

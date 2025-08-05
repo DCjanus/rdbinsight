@@ -5,7 +5,7 @@ use async_trait::async_trait;
 
 use crate::{
     helper::AnyResult,
-    source::{RDBStream, RdbSourceConfig, redis_stream::RedisRdbStream},
+    source::{RDBStream, RdbSourceConfig, SourceType, redis_stream::RedisRdbStream},
 };
 
 #[derive(Clone)]
@@ -13,9 +13,35 @@ pub struct Config {
     pub address: String,
     pub username: Option<String>,
     pub password: Option<String>,
+    pub source_type: Option<SourceType>,
 }
 
 impl Config {
+    /// Create a new standalone config with default source type
+    pub fn new(address: String, username: Option<String>, password: Option<String>) -> Self {
+        Self {
+            address,
+            username,
+            password,
+            source_type: Some(SourceType::Standalone),
+        }
+    }
+
+    /// Create a new standalone config with specific source type (useful for Codis)
+    pub fn with_source_type(
+        address: String,
+        username: Option<String>,
+        password: Option<String>,
+        source_type: SourceType,
+    ) -> Self {
+        Self {
+            address,
+            username,
+            password,
+            source_type: Some(source_type),
+        }
+    }
+
     /// Validate the standalone configuration
     pub fn validate(&self) -> AnyResult<()> {
         ensure!(!self.address.is_empty(), "Redis address cannot be empty");
@@ -51,6 +77,7 @@ impl RdbSourceConfig for Config {
             self.address.clone(),
             self.username.clone(),
             self.password.clone(),
+            self.source_type.unwrap_or(SourceType::Standalone),
         );
         Ok(vec![Box::pin(stream)])
     }

@@ -236,7 +236,7 @@ async fn run_clickhouse_test(test_case: &TestCase) -> AnyResult {
         proxy_url,
     })?;
 
-    let result: u8 = client
+    let result: u16 = client
         .query("SELECT 1+1")
         .fetch_one()
         .await

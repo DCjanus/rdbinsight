@@ -1,6 +1,26 @@
 {
   "batch": "2024-12-20T14:30:45.123456Z",
   "cluster": "production-simulated-cluster",
+  "cluster_issues": {
+    "big_keys": [
+      {
+        "db": 1,
+        "instance": "redis-cache-1:6380",
+        "key_base64": "Y2FjaGU6cGFnZTpkZXNrdG9wOmhvbWU6aW5kZXguaHRtbDoxMjM0NQ==",
+        "rdb_size": 2097194,
+        "type": "string"
+      },
+      {
+        "db": 0,
+        "instance": "redis-m-2:6379",
+        "key_base64": "cXVldWU6am9iczpoaWdoX3ByaW86YmF0Y2gtcHJvY2Vzc2luZzo2Nzg5MA==",
+        "rdb_size": 3221225514,
+        "type": "list"
+      }
+    ],
+    "codis_slot_skew": false,
+    "redis_cluster_slot_skew": false
+  },
   "db_aggregates": [
     {
       "db": 0,

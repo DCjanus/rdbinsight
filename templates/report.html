@@ -125,6 +125,95 @@
             </div>
         </div>
 
+        <!-- Cluster Issues Insight -->
+        <div class="card bg-base-100 shadow-md mb-6">
+            <div class="card-body">
+                <h2 class="card-title">Cluster Issues Insight</h2>
+                <p class="text-base-content/70 mb-4">Detected performance and operational issues that require attention.</p>
+                
+                <!-- No Issues Message -->
+                <div v-if="!hasClusterIssues" class="text-base-content/60 text-sm italic text-center py-4">
+                    No cluster issues detected.
+                </div>
+                
+                <!-- Big Keys Section -->
+                <div v-if="raw.cluster_issues && raw.cluster_issues.big_keys && raw.cluster_issues.big_keys.length > 0" class="collapse collapse-arrow bg-base-200 mb-4">
+                    <input type="checkbox" />
+                    <div class="collapse-title text-lg font-medium flex items-center">
+                        Big Keys
+                        <div class="badge badge-error ml-2">{{ raw.cluster_issues.big_keys.length }}</div>
+                    </div>
+                    <div class="collapse-content">
+                        <div class="text-sm text-base-content/70 mb-4">
+                            String keys > 1MB, non-string keys > 1GB
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Key Name</th>
+                                        <th>Instance</th>
+                                        <th>DB</th>
+                                        <th>Type</th>
+                                        <th>RDB Size</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="bigKey in raw.cluster_issues.big_keys" :key="bigKey.key_base64">
+                                        <td>
+                                            <copyable-text :text="decodeAndFormatKey(bigKey.key_base64)" :max-length="40"></copyable-text>
+                                        </td>
+                                        <td>
+                                            <copyable-text :text="bigKey.instance" :max-length="30"></copyable-text>
+                                        </td>
+                                        <td>{{ bigKey.db }}</td>
+                                        <td>
+                                            <span class="badge" :class="`badge-${getTypeTagColor(bigKey.type)}`">{{ bigKey.type }}</span>
+                                        </td>
+                                        <td class="font-mono">{{ formatSize(bigKey.rdb_size) }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Codis Cross-Instance Slot Section -->
+                <div v-if="raw.cluster_issues && raw.cluster_issues.codis_slot_skew" class="collapse collapse-arrow bg-base-200 mb-4">
+                    <input type="checkbox" />
+                    <div class="collapse-title text-lg font-medium flex items-center">
+                        Codis Cross-Instance Slot
+                        <div class="badge badge-warning ml-2">Detected</div>
+                    </div>
+                    <div class="collapse-content">
+                        <div class="alert alert-warning">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                            </svg>
+                            <span>Codis slot data found across multiple Redis instances. This may indicate configuration issues or data migration problems.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Redis Cluster Cross-Instance Slot Section -->
+                <div v-if="raw.cluster_issues && raw.cluster_issues.redis_cluster_slot_skew" class="collapse collapse-arrow bg-base-200 mb-4">
+                    <input type="checkbox" />
+                    <div class="collapse-title text-lg font-medium flex items-center">
+                        Redis Cluster Cross-Instance Slot
+                        <div class="badge badge-warning ml-2">Detected</div>
+                    </div>
+                    <div class="collapse-content">
+                        <div class="alert alert-warning">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                            </svg>
+                            <span>Redis Cluster slot data found across multiple instances. This may indicate cluster resharding issues or configuration problems.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Distributions -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             <!-- By Type -->
@@ -308,7 +397,12 @@
                     type_aggregates: [],
                     instance_aggregates: [],
                     top_keys: [],
-                    top_prefixes: []
+                    top_prefixes: [],
+                    cluster_issues: {
+                        big_keys: [],
+                        codis_slot_skew: false,
+                        redis_cluster_slot_skew: false
+                    }
                 });
                 const dataLoaded = ref(false);
                 const searchTerm = ref('');
@@ -345,6 +439,14 @@
                         size: item.total_size,
                         percentage: total > 0 ? (item.total_size / total) * 100 : 0
                     })).sort((a, b) => b.size - a.size);
+                });
+
+                const hasClusterIssues = computed(() => {
+                    const issues = raw.value.cluster_issues;
+                    if (!issues) return false;
+                    return (issues.big_keys && issues.big_keys.length > 0) ||
+                           issues.codis_slot_skew ||
+                           issues.redis_cluster_slot_skew;
                 });
 
                 const topKeysTableColumns = ref([
@@ -657,6 +759,14 @@
                         }));
                     }
                     
+                    // Add human-readable key field to cluster_issues.big_keys
+                    if (enhancedData.cluster_issues && enhancedData.cluster_issues.big_keys) {
+                        enhancedData.cluster_issues.big_keys = enhancedData.cluster_issues.big_keys.map(bigKey => ({
+                            key: decodeAndFormatKey(bigKey.key_base64),
+                            ...bigKey
+                        }));
+                    }
+                    
                     enhancedData.exported_at = new Date().toISOString();
                     
                     const dataStr = JSON.stringify(enhancedData, null, 2);
@@ -723,7 +833,8 @@
                         return {
                             cluster: 'Error', batch: 'Failed to load data',
                             db_aggregates: [], type_aggregates: [], instance_aggregates: [],
-                            top_keys: [], top_prefixes: []
+                            top_keys: [], top_prefixes: [],
+                            cluster_issues: { big_keys: [], codis_slot_skew: false, redis_cluster_slot_skew: false }
                         };
                     }
                 };
@@ -743,7 +854,7 @@
 
                 return {
                     raw, dataLoaded, searchTerm, topKeysSearchTerm, sort,
-                    totalSize, totalKeys, typeDistribution, dbDistribution, instanceDistribution,
+                    totalSize, totalKeys, typeDistribution, dbDistribution, instanceDistribution, hasClusterIssues,
                     topKeysTableColumns, sortedTopKeys,
                     formatSize, formatMemberCount, getTypeTagColor, decodeAndFormatKey, decodeAndFormatPrefix,
                     formatExpireTimeForDisplay, getExpireTimeForCopy,

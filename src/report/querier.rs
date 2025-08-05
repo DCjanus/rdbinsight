@@ -73,6 +73,25 @@ struct PrefixPartition {
     max_key: Bytes,
 }
 
+#[serde_as]
+#[derive(Debug, Clone, Serialize)]
+pub struct BigKey {
+    #[serde_as(as = "Base64")]
+    #[serde(rename = "key_base64")]
+    pub key: Bytes,
+    pub instance: String,
+    pub db: u64,
+    pub r#type: String,
+    pub rdb_size: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ClusterIssues {
+    pub big_keys: Vec<BigKey>,
+    pub codis_slot_skew: bool,
+    pub redis_cluster_slot_skew: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ReportData {
     pub cluster: String,
@@ -82,6 +101,7 @@ pub struct ReportData {
     pub instance_aggregates: Vec<InstanceAggregate>,
     pub top_keys: Vec<TopKeyRecord>,
     pub top_prefixes: Vec<PrefixAggregate>,
+    pub cluster_issues: ClusterIssues,
 }
 
 pub struct ClickHouseQuerier {
@@ -519,6 +539,171 @@ impl ClickHouseQuerier {
         Ok(result)
     }
 
+    pub async fn query_big_keys(&self) -> AnyResult<Vec<BigKey>> {
+        #[derive(Debug, Row, Deserialize)]
+        struct BigKeyRow {
+            r#type: String,
+            key: Bytes,
+            instance: String,
+            db: u64,
+            rdb_size: u64,
+        }
+
+        let query = "
+            SELECT
+                type,
+                argMax(key, rdb_size) AS key,
+                argMax(instance, rdb_size) AS instance,
+                argMax(db, rdb_size) AS db,
+                max(rdb_size) AS rdb_size
+            FROM redis_records_view
+            WHERE 
+                cluster = ? AND 
+                batch = parseDateTime64BestEffort(?, 9, 'UTC') AND
+                ((type = 'string' AND rdb_size > 1048576) OR (type != 'string' AND rdb_size > 1073741824))
+            GROUP BY type
+            ORDER BY rdb_size DESC
+        ";
+
+        tracing::info!(
+            operation = "big_keys_query_start",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            "Executing big keys query"
+        );
+
+        let rows: Vec<BigKeyRow> = self
+            .client
+            .query(query)
+            .bind(&self.cluster)
+            .bind(&self.batch)
+            .fetch_all()
+            .await?;
+
+        let result: Vec<_> = rows
+            .into_iter()
+            .map(|row| BigKey {
+                key: row.key,
+                instance: row.instance,
+                db: row.db,
+                r#type: row.r#type,
+                rdb_size: row.rdb_size,
+            })
+            .collect();
+
+        tracing::info!(
+            operation = "big_keys_query_complete",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            result_count = result.len(),
+            "Big keys query completed"
+        );
+
+        Ok(result)
+    }
+
+    pub async fn query_codis_slot_skew(&self) -> AnyResult<bool> {
+        #[derive(Debug, Row, Deserialize)]
+        struct SlotSkewRow {
+            skew_count: u64,
+        }
+
+        let query = "
+            SELECT 
+                count(*) as skew_count
+            FROM (
+                SELECT 
+                    codis_slot,
+                    count(DISTINCT instance) as instance_count
+                FROM redis_records_view
+                WHERE 
+                    cluster = ? AND 
+                    batch = parseDateTime64BestEffort(?, 9, 'UTC') AND
+                    codis_slot IS NOT NULL
+                GROUP BY codis_slot
+                HAVING instance_count > 1
+            )
+        ";
+
+        tracing::info!(
+            operation = "codis_slot_skew_query_start",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            "Executing Codis slot skew query"
+        );
+
+        let rows: Vec<SlotSkewRow> = self
+            .client
+            .query(query)
+            .bind(&self.cluster)
+            .bind(&self.batch)
+            .fetch_all()
+            .await?;
+
+        let has_skew = rows.first().map(|row| row.skew_count > 0).unwrap_or(false);
+
+        tracing::info!(
+            operation = "codis_slot_skew_query_complete",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            has_skew = has_skew,
+            "Codis slot skew query completed"
+        );
+
+        Ok(has_skew)
+    }
+
+    pub async fn query_redis_cluster_slot_skew(&self) -> AnyResult<bool> {
+        #[derive(Debug, Row, Deserialize)]
+        struct SlotSkewRow {
+            skew_count: u64,
+        }
+
+        let query = "
+            SELECT 
+                count(*) as skew_count
+            FROM (
+                SELECT 
+                    redis_slot,
+                    count(DISTINCT instance) as instance_count
+                FROM redis_records_view
+                WHERE 
+                    cluster = ? AND 
+                    batch = parseDateTime64BestEffort(?, 9, 'UTC') AND
+                    redis_slot IS NOT NULL
+                GROUP BY redis_slot
+                HAVING instance_count > 1
+            )
+        ";
+
+        tracing::info!(
+            operation = "redis_cluster_slot_skew_query_start",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            "Executing Redis Cluster slot skew query"
+        );
+
+        let rows: Vec<SlotSkewRow> = self
+            .client
+            .query(query)
+            .bind(&self.cluster)
+            .bind(&self.batch)
+            .fetch_all()
+            .await?;
+
+        let has_skew = rows.first().map(|row| row.skew_count > 0).unwrap_or(false);
+
+        tracing::info!(
+            operation = "redis_cluster_slot_skew_query_complete",
+            cluster = %self.cluster,
+            batch = %self.batch,
+            has_skew = has_skew,
+            "Redis Cluster slot skew query completed"
+        );
+
+        Ok(has_skew)
+    }
+
     pub async fn generate_report_data(&self) -> AnyResult<ReportData> {
         tracing::info!(
             operation = "report_generation_start",
@@ -527,13 +712,31 @@ impl ClickHouseQuerier {
             "Starting report generation"
         );
 
-        let (db_aggregates, type_aggregates, instance_aggregates, top_keys, top_prefixes) = tokio::try_join!(
+        let (
+            db_aggregates,
+            type_aggregates,
+            instance_aggregates,
+            top_keys,
+            top_prefixes,
+            big_keys,
+            codis_slot_skew,
+            redis_cluster_slot_skew,
+        ) = tokio::try_join!(
             self.get_db_aggregates(),
             self.get_type_aggregates(),
             self.get_instance_aggregates(),
             self.get_top_keys(),
-            self.get_top_prefixes()
+            self.get_top_prefixes(),
+            self.query_big_keys(),
+            self.query_codis_slot_skew(),
+            self.query_redis_cluster_slot_skew()
         )?;
+
+        let cluster_issues = ClusterIssues {
+            big_keys,
+            codis_slot_skew,
+            redis_cluster_slot_skew,
+        };
 
         let report_data = ReportData {
             cluster: self.cluster.clone(),
@@ -543,6 +746,7 @@ impl ClickHouseQuerier {
             instance_aggregates,
             top_keys,
             top_prefixes,
+            cluster_issues,
         };
 
         tracing::info!(
@@ -554,6 +758,9 @@ impl ClickHouseQuerier {
             instance_count = report_data.instance_aggregates.len(),
             top_keys_count = report_data.top_keys.len(),
             top_prefixes_count = report_data.top_prefixes.len(),
+            big_keys_count = report_data.cluster_issues.big_keys.len(),
+            codis_slot_skew = report_data.cluster_issues.codis_slot_skew,
+            redis_cluster_slot_skew = report_data.cluster_issues.redis_cluster_slot_skew,
             "Report generation completed"
         );
 

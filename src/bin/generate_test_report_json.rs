@@ -5,9 +5,10 @@ use std::collections::{BTreeMap, HashMap};
 
 use anyhow::Result;
 use bytes::Bytes;
-use crc32fast::Hasher;
+use crc::{CRC_32_ISO_HDLC, Crc};
 use rdbinsight::report::querier::{
-    DbAggregate, InstanceAggregate, PrefixAggregate, ReportData, TopKeyRecord, TypeAggregate,
+    BigKey, ClusterIssues, DbAggregate, InstanceAggregate, PrefixAggregate, ReportData,
+    TopKeyRecord, TypeAggregate,
 };
 
 // Deterministic RNG using LCG to ensure consistent output
@@ -363,6 +364,28 @@ fn main() -> Result<()> {
         instance_aggregates: aggregate_by_instance(&keys),
         top_prefixes: aggregate_top_prefixes(&keys),
         top_keys: select_top_keys(&mut keys),
+        cluster_issues: ClusterIssues {
+            big_keys: vec![
+                // String type big key - largest string (5MB)
+                BigKey {
+                    key: Bytes::from("cache:page:desktop:home:index.html:12345"),
+                    instance: "redis-cache-1:6380".to_string(),
+                    db: 1,
+                    r#type: "string".to_string(),
+                    rdb_size: 1024 * 1024 * 2 + 42,
+                },
+                // List type big key - largest list (8MB)
+                BigKey {
+                    key: Bytes::from("queue:jobs:high_prio:batch-processing:67890"),
+                    instance: "redis-m-2:6379".to_string(),
+                    db: 0,
+                    r#type: "list".to_string(),
+                    rdb_size: 1024 * 1024 * 1024 * 3 + 42,
+                },
+            ],
+            codis_slot_skew: false,
+            redis_cluster_slot_skew: false,
+        },
     };
 
     let json_value = serde_json::to_value(&report_data)?;
@@ -612,9 +635,7 @@ fn generate_key_name(
 }
 
 fn assign_to_instance(key: &[u8]) -> (&'static str, u32) {
-    let mut hasher = Hasher::new();
-    hasher.update(key);
-    let checksum = hasher.finalize();
+    let checksum = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(key);
     let index = checksum as usize % INSTANCES.len();
     INSTANCES[index]
 }

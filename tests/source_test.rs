@@ -31,11 +31,11 @@ async fn verify_rdb_content(
     expected_item_count: usize,
 ) -> AnyResult<()> {
     let address = extract_address(&redis.connection_string);
-    let cfg = StandaloneConfig {
+    let cfg = StandaloneConfig::new(
         address,
-        username: username.map(|s| s.to_string()),
-        password: password.map(|s| s.to_string()),
-    };
+        username.map(|s| s.to_string()),
+        password.map(|s| s.to_string()),
+    );
 
     let mut streams = cfg.get_rdb_streams().await?;
     assert_eq!(streams.len(), 1, "Expected exactly one RDB stream");
@@ -519,11 +519,7 @@ async fn run_lots_of_strings_feed_more_test(config: FeedMoreTestConfig) -> AnyRe
 
     // Verify RDB content and trace coverage
     let address = extract_address(&redis.connection_string);
-    let cfg = StandaloneConfig {
-        address,
-        username: None,
-        password: None,
-    };
+    let cfg = StandaloneConfig::new(address, None, None);
 
     match cfg.get_rdb_streams().await {
         Ok(mut streams) => {

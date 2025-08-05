@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     helper::AnyResult,
-    source::{RDBStream, RdbSourceConfig, redis_stream::RedisRdbStream},
+    source::{RDBStream, RdbSourceConfig, SourceType, redis_stream::RedisRdbStream},
 };
 
 /// Configuration for Redis Cluster source
@@ -207,9 +207,10 @@ impl RdbSourceConfig for Config {
             ));
 
             let stream = RedisRdbStream::new(
-                source_node.address.clone(),
+                master.address.clone(),
                 self.username.clone(),
                 self.password.clone(),
+                SourceType::Cluster,
             );
 
             streams.push(Box::pin(stream) as Pin<Box<dyn RDBStream>>);

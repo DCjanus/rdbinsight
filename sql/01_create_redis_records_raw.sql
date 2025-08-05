@@ -12,7 +12,9 @@ CREATE TABLE IF NOT EXISTS redis_records_raw
     `encoding`     LowCardinality(String) COMMENT 'RDB internal encoding type',
     `expire_at`    Nullable(DateTime64(3, 'UTC')) COMMENT 'Absolute expiration timestamp of the key (UTC)',
     `idle_seconds` Nullable(UInt64) COMMENT 'LRU idle time of the key (seconds)',
-    `freq`         Nullable(UInt8) COMMENT 'LFU access frequency of the key'
+    `freq`         Nullable(UInt8) COMMENT 'LFU access frequency of the key',
+    `codis_slot`   Nullable(UInt16) COMMENT 'Codis Slot ID (0-1023), only for Codis clusters',
+    `redis_slot` Nullable(UInt16) COMMENT 'Redis Cluster Slot ID (0-16383), only for Redis Cluster'
 )
 ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMMDD(batch)

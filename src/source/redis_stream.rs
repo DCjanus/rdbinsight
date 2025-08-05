@@ -34,7 +34,7 @@ use crate::{
         error::NeedMoreData,
     },
     parser_trace,
-    source::RDBStream,
+    source::{RDBStream, SourceType},
 };
 
 /// Delimiter-based reader for diskless mode
@@ -293,15 +293,22 @@ pub struct RedisRdbStream {
     address: String,
     username: Option<String>,
     password: Option<String>,
+    source_type: SourceType,
 }
 
 impl RedisRdbStream {
-    pub fn new(address: String, username: Option<String>, password: Option<String>) -> Self {
+    pub fn new(
+        address: String,
+        username: Option<String>,
+        password: Option<String>,
+        source_type: SourceType,
+    ) -> Self {
         Self {
             reader: None,
             address,
             username,
             password,
+            source_type,
         }
     }
 }
@@ -385,6 +392,10 @@ impl RDBStream for RedisRdbStream {
 
     fn instance(&self) -> String {
         self.address.clone()
+    }
+
+    fn source_type(&self) -> SourceType {
+        self.source_type
     }
 }
 

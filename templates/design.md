@@ -108,3 +108,43 @@ Retains existing report features, refactoring with DaisyUI components.
       - Member Count: Raw numbers and formatted counts (e.g., `15000` and `15.0K`)
     - Properly handles CSV escaping for special characters in key names and instance names.
     - File naming convention: `rdb_top_keys_{cluster}_{batch}.csv`.
+
+### 4.6. Cluster Issues Insight
+
+- **Purpose:** Proactively identifies and displays common Redis cluster operational issues to help with performance optimization and maintenance.
+- **Layout:** A dedicated card positioned after the overview stats section, always visible regardless of whether issues are detected.
+- **Component:** Uses DaisyUI `collapse` components for expandable issue categories and `table` components for detailed issue data.
+
+#### 4.6.1. Issue Categories
+
+**Big Keys Detection:**
+
+- **Criteria:**
+  - String type keys larger than 1MB
+  - Non-string type keys larger than 1GB
+- **Display:**
+  - Expandable section with issue count badge
+  - Direct text explanation below title: "String keys > 1MB, non-string keys > 1GB"
+  - Responsive table showing key name, instance, database, type, and RDB size
+  - Uses `CopyableText` component for key names and instance names
+  - Type badges with color coding consistent with other sections
+
+**Cross-Instance Slot Issues:**
+
+- **Codis Cross-Instance Slot:** Detects when Codis slot data is distributed across multiple Redis instances
+- **Redis Cluster Cross-Instance Slot:** Detects when Redis Cluster slot data spans multiple instances
+- **Display:**
+  - Warning alerts with descriptive messages about potential configuration or migration issues
+  - Only appears when the respective issue is detected
+
+#### 4.6.2. No Issues State
+
+- **Design:** When no cluster issues are detected, displays a subtle, centered message: "No cluster issues detected."
+- **Styling:** Uses muted text color (`text-base-content/60`), small font size, and italic styling to avoid drawing excessive attention
+- **Purpose:** Provides confirmation that the system has performed the analysis without being visually intrusive
+
+#### 4.6.3. Data Integration
+
+- **Backend Integration:** Consumes `cluster_issues` data from the report generation system
+- **Export Enhancement:** JSON export includes human-readable key names for big keys alongside base64-encoded data
+- **Conditional Rendering:** Each issue category only displays when relevant problems are detected, maintaining a clean interface

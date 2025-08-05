@@ -207,7 +207,7 @@ impl RdbSourceConfig for Config {
             ));
 
             let stream = RedisRdbStream::new(
-                master.address.clone(),
+                source_node.address.clone(),
                 self.username.clone(),
                 self.password.clone(),
                 SourceType::Cluster,

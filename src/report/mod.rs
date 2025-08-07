@@ -9,7 +9,7 @@ pub mod querier;
 
 use querier::ClickHouseQuerier;
 
-use crate::config::{ClickHouseConfig, Config, OutputConfig};
+use crate::config::{ClickHouseConfig, DumpConfig, OutputConfig};
 
 pub struct ReportGenerator {
     querier: ClickHouseQuerier,
@@ -148,29 +148,12 @@ async fn get_latest_batch_for_cluster(
     Ok(batch_str)
 }
 
-pub async fn run_report(
-    config_path: PathBuf,
+pub async fn run_report_with_config(
+    clickhouse_config: ClickHouseConfig,
     cluster: String,
     batch: Option<String>,
     output: Option<PathBuf>,
 ) -> Result<()> {
-    tracing::info!(
-        operation = "config_loading",
-        config_path = %config_path.display(),
-        "Loading configuration"
-    );
-
-    let config_content = tokio::fs::read_to_string(&config_path)
-        .await
-        .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
-
-    let config: Config =
-        toml::from_str(&config_content).with_context(|| "Failed to parse configuration file")?;
-
-    let clickhouse_config = match &config.output {
-        OutputConfig::Clickhouse(clickhouse_config) => clickhouse_config.clone(),
-    };
-
     let actual_batch = match batch {
         Some(batch_str) => {
             let _batch_timestamp =
@@ -227,6 +210,32 @@ pub async fn run_report(
         "Report generated successfully"
     );
     Ok(())
+}
+
+pub async fn run_report(
+    config_path: PathBuf,
+    cluster: String,
+    batch: Option<String>,
+    output: Option<PathBuf>,
+) -> Result<()> {
+    tracing::info!(
+        operation = "config_loading",
+        config_path = %config_path.display(),
+        "Loading configuration"
+    );
+
+    let config_content = tokio::fs::read_to_string(&config_path)
+        .await
+        .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
+
+    let config: DumpConfig =
+        toml::from_str(&config_content).with_context(|| "Failed to parse configuration file")?;
+
+    let clickhouse_config = match &config.output {
+        OutputConfig::Clickhouse(clickhouse_config) => clickhouse_config.clone(),
+    };
+
+    run_report_with_config(clickhouse_config, cluster, batch, output).await
 }
 
 #[cfg(test)]

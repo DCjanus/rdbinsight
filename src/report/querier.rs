@@ -552,16 +552,25 @@ impl ClickHouseQuerier {
         let query = "
             SELECT
                 type,
-                argMax(key, rdb_size) AS key,
-                argMax(instance, rdb_size) AS instance,
-                argMax(db, rdb_size) AS db,
-                max(rdb_size) AS rdb_size
-            FROM redis_records_view
-            WHERE 
-                cluster = ? AND 
-                batch = parseDateTime64BestEffort(?, 9, 'UTC') AND
-                ((type = 'string' AND rdb_size > 1048576) OR (type != 'string' AND rdb_size > 1073741824))
-            GROUP BY type
+                key,
+                instance,
+                db,
+                rdb_size
+            FROM (
+                SELECT
+                    type,
+                    key,
+                    instance,
+                    db,
+                    rdb_size,
+                    ROW_NUMBER() OVER (PARTITION BY type ORDER BY rdb_size DESC) as rn
+                FROM redis_records_view
+                WHERE 
+                    cluster = ? AND 
+                    batch = parseDateTime64BestEffort(?, 9, 'UTC') AND
+                    ((type = 'string' AND rdb_size > 1048576) OR (type != 'string' AND rdb_size > 1073741824))
+            )
+            WHERE rn = 1
             ORDER BY rdb_size DESC
         ";
 

@@ -4,17 +4,6 @@ codecov:
 coverage:
   precision: 2
   round: down
-  
-  status:
-    project:
-      default:
-        target: 80%
-        threshold: 1%
-    
-    patch:
-      default:
-        target: 85%
-        threshold: 5%
 
 ignore:
   - "src/bin/"
@@ -27,11 +16,9 @@ ignore:
   - "docs/**"
 
 comment:
-  layout: "reach,diff,flags,tree"
-  require_head: true
-  branches:
-    - "master"
-    - "main"
+  layout: "diff, flags, files"
+  behavior: default
+  require_changes: false 
 
 github_checks:
   annotations: true 

@@ -46,7 +46,6 @@ thiserror = "2.0.12"
 time = { version = "0.3.41", features = ["formatting", "parsing", "macros"] }
 tokio = { version = "1.45.1", features = ["full"] }
 tokio-util = { version = "0.7.15", features = ["time"] }
-toml = "0.9.2"
 tower-service = "0.3.3"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = [

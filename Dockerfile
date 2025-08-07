@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM rustlang/rust:nightly-alpine AS builder
 
-RUN apk add --no-cache musl-dev
+RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static
 WORKDIR /usr/src/app
 
 COPY . .
@@ -15,14 +15,10 @@ RUN strip /tmp/rdbinsight
 FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates
-RUN addgroup -g 1000 rdbinsight && \
-    adduser -D -s /bin/sh -u 1000 -G rdbinsight rdbinsight
 
 COPY --from=builder /tmp/rdbinsight /usr/local/bin/rdbinsight
-RUN chmod +x /usr/local/bin/rdbinsight
 
-USER rdbinsight
 WORKDIR /app
 
 ENTRYPOINT ["rdbinsight"]
-CMD ["--help"] 
+CMD ["--help"]

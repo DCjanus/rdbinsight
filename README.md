@@ -8,6 +8,22 @@ RDBInsight is a Redis analysis and diagnostic tool that converts RDB snapshots i
 
 English | [中文](README.zh_CN.md)
 
+## Usage
+
+Minimal example (installation omitted):
+
+```bash
+rdbinsight dump cluster \
+  --nodes 127.0.0.1:7000,127.0.0.1:7001 \
+  --cluster your_cluster \
+  clickhouse \
+  --url http://127.0.0.1:8124 \
+  --database rdbinsight \
+  --auto-create-tables
+```
+
+For detailed usage, run `rdbinsight --help` or `rdbinsight <subcommand> --help`.
+
 ## Why RDBInsight?
 
 For common Redis issues such as large keys, mature tools already exist. In production environments, however, more intricate and less clearly defined situations still arise, for example:

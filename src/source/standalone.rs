@@ -27,21 +27,6 @@ impl Config {
         }
     }
 
-    /// Create a new standalone config with specific source type (useful for Codis)
-    pub fn with_source_type(
-        address: String,
-        username: Option<String>,
-        password: Option<String>,
-        source_type: SourceType,
-    ) -> Self {
-        Self {
-            address,
-            username,
-            password,
-            source_type: Some(source_type),
-        }
-    }
-
     /// Validate the standalone configuration
     pub fn validate(&self) -> AnyResult<()> {
         ensure!(!self.address.is_empty(), "Redis address cannot be empty");

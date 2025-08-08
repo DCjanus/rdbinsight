@@ -185,12 +185,9 @@ impl RdbSourceConfig for SourceConfig {
 
                 let mut streams = Vec::new();
                 for addr in redis_addrs {
-                    let source = crate::source::standalone::Config::with_source_type(
-                        addr,
-                        None, // Codis doesn't support username
-                        password.clone(),
-                        crate::source::SourceType::Codis,
-                    );
+                    let mut source =
+                        crate::source::standalone::Config::new(addr, None, password.clone());
+                    source.source_type = Some(crate::source::SourceType::Codis);
                     let standalone_streams = source.get_rdb_streams().await?;
                     streams.extend(standalone_streams);
                 }

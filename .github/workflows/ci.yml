@@ -1,22 +1,21 @@
-# Unified CI workflow: fmt, clippy, tests, coverage, and Docker publish
-
 name: CI
 
 on:
   push:
     branches:
       - master
+    tags:
+      - 'v*'
   pull_request:
   workflow_dispatch:
 
-# Cancel in-flight runs for the same ref to save CI minutes
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  tests:
-    name: Tests (fmt + clippy + coverage)
+  check:
+    name: Check (fmt + clippy + tests)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -76,7 +75,7 @@ jobs:
 
   docker-builds:
     name: Docker Build & Push (${{ matrix.name }})
-    needs: [tests]
+    needs: [check]
     if: ${{ github.event_name != 'pull_request' }}
     strategy:
       fail-fast: false
@@ -87,7 +86,7 @@ jobs:
             runs-on: ubuntu-latest
           - name: arm64
             platform: linux/arm64
-            runs-on: ubuntu-24.04-arm64
+            runs-on: ubuntu-24.04-arm
     runs-on: ${{ matrix.runs-on }}
     permissions:
       contents: read
@@ -116,7 +115,6 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=tag
-            type=sha
 
       - name: Build and push (${{ matrix.platform }})
         id: build
@@ -182,14 +180,13 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=tag
-            type=sha
 
       - name: Create and push multi-arch manifest
         env:
-          IMAGE: ghcr.io/${{ github.repository }}
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           set -euo pipefail
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
           source digests/amd64/digest.env
           AMD_DIGEST="$DIGEST"
           source digests/arm64/digest.env

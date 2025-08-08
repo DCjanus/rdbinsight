@@ -1,24 +1,38 @@
-codecov:
-  require_ci_to_pass: true
-
 coverage:
-  precision: 2
-  round: down
+  status:
+    project:
+      default:
+        target: 60
 
 ignore:
-  - "src/bin/"
   - "src/bin/**"
-  - "tests/"
   - "tests/**"
-  - "examples/"
   - "examples/**"
-  - "docs/"
   - "docs/**"
 
 comment:
-  layout: "diff, flags, files"
-  behavior: default
-  require_changes: false 
+  layout: "header, diff, flags, components"
 
 github_checks:
   annotations: true 
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: 60
+  individual_components:
+    - component_id: component_parser
+      name: "parser"
+      paths:
+        - "src/parser/**"
+      statuses:
+        - type: project
+          target: 90
+    - component_id: component_source
+      name: "source"
+      paths:
+        - "src/source/**"
+      statuses:
+        - type: project
+          target: 80

@@ -2,7 +2,6 @@
 
 [![codecov](https://codecov.io/gh/DCjanus/rdbinsight/graph/badge.svg?token=KXVIGig53g)](https://codecov.io/gh/DCjanus/rdbinsight)
 [![dependency status](https://deps.rs/repo/github/dcjanus/rdbinsight/status.svg)](https://deps.rs/repo/github/dcjanus/rdbinsight)
-
 [![CI](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml/badge.svg)](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml)
 
 RDBInsight 是一款 Redis 分析与诊断工具，通过将 RDB 快照转换为便于 OLAP 处理的结构化数据，帮助定位内存及性能相关问题。
@@ -101,7 +100,6 @@ ORDER BY key_cnt DESC;
 
 - [ ] 使用 testcontainers 构建 Redis Cluster 集成测试，验证集群场景下的数据解析准确性
 - [ ] 使用 testcontainers 创建 Codis 集群测试环境（基于 `pikadb/codis:v3.5.5` 镜像），确保 Codis 兼容性
-- [ ] 通过合理的模块划分优化 codecov 测试覆盖率阈值，为不同组件（parser、output、source 等）设置合理的覆盖率目标
 
 ### 性能优化
 

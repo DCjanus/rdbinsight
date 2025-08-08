@@ -16,8 +16,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --bin rdbinsight && \
     cp target/release/rdbinsight /tmp/rdbinsight
 
-RUN strip /tmp/rdbinsight
-
 FROM debian:bookworm-slim
 
 RUN apt-get update \

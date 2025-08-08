@@ -13,17 +13,15 @@ pub struct Config {
     pub address: String,
     pub username: String,
     pub password: Option<String>,
-    pub source_type: Option<SourceType>,
 }
 
 impl Config {
-    /// Create a new standalone config with default source type
+    /// Create a new standalone config
     pub fn new(address: String, username: String, password: Option<String>) -> Self {
         Self {
             address,
             username,
             password,
-            source_type: Some(SourceType::Standalone),
         }
     }
 
@@ -62,7 +60,7 @@ impl RdbSourceConfig for Config {
             self.address.clone(),
             self.username.clone(),
             self.password.clone(),
-            self.source_type.unwrap_or(SourceType::Standalone),
+            SourceType::Standalone,
         );
         Ok(vec![Box::pin(stream)])
     }

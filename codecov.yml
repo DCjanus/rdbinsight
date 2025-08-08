@@ -42,3 +42,6 @@ component_management:
       name: "report"
       paths:
         - "src/report/**"
+      statuses:
+        - type: project
+          target: 80

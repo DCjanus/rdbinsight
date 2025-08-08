@@ -221,9 +221,6 @@ pub enum OutputConfig {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ClickHouseConfig {
     pub address: String,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub database: Option<String>,
     #[serde(default)]
     pub auto_create_tables: bool,
     pub proxy_url: Option<String>,
@@ -246,23 +243,74 @@ impl ClickHouseConfig {
             self.address
         );
 
-        // Validate database name if provided
-        if let Some(database) = &self.database {
-            ensure!(
-                !database.is_empty(),
-                "ClickHouse database name cannot be empty string"
-            );
+        // Parse URL to validate format and extract components
+        let url = url::Url::parse(&self.address)
+            .map_err(|e| anyhow::anyhow!("Invalid ClickHouse URL format: {}", e))?;
 
-            // Basic database name validation (alphanumeric, underscore, hyphen)
-            ensure!(
-                database
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-'),
-                "ClickHouse database name '{}' contains invalid characters. Only alphanumeric, underscore, and hyphen are allowed",
-                database
-            );
+        // Validate scheme
+        ensure!(
+            url.scheme() == "http" || url.scheme() == "https",
+            "ClickHouse URL must use http or https scheme"
+        );
+
+        // Validate host
+        ensure!(
+            url.host_str().is_some(),
+            "ClickHouse URL must contain a host"
+        );
+
+        // Validate database name from path if provided
+        if let Some(segments) = url.path_segments() {
+            let path_parts: Vec<&str> = segments.collect();
+            if !path_parts.is_empty() && !path_parts[0].is_empty() {
+                let database = path_parts[0];
+                ensure!(
+                    database
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-'),
+                    "ClickHouse database name '{}' contains invalid characters. Only alphanumeric, underscore, and hyphen are allowed",
+                    database
+                );
+            }
         }
 
         Ok(())
+    }
+
+    /// Extract username from URL
+    pub fn username(&self) -> Option<String> {
+        url::Url::parse(&self.address)
+            .ok()
+            .map(|url| url.username().to_string())
+            .filter(|u| !u.is_empty())
+    }
+
+    /// Extract password from URL
+    pub fn password(&self) -> Option<String> {
+        url::Url::parse(&self.address)
+            .ok()
+            .and_then(|url| url.password().map(|p| p.to_string()))
+    }
+
+    /// Extract database name from URL path
+    pub fn database(&self) -> Option<String> {
+        url::Url::parse(&self.address).ok().and_then(|url| {
+            url.path_segments()
+                .and_then(|mut segments| segments.next())
+                .filter(|db| !db.is_empty())
+                .map(|db| db.to_string())
+        })
+    }
+
+    /// Extract base URL without path, username, and password
+    pub fn base_url(&self) -> String {
+        if let Ok(mut url) = url::Url::parse(&self.address) {
+            url.set_username("").ok();
+            url.set_password(None).ok();
+            url.set_path("");
+            url.to_string()
+        } else {
+            self.address.clone()
+        }
     }
 }

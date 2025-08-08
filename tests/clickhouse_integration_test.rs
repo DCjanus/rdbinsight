@@ -229,9 +229,6 @@ async fn run_clickhouse_test(test_case: &TestCase) -> AnyResult {
 
     let client = ClickHouseOutput::create_client(&rdbinsight::config::ClickHouseConfig {
         address: clickhouse_url.to_string(),
-        username: None,
-        password: None,
-        database: None,
         auto_create_tables: false,
         proxy_url,
     })?;

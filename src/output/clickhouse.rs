@@ -93,18 +93,18 @@ impl ClickHouseOutput {
             .pool_idle_timeout(Duration::from_secs(90))
             .build(proxy_connector);
 
-        let mut client = Client::with_http_client(http_client).with_url(&config.address);
+        let mut client = Client::with_http_client(http_client).with_url(config.base_url());
 
-        if let Some(username) = &config.username {
-            client = client.with_user(username);
+        if let Some(username) = config.username() {
+            client = client.with_user(&username);
         }
 
-        if let Some(password) = &config.password {
-            client = client.with_password(password);
+        if let Some(password) = config.password() {
+            client = client.with_password(&password);
         }
 
-        if let Some(database) = &config.database {
-            client = client.with_database(database);
+        if let Some(database) = config.database() {
+            client = client.with_database(&database);
         }
 
         Ok(client)
@@ -176,7 +176,7 @@ impl ClickHouseOutput {
                     "auto_create_tables is disabled, failing with missing tables error"
                 );
                 return Err(anyhow::anyhow!(
-                    "Required ClickHouse tables do not exist. Please run 'rdbinsight misc print-clickhouse-schema' to get the DDL statements and create the required tables, or set 'auto_create_tables = true' in your configuration."
+                    "Required ClickHouse tables do not exist. Please run 'rdbinsight misc clickhouse-schema' to get the DDL statements and create the required tables, or set 'auto_create_tables = true' in your configuration."
                 ));
             }
         }
@@ -198,7 +198,7 @@ impl ClickHouseOutput {
         );
 
         Err(anyhow::anyhow!(
-            "Inconsistent ClickHouse schema state. Missing tables/views: {}. Please manually fix the schema by running 'rdbinsight misc print-clickhouse-schema' and creating the missing objects, or drop all existing tables and set 'auto_create_tables = true' to recreate everything.",
+            "Inconsistent ClickHouse schema state. Missing tables/views: {}. Please manually fix the schema by running 'rdbinsight misc clickhouse-schema' and creating the missing objects, or drop all existing tables and set 'auto_create_tables = true' to recreate everything.",
             missing_tables.join(", ")
         ))
     }
@@ -324,9 +324,6 @@ mod tests {
         let client = Client::default();
         let config = ClickHouseConfig {
             address: "http://localhost:8123".to_string(),
-            username: None,
-            password: None,
-            database: None,
             auto_create_tables: false,
             proxy_url: None,
         };

@@ -112,18 +112,18 @@ pub struct ClickHouseQuerier {
 
 impl ClickHouseQuerier {
     pub async fn new(config: ClickHouseConfig, cluster: String, batch: String) -> AnyResult<Self> {
-        let mut client_builder = Client::default().with_url(&config.address);
+        let mut client_builder = Client::default().with_url(config.base_url());
 
-        if let Some(username) = &config.username {
-            client_builder = client_builder.with_user(username);
+        if let Some(username) = config.username() {
+            client_builder = client_builder.with_user(&username);
         }
 
-        if let Some(password) = &config.password {
-            client_builder = client_builder.with_password(password);
+        if let Some(password) = config.password() {
+            client_builder = client_builder.with_password(&password);
         }
 
-        if let Some(database) = &config.database {
-            client_builder = client_builder.with_database(database);
+        if let Some(database) = config.database() {
+            client_builder = client_builder.with_database(&database);
         }
 
         let client = client_builder;

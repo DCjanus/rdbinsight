@@ -170,21 +170,9 @@ enum OutputCommand {
 
 #[derive(Parser)]
 struct ClickHouseOutputArgs {
-    /// ClickHouse server URL (e.g., http://127.0.0.1:8124)
+    /// ClickHouse server URL (e.g., http://username:password@127.0.0.1:8124/database)
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
     url: String,
-
-    /// ClickHouse username
-    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_USERNAME")]
-    username: Option<String>,
-
-    /// ClickHouse password
-    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PASSWORD")]
-    password: Option<String>,
-
-    /// ClickHouse database name
-    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_DATABASE")]
-    database: Option<String>,
 
     /// Automatically create tables if they don't exist
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_AUTO_CREATE_TABLES")]
@@ -209,21 +197,9 @@ struct ReportArgs {
     #[clap(short, long, env = "RDBINSIGHT_REPORT_OUTPUT")]
     output: Option<PathBuf>,
 
-    /// ClickHouse server URL (e.g., http://127.0.0.1:8124)
+    /// ClickHouse server URL (e.g., http://username:password@127.0.0.1:8124/database)
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
     clickhouse_url: String,
-
-    /// ClickHouse username
-    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_USERNAME")]
-    clickhouse_username: Option<String>,
-
-    /// ClickHouse password
-    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PASSWORD")]
-    clickhouse_password: Option<String>,
-
-    /// ClickHouse database name
-    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_DATABASE")]
-    clickhouse_database: Option<String>,
 
     /// HTTP proxy URL for ClickHouse connections
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PROXY_URL")]
@@ -357,9 +333,6 @@ fn dump_command_to_config(
         OutputCommand::Clickhouse(ch_args) => {
             let ch_config = ClickHouseConfig {
                 address: ch_args.url,
-                username: ch_args.username,
-                password: ch_args.password,
-                database: ch_args.database,
                 auto_create_tables: ch_args.auto_create_tables,
                 proxy_url: ch_args.proxy_url,
             };
@@ -723,9 +696,6 @@ async fn commit_batch_with_retry(
 async fn run_report(args: ReportArgs) -> Result<()> {
     let clickhouse_config = rdbinsight::config::ClickHouseConfig {
         address: args.clickhouse_url,
-        username: args.clickhouse_username,
-        password: args.clickhouse_password,
-        database: args.clickhouse_database,
         auto_create_tables: false, // Reports don't need auto-creation
         proxy_url: args.clickhouse_proxy_url,
     };

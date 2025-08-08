@@ -34,12 +34,12 @@ impl ReportGenerator {
         })
     }
 
-    pub async fn generate(&self) -> Result<String> {
+    pub async fn generate_data(&self) -> Result<querier::ReportData> {
         tracing::info!(
             operation = "report_generation_start",
             cluster = %self.cluster,
             batch = %self.batch,
-            "Starting report generation"
+            "Starting report data generation"
         );
 
         let report_data = self
@@ -49,7 +49,7 @@ impl ReportGenerator {
             .context("Failed to generate report data from ClickHouse")?;
 
         tracing::info!(
-            operation = "report_generated",
+            operation = "report_data_generated",
             cluster = %self.cluster,
             batch = %self.batch,
             db_count = report_data.db_aggregates.len(),
@@ -60,7 +60,11 @@ impl ReportGenerator {
             "Generated report data successfully"
         );
 
-        // report_data already contains the aggregated data
+        Ok(report_data)
+    }
+
+    pub async fn generate(&self) -> Result<String> {
+        let report_data = self.generate_data().await?;
 
         let template_content = include_str!("../../templates/report.html");
 
@@ -87,7 +91,6 @@ impl ReportGenerator {
             ));
         }
 
-        tracing::info!("Report generation completed successfully");
         Ok(html_content)
     }
 }

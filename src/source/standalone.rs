@@ -23,7 +23,7 @@ impl Config {
             address,
             username,
             password,
-            source_type: None,
+            source_type: Some(SourceType::Standalone),
         }
     }
 

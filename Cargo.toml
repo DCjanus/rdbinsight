@@ -17,6 +17,7 @@ backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.22.1"
 bytes = { version = "1.10.1", features = ["serde"] }
 clap = { version = "4.5.0", features = ["derive", "env"] }
+clap_complete = "4.5.56"
 clickhouse = { git = "https://github.com/ClickHouse/clickhouse-rs.git", features = [
     "time",
 ] } # relay on https://github.com/ClickHouse/clickhouse-rs/pull/250

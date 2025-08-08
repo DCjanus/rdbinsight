@@ -1,0 +1,213 @@
+# Unified CI workflow: fmt, clippy, tests, coverage, and Docker publish
+
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+# Cancel in-flight runs for the same ref to save CI minutes
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (fmt + clippy + coverage)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain (clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install nightly Rust toolchain (rustfmt + llvm-tools-preview)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt, llvm-tools-preview
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache Cargo registry + index
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Run cargo fmt --check (nightly)
+        run: cargo +nightly fmt --all -- --check
+
+      - name: Run cargo clippy (stable)
+        run: cargo clippy --all -- -D warnings
+
+      - name: Generate coverage (nextest)
+        run: |
+          CARGO_LLVM_COV_SETUP=yes \
+          cargo +nightly llvm-cov nextest \
+            --all-features --workspace \
+            --branch --codecov --output-path codecov.json \
+            -- --status-level=all
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
+          files: codecov.json
+          fail_ci_if_error: true
+
+  docker-builds:
+    name: Docker Build & Push (${{ matrix.name }})
+    needs: [tests]
+    if: ${{ github.event_name != 'pull_request' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: amd64
+            platform: linux/amd64
+            runs-on: ubuntu-latest
+          - name: arm64
+            platform: linux/arm64
+            runs-on: ubuntu-24.04-arm64
+    runs-on: ${{ matrix.runs-on }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: |
+            latest=auto
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
+
+      - name: Build and push (${{ matrix.platform }})
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: ${{ matrix.platform }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Persist image digest
+        run: |
+          echo "PLATFORM=${{ matrix.platform }}" > digest.env
+          echo "DIGEST=${{ steps.build.outputs.digest }}" >> digest.env
+        shell: bash
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.name }}
+          path: digest.env
+
+  docker-merge:
+    name: Docker Merge Manifests (multi-arch)
+    runs-on: ubuntu-latest
+    needs: [docker-builds]
+    if: ${{ github.event_name != 'pull_request' }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download digest (amd64)
+        uses: actions/download-artifact@v4
+        with:
+          name: digest-amd64
+          path: digests/amd64
+
+      - name: Download digest (arm64)
+        uses: actions/download-artifact@v4
+        with:
+          name: digest-arm64
+          path: digests/arm64
+
+      - name: Docker metadata (recompute tags)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: |
+            latest=auto
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
+
+      - name: Create and push multi-arch manifest
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          source digests/amd64/digest.env
+          AMD_DIGEST="$DIGEST"
+          source digests/arm64/digest.env
+          ARM_DIGEST="$DIGEST"
+          # docker/metadata-action returns newline-separated tags
+          while IFS= read -r tag; do
+            if [ -n "$tag" ]; then
+              echo "Merging $tag with $IMAGE@${AMD_DIGEST} and $IMAGE@${ARM_DIGEST}"
+              docker buildx imagetools create -t "$tag" \
+                "$IMAGE@${AMD_DIGEST}" \
+                "$IMAGE@${ARM_DIGEST}"
+            fi
+          done <<< "$TAGS"
+
+

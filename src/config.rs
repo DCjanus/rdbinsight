@@ -90,7 +90,7 @@ mod tests {
         let config =
             ClickHouseConfig::new("http://localhost:8123".to_string(), false, None).unwrap();
 
-        assert_eq!(config.database(), "rdbinsight");
+        assert_eq!(config.database, "rdbinsight");
     }
 
     #[test]
@@ -98,7 +98,7 @@ mod tests {
         let config =
             ClickHouseConfig::new("http://localhost:8123/mydb".to_string(), false, None).unwrap();
 
-        assert_eq!(config.database(), "mydb");
+        assert_eq!(config.database, "mydb");
     }
 
     #[test]
@@ -381,26 +381,6 @@ impl ClickHouseConfig {
         );
 
         Ok(())
-    }
-
-    /// Get username (empty string means no username)
-    pub fn username(&self) -> &str {
-        &self.username
-    }
-
-    /// Get password (already parsed)
-    pub fn password(&self) -> Option<&str> {
-        self.password.as_deref()
-    }
-
-    /// Get database name
-    pub fn database(&self) -> &str {
-        &self.database
-    }
-
-    /// Get base URL (already parsed)
-    pub fn base_url(&self) -> &str {
-        &self.base_url
     }
 }
 

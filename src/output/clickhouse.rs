@@ -56,7 +56,7 @@ impl ClickHouseOutput {
 
         debug!(
             operation = "clickhouse_client_init",
-            base_url = %config.base_url(),
+            base_url = %config.base_url,
             "Initializing ClickHouse client"
         );
 
@@ -93,18 +93,18 @@ impl ClickHouseOutput {
             .pool_idle_timeout(Duration::from_secs(90))
             .build(proxy_connector);
 
-        let mut client = Client::with_http_client(http_client).with_url(config.base_url());
+        let mut client = Client::with_http_client(http_client).with_url(&config.base_url);
 
-        let username = config.username();
+        let username = config.username.clone();
         if !username.is_empty() {
             client = client.with_user(username);
         }
 
-        if let Some(password) = config.password() {
+        if let Some(password) = config.password.as_deref() {
             client = client.with_password(password);
         }
 
-        client = client.with_database(config.database());
+        client = client.with_database(&config.database);
 
         Ok(client)
     }

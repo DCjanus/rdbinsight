@@ -102,18 +102,18 @@ async fn get_latest_batch_for_cluster(
     clickhouse_config: &ClickHouseConfig,
     cluster: &str,
 ) -> Result<String> {
-    let mut client_builder = Client::default().with_url(clickhouse_config.base_url());
+    let mut client_builder = Client::default().with_url(&clickhouse_config.base_url);
 
-    let username = clickhouse_config.username();
+    let username = clickhouse_config.username.clone();
     if !username.is_empty() {
         client_builder = client_builder.with_user(username);
     }
 
-    if let Some(password) = clickhouse_config.password() {
+    if let Some(password) = clickhouse_config.password.as_deref() {
         client_builder = client_builder.with_password(password);
     }
 
-    client_builder = client_builder.with_database(clickhouse_config.database());
+    client_builder = client_builder.with_database(&clickhouse_config.database);
 
     let client = client_builder;
 

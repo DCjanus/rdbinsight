@@ -104,7 +104,8 @@ async fn get_latest_batch_for_cluster(
 ) -> Result<String> {
     let mut client_builder = Client::default().with_url(clickhouse_config.base_url());
 
-    if let Some(username) = clickhouse_config.username() {
+    let username = clickhouse_config.username();
+    if !username.is_empty() {
         client_builder = client_builder.with_user(username);
     }
 

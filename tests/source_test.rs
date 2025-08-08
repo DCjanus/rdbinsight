@@ -33,7 +33,7 @@ async fn verify_rdb_content(
     let address = extract_address(&redis.connection_string);
     let cfg = StandaloneConfig::new(
         address,
-        username.map(|s| s.to_string()),
+        username.map(|s| s.to_string()).unwrap_or_default(),
         password.map(|s| s.to_string()),
     );
 
@@ -519,7 +519,7 @@ async fn run_lots_of_strings_feed_more_test(config: FeedMoreTestConfig) -> AnyRe
 
     // Verify RDB content and trace coverage
     let address = extract_address(&redis.connection_string);
-    let cfg = StandaloneConfig::new(address, None, None);
+    let cfg = StandaloneConfig::new(address, String::new(), None);
 
     match cfg.get_rdb_streams().await {
         Ok(mut streams) => {

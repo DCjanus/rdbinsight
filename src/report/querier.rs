@@ -114,7 +114,8 @@ impl ClickHouseQuerier {
     pub async fn new(config: ClickHouseConfig, cluster: String, batch: String) -> AnyResult<Self> {
         let mut client_builder = Client::default().with_url(config.base_url());
 
-        if let Some(username) = config.username() {
+        let username = config.username();
+        if !username.is_empty() {
             client_builder = client_builder.with_user(username);
         }
 

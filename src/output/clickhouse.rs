@@ -95,7 +95,8 @@ impl ClickHouseOutput {
 
         let mut client = Client::with_http_client(http_client).with_url(config.base_url());
 
-        if let Some(username) = config.username() {
+        let username = config.username();
+        if !username.is_empty() {
             client = client.with_user(username);
         }
 

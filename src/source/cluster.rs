@@ -14,7 +14,7 @@ use crate::{
 #[derive(Clone)]
 pub struct Config {
     pub addrs: Vec<String>,
-    pub username: Option<String>,
+    pub username: String,
     pub password: Option<String>,
     pub require_slave: bool,
 }
@@ -102,8 +102,8 @@ impl RdbSourceConfig for Config {
                 .connection_timeout(Duration::from_secs(5))
                 .response_timeout(Duration::from_secs(3));
 
-        if let Some(ref username) = self.username {
-            builder = builder.username(username.clone());
+        if !self.username.is_empty() {
+            builder = builder.username(self.username.clone());
         }
 
         if let Some(ref password) = self.password {

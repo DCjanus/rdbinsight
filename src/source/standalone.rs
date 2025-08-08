@@ -11,19 +11,19 @@ use crate::{
 #[derive(Clone)]
 pub struct Config {
     pub address: String,
-    pub username: Option<String>,
+    pub username: String,
     pub password: Option<String>,
     pub source_type: Option<SourceType>,
 }
 
 impl Config {
     /// Create a new standalone config with default source type
-    pub fn new(address: String, username: Option<String>, password: Option<String>) -> Self {
+    pub fn new(address: String, username: String, password: Option<String>) -> Self {
         Self {
             address,
             username,
             password,
-            source_type: Some(SourceType::Standalone),
+            source_type: None,
         }
     }
 

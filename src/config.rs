@@ -134,13 +134,13 @@ pub enum SourceConfig {
     RedisStandalone {
         cluster_name: String,
         address: String,
-        username: Option<String>,
+        username: String,
         password: Option<String>,
     },
     RedisCluster {
         cluster_name: String,
         addrs: Vec<String>,
-        username: Option<String>,
+        username: String,
         password: Option<String>,
         #[serde(default)]
         require_slave: bool,
@@ -228,8 +228,11 @@ impl RdbSourceConfig for SourceConfig {
 
                 let mut streams = Vec::new();
                 for addr in redis_addrs {
-                    let mut source =
-                        crate::source::standalone::Config::new(addr, None, password.clone());
+                    let mut source = crate::source::standalone::Config::new(
+                        addr,
+                        String::new(),
+                        password.clone(),
+                    );
                     source.source_type = Some(crate::source::SourceType::Codis);
                     let standalone_streams = source.get_rdb_streams().await?;
                     streams.extend(standalone_streams);
@@ -273,8 +276,8 @@ pub struct ClickHouseConfig {
 
     /// Base URL of ClickHouse server (e.g., http[s]://<host>:[port])
     pub base_url: String,
-    /// Username for authentication (optional)
-    pub username: Option<String>,
+    /// Username for authentication (empty string means no username)
+    pub username: String,
     /// Password for authentication (optional)
     pub password: Option<String>,
     /// Database name (defaults to "rdbinsight")
@@ -334,11 +337,7 @@ impl ClickHouseConfig {
         );
 
         // Extract username and password
-        let username = if !parsed_url.username().is_empty() {
-            Some(parsed_url.username().to_string())
-        } else {
-            None
-        };
+        let username = parsed_url.username().to_string();
 
         let password = parsed_url.password().map(|p| p.to_string());
 
@@ -384,9 +383,9 @@ impl ClickHouseConfig {
         Ok(())
     }
 
-    /// Get username (already parsed)
-    pub fn username(&self) -> Option<&str> {
-        self.username.as_deref()
+    /// Get username (empty string means no username)
+    pub fn username(&self) -> &str {
+        &self.username
     }
 
     /// Get password (already parsed)

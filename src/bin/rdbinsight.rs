@@ -69,8 +69,8 @@ struct DumpRedisArgs {
     cluster: String,
 
     /// Redis username
-    #[arg(long)]
-    username: Option<String>,
+    #[arg(long, default_value = "")]
+    username: String,
 
     /// Redis password
     #[arg(long)]
@@ -95,8 +95,8 @@ struct DumpClusterArgs {
     cluster: String,
 
     /// Redis username
-    #[arg(long)]
-    username: Option<String>,
+    #[arg(long, default_value = "")]
+    username: String,
 
     /// Redis password
     #[arg(long)]
@@ -171,9 +171,9 @@ enum OutputCommand {
 #[derive(Parser)]
 struct ClickHouseOutputArgs {
     /// ClickHouse server URL (http[s]://[username[:password]@]host[:port]/[database])
-    /// 
+    ///
     /// Default port: 8123
-    /// 
+    ///
     /// Default database: rdbinsight
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
     url: String,
@@ -202,9 +202,9 @@ struct ReportArgs {
     output: Option<PathBuf>,
 
     /// ClickHouse server URL (http[s]://[username[:password]@]host[:port]/[database])
-    /// 
+    ///
     /// Default port: 8123
-    /// 
+    ///
     /// Default database: rdbinsight
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
     clickhouse_url: String,

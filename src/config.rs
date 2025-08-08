@@ -271,7 +271,7 @@ pub struct ClickHouseConfig {
     pub auto_create_tables: bool,
     pub proxy_url: Option<String>,
 
-    /// Base URL of ClickHouse server (e.g., http://localhost:8123)
+    /// Base URL of ClickHouse server (e.g., http[s]://<host>:[port])
     pub base_url: String,
     /// Username for authentication (optional)
     pub username: Option<String>,

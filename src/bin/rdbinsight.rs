@@ -171,6 +171,10 @@ enum OutputCommand {
 #[derive(Parser)]
 struct ClickHouseOutputArgs {
     /// ClickHouse server URL (http[s]://[username[:password]@]host[:port]/[database])
+    /// 
+    /// Default port: 8123
+    /// 
+    /// Default database: rdbinsight
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
     url: String,
 
@@ -198,6 +202,10 @@ struct ReportArgs {
     output: Option<PathBuf>,
 
     /// ClickHouse server URL (http[s]://[username[:password]@]host[:port]/[database])
+    /// 
+    /// Default port: 8123
+    /// 
+    /// Default database: rdbinsight
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
     clickhouse_url: String,
 

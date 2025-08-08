@@ -2,7 +2,8 @@ use std::{path::PathBuf, pin::Pin, time::Instant};
 
 use anyhow::{Context, Result, anyhow};
 use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, value_parser};
+use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
     config::OutputConfig,
@@ -248,8 +249,18 @@ struct ReportArgs {
 #[derive(Subcommand)]
 enum MiscCommand {
     /// Print recommended ClickHouse schema DDL statements
-    #[command(name = "print-clickhouse-schema")]
+    #[command(name = "clickhouse-schema")]
     PrintClickhouseSchema,
+    /// Generate shell completion script
+    #[command(name = "completion")]
+    GenCompletion(GenCompletionArgs),
+}
+
+#[derive(Parser)]
+struct GenCompletionArgs {
+    /// Shell type (e.g., bash, zsh, fish, elvish, powershell)
+    #[arg(long, value_parser = value_parser!(Shell))]
+    shell: Option<Shell>,
 }
 
 #[tokio::main]
@@ -272,6 +283,16 @@ async fn main() -> Result<()> {
         Command::Misc(misc_cmd) => match misc_cmd {
             MiscCommand::PrintClickhouseSchema => {
                 print_clickhouse_schema();
+                Ok(())
+            }
+            MiscCommand::GenCompletion(args) => {
+                let shell = args.shell.or_else(Shell::from_env).ok_or_else(|| {
+                    anyhow!("Failed to detect shell from environment; please specify --shell")
+                })?;
+
+                let mut cmd = MainCli::command();
+                let bin_name = cmd.get_name().to_string();
+                generate_completion(shell, &mut cmd, bin_name, &mut std::io::stdout());
                 Ok(())
             }
         },

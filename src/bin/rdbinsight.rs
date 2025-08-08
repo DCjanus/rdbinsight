@@ -249,10 +249,10 @@ struct ReportArgs {
 #[derive(Subcommand)]
 enum MiscCommand {
     /// Print recommended ClickHouse schema DDL statements
-    #[command(name = "print-clickhouse-schema")]
+    #[command(name = "clickhouse-schema")]
     PrintClickhouseSchema,
     /// Generate shell completion script
-    #[command(name = "gen-completion")]
+    #[command(name = "completion")]
     GenCompletion(GenCompletionArgs),
 }
 

@@ -17,5 +17,5 @@ jobs:
         uses: quartx-analytics/ghcr-cleaner@v1
         with:
           owner-type: user
-          token: ${{ secrets.GHCR_PAT }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           package-name: ${{ github.event.repository.name }}

@@ -1,15 +1,11 @@
+use anyhow::Context;
 use bytes::Bytes;
 use clickhouse::{Client, Row, insert::Insert};
-use hyper_util::{client::legacy::Client as LegacyClient, rt::TokioExecutor};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::info;
 
-use crate::{
-    config::ClickHouseConfig,
-    helper::{AnyResult, proxy_connector::ProxyConnector, sanitize_url},
-    record::Record,
-};
+use crate::{config::ClickHouseConfig, helper::AnyResult, record::Record};
 
 #[derive(Debug, Clone)]
 pub struct BatchInfo {
@@ -60,7 +56,9 @@ impl ClickHouseOutput {
             "Initializing ClickHouse client"
         );
 
-        let client = Self::create_client(&config)?;
+        let client = config
+            .create_client()
+            .context("Failed to create ClickHouse client")?;
         let output = Self {
             client,
             config: config.clone(),
@@ -71,43 +69,6 @@ impl ClickHouseOutput {
         debug!("ClickHouse initialization completed successfully");
 
         Ok(output)
-    }
-
-    #[doc(hidden)]
-    pub fn create_client(config: &ClickHouseConfig) -> AnyResult<Client> {
-        use std::time::Duration;
-
-        if let Some(proxy_url) = config.proxy_url.as_ref() {
-            let safe_url = sanitize_url(proxy_url);
-            info!(operation = "create_clickhouse_client", proxy_host = %safe_url, "Creating ClickHouse client with proxy");
-        } else {
-            info!(
-                operation = "create_clickhouse_client",
-                "Creating ClickHouse client without proxy"
-            );
-        }
-
-        let proxy_connector = ProxyConnector::new(config.proxy_url.as_deref())
-            .map_err(|e| anyhow::anyhow!("Failed to create proxy connector: {e}"))?;
-        let http_client = LegacyClient::builder(TokioExecutor::new())
-            .pool_idle_timeout(Duration::from_secs(90))
-            .build(proxy_connector);
-
-        let mut client = Client::with_http_client(http_client).with_url(&config.address);
-
-        if let Some(username) = &config.username {
-            client = client.with_user(username);
-        }
-
-        if let Some(password) = &config.password {
-            client = client.with_password(password);
-        }
-
-        if let Some(database) = &config.database {
-            client = client.with_database(database);
-        }
-
-        Ok(client)
     }
 
     async fn validate_or_create_tables(&self) -> AnyResult<()> {
@@ -176,7 +137,7 @@ impl ClickHouseOutput {
                     "auto_create_tables is disabled, failing with missing tables error"
                 );
                 return Err(anyhow::anyhow!(
-                    "Required ClickHouse tables do not exist. Please run 'rdbinsight misc print-clickhouse-schema' to get the DDL statements and create the required tables, or set 'auto_create_tables = true' in your configuration."
+                    "Required ClickHouse tables do not exist. Please run 'rdbinsight misc clickhouse-schema' to get the DDL statements and create the required tables, or set 'auto_create_tables = true' in your configuration."
                 ));
             }
         }
@@ -198,7 +159,7 @@ impl ClickHouseOutput {
         );
 
         Err(anyhow::anyhow!(
-            "Inconsistent ClickHouse schema state. Missing tables/views: {}. Please manually fix the schema by running 'rdbinsight misc print-clickhouse-schema' and creating the missing objects, or drop all existing tables and set 'auto_create_tables = true' to recreate everything.",
+            "Inconsistent ClickHouse schema state. Missing tables/views: {}. Please manually fix the schema by running 'rdbinsight misc clickhouse-schema' and creating the missing objects, or drop all existing tables and set 'auto_create_tables = true' to recreate everything.",
             missing_tables.join(", ")
         ))
     }
@@ -312,6 +273,7 @@ impl ClickHouseOutput {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use url::Url;
 
     use super::*;
     use crate::{
@@ -322,14 +284,9 @@ mod tests {
     #[test]
     fn test_record_to_row_conversion() {
         let client = Client::default();
-        let config = ClickHouseConfig {
-            address: "http://localhost:8123".to_string(),
-            username: None,
-            password: None,
-            database: None,
-            auto_create_tables: false,
-            proxy_url: None,
-        };
+        let config =
+            ClickHouseConfig::new(Url::parse("http://localhost:8123").unwrap(), false, None)
+                .unwrap();
         let output = ClickHouseOutput { client, config };
 
         let batch_info = BatchInfo {

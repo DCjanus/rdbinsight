@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
-use rdbinsight::{helper::AnyResult, output::clickhouse::ClickHouseOutput};
+use rdbinsight::helper::AnyResult;
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
     core::{IntoContainerPort, WaitFor, wait::HttpWaitStrategy},
     runners::AsyncRunner,
 };
 use tracing::debug;
+use url::Url;
 
 mod common;
 
@@ -85,7 +86,10 @@ impl TestInfrastructure {
                     .with_port(CLICKHOUSE_PORT.tcp())
                     .with_response_matcher(|res| res.status().is_success()),
             ))
-            .with_network(network_name.to_string());
+            .with_network(network_name.to_string())
+            .with_env_var("CLICKHOUSE_DB", "rdbinsight")
+            .with_env_var("CLICKHOUSE_USER", "default")
+            .with_env_var("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "1");
 
         let clickhouse_container = clickhouse_image
             .start()
@@ -227,14 +231,13 @@ async fn run_clickhouse_test(test_case: &TestCase) -> AnyResult {
         println!("Proxy URL: {}", proxy);
     }
 
-    let client = ClickHouseOutput::create_client(&rdbinsight::config::ClickHouseConfig {
-        address: clickhouse_url.to_string(),
-        username: None,
-        password: None,
-        database: None,
-        auto_create_tables: false,
+    let client = rdbinsight::config::ClickHouseConfig::new(
+        Url::parse(clickhouse_url).unwrap(),
+        false,
         proxy_url,
-    })?;
+    )?
+    .create_client()
+    .context("Failed to create ClickHouse client")?;
 
     let result: u16 = client
         .query("SELECT 1+1")

@@ -17,8 +17,7 @@ rdbinsight dump cluster \
   --nodes 127.0.0.1:7000,127.0.0.1:7001 \
   --cluster your_cluster \
   clickhouse \
-  --url http://127.0.0.1:8124 \
-  --database rdbinsight \
+  --url http://username:password@127.0.0.1:8124/rdbinsight \
   --auto-create-tables
 ```
 

@@ -14,6 +14,7 @@ use rdbinsight::{
 use time::OffsetDateTime;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use url::Url;
 
 #[derive(Parser)]
 struct MainCli {
@@ -69,8 +70,8 @@ struct DumpRedisArgs {
     cluster: String,
 
     /// Redis username
-    #[arg(long)]
-    username: Option<String>,
+    #[arg(long, default_value = "")]
+    username: String,
 
     /// Redis password
     #[arg(long)]
@@ -95,8 +96,8 @@ struct DumpClusterArgs {
     cluster: String,
 
     /// Redis username
-    #[arg(long)]
-    username: Option<String>,
+    #[arg(long, default_value = "")]
+    username: String,
 
     /// Redis password
     #[arg(long)]
@@ -170,21 +171,13 @@ enum OutputCommand {
 
 #[derive(Parser)]
 struct ClickHouseOutputArgs {
-    /// ClickHouse server URL (e.g., http://127.0.0.1:8124)
+    /// ClickHouse server URL (http[s]://[username[:password]@]host[:port]/[database])
+    ///
+    /// Default port: 8123
+    ///
+    /// Default database: rdbinsight
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
-    url: String,
-
-    /// ClickHouse username
-    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_USERNAME")]
-    username: Option<String>,
-
-    /// ClickHouse password
-    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PASSWORD")]
-    password: Option<String>,
-
-    /// ClickHouse database name
-    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_DATABASE")]
-    database: Option<String>,
+    url: Url,
 
     /// Automatically create tables if they don't exist
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_AUTO_CREATE_TABLES")]
@@ -209,21 +202,13 @@ struct ReportArgs {
     #[clap(short, long, env = "RDBINSIGHT_REPORT_OUTPUT")]
     output: Option<PathBuf>,
 
-    /// ClickHouse server URL (e.g., http://127.0.0.1:8124)
+    /// ClickHouse server URL (http[s]://[username[:password]@]host[:port]/[database])
+    ///
+    /// Default port: 8123
+    ///
+    /// Default database: rdbinsight
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
-    clickhouse_url: String,
-
-    /// ClickHouse username
-    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_USERNAME")]
-    clickhouse_username: Option<String>,
-
-    /// ClickHouse password
-    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PASSWORD")]
-    clickhouse_password: Option<String>,
-
-    /// ClickHouse database name
-    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_DATABASE")]
-    clickhouse_database: Option<String>,
+    clickhouse_url: Url,
 
     /// HTTP proxy URL for ClickHouse connections
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PROXY_URL")]
@@ -355,14 +340,8 @@ fn dump_command_to_config(
     // Extract output config - currently only ClickHouse is supported
     let output_config = match output_cmd {
         OutputCommand::Clickhouse(ch_args) => {
-            let ch_config = ClickHouseConfig {
-                address: ch_args.url,
-                username: ch_args.username,
-                password: ch_args.password,
-                database: ch_args.database,
-                auto_create_tables: ch_args.auto_create_tables,
-                proxy_url: ch_args.proxy_url,
-            };
+            let ch_config =
+                ClickHouseConfig::new(ch_args.url, ch_args.auto_create_tables, ch_args.proxy_url)?;
             OutputConfig::Clickhouse(ch_config)
         }
     };
@@ -721,14 +700,11 @@ async fn commit_batch_with_retry(
 }
 
 async fn run_report(args: ReportArgs) -> Result<()> {
-    let clickhouse_config = rdbinsight::config::ClickHouseConfig {
-        address: args.clickhouse_url,
-        username: args.clickhouse_username,
-        password: args.clickhouse_password,
-        database: args.clickhouse_database,
-        auto_create_tables: false, // Reports don't need auto-creation
-        proxy_url: args.clickhouse_proxy_url,
-    };
+    let clickhouse_config = rdbinsight::config::ClickHouseConfig::new(
+        args.clickhouse_url,
+        false, // Reports don't need auto-creation
+        args.clickhouse_proxy_url,
+    )?;
 
     // Validate the configuration
     clickhouse_config

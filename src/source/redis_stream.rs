@@ -291,7 +291,7 @@ pub enum RDBMode {
 pub struct RedisRdbStream {
     reader: Option<RedisReader>,
     address: String,
-    username: Option<String>,
+    username: String,
     password: Option<String>,
     source_type: SourceType,
 }
@@ -299,7 +299,7 @@ pub struct RedisRdbStream {
 impl RedisRdbStream {
     pub fn new(
         address: String,
-        username: Option<String>,
+        username: String,
         password: Option<String>,
         source_type: SourceType,
     ) -> Self {
@@ -338,7 +338,11 @@ impl RDBStream for RedisRdbStream {
         perform_rdb_handshake(
             &mut buffer,
             &mut stream,
-            self.username.as_deref(),
+            if self.username.is_empty() {
+                None
+            } else {
+                Some(&self.username)
+            },
             self.password.as_deref(),
         )
         .await

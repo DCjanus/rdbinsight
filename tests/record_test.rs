@@ -59,7 +59,7 @@ async fn test_record_stream_integration() -> Result<()> {
     let address = format!("{}:{}", host, port);
 
     // Create standalone config to read RDB
-    let standalone_config = StandaloneConfig::new(address, None, None);
+    let standalone_config = StandaloneConfig::new(address, String::new(), None);
 
     // Get RDB stream
     let mut streams = standalone_config.get_rdb_streams().await?;
@@ -482,7 +482,7 @@ async fn test_record_stream_with_expiry() -> Result<()> {
     let host = redis_instance.container.get_host().await?;
     let port = redis_instance.container.get_host_port_ipv4(6379).await?;
     let address = format!("{}:{}", host, port);
-    let standalone_config = StandaloneConfig::new(address, None, None);
+    let standalone_config = StandaloneConfig::new(address, String::new(), None);
 
     let mut streams = standalone_config.get_rdb_streams().await?;
     let mut stream = streams.remove(0);
@@ -548,7 +548,7 @@ async fn test_record_stream_empty_database() -> Result<()> {
     let host = redis_instance.container.get_host().await?;
     let port = redis_instance.container.get_host_port_ipv4(6379).await?;
     let address = format!("{}:{}", host, port);
-    let standalone_config = StandaloneConfig::new(address, None, None);
+    let standalone_config = StandaloneConfig::new(address, String::new(), None);
 
     let mut streams = standalone_config.get_rdb_streams().await?;
     let mut stream = streams.remove(0);

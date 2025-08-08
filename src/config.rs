@@ -1,8 +1,9 @@
 use std::{path::PathBuf, pin::Pin};
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use crate::{
     helper::AnyResult,
@@ -81,19 +82,76 @@ impl DumpConfig {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use url::Url;
+
+    use super::*;
+
+    #[test]
+    fn test_clickhouse_config_default_database() {
+        let config =
+            ClickHouseConfig::new(Url::parse("http://localhost:8123").unwrap(), false, None)
+                .unwrap();
+
+        assert_eq!(config.database, "rdbinsight");
+    }
+
+    #[test]
+    fn test_clickhouse_config_custom_database() {
+        let config = ClickHouseConfig::new(
+            Url::parse("http://localhost:8123/mydb").unwrap(),
+            false,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(config.database, "mydb");
+    }
+
+    #[test]
+    fn test_clickhouse_config_validation() {
+        let config =
+            ClickHouseConfig::new(Url::parse("http://localhost:8123").unwrap(), false, None)
+                .unwrap();
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_clickhouse_config_invalid_url() {
+        // Invalid scheme should be rejected by ClickHouseConfig::new
+        let config =
+            ClickHouseConfig::new(Url::parse("tcp://localhost:8123").unwrap(), false, None);
+
+        assert!(config.is_err());
+    }
+
+    #[test]
+    fn test_clickhouse_config_invalid_database_name() {
+        let config = ClickHouseConfig::new(
+            Url::parse("http://localhost:8123/invalid-db-name!").unwrap(),
+            false,
+            None,
+        );
+
+        assert!(config.is_err());
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SourceConfig {
     RedisStandalone {
         cluster_name: String,
         address: String,
-        username: Option<String>,
+        username: String,
         password: Option<String>,
     },
     RedisCluster {
         cluster_name: String,
         addrs: Vec<String>,
-        username: Option<String>,
+        username: String,
         password: Option<String>,
         #[serde(default)]
         require_slave: bool,
@@ -181,9 +239,11 @@ impl RdbSourceConfig for SourceConfig {
 
                 let mut streams = Vec::new();
                 for addr in redis_addrs {
-                    let mut source =
-                        crate::source::standalone::Config::new(addr, None, password.clone());
-                    source.source_type = Some(crate::source::SourceType::Codis);
+                    let source = crate::source::standalone::Config::new(
+                        addr,
+                        String::new(),
+                        password.clone(),
+                    );
                     let standalone_streams = source.get_rdb_streams().await?;
                     streams.extend(standalone_streams);
                 }
@@ -220,49 +280,144 @@ pub enum OutputConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ClickHouseConfig {
-    pub address: String,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub database: Option<String>,
     #[serde(default)]
     pub auto_create_tables: bool,
     pub proxy_url: Option<String>,
+
+    /// Address of ClickHouse server (e.g., http[s]://<host>:[port])
+    pub address: String,
+    /// Username for authentication (empty string means no username)
+    pub username: String,
+    /// Password for authentication (optional)
+    pub password: Option<String>,
+    /// Database name (defaults to "rdbinsight")
+    #[serde(default = "default_database")]
+    pub database: String,
 }
 
 impl ClickHouseConfig {
+    /// Create a new ClickHouseConfig from URL
+    pub fn new(url: Url, auto_create_tables: bool, proxy_url: Option<String>) -> AnyResult<Self> {
+        use anyhow::ensure;
+
+        ensure!(
+            url.scheme() == "http" || url.scheme() == "https",
+            "ClickHouse URL must start with http:// or https://, got: '{}'",
+            url
+        );
+
+        ensure!(
+            url.host_str().is_some(),
+            "ClickHouse URL must contain a host"
+        );
+
+        let database = url
+            .path_segments()
+            .and_then(|mut segments| segments.next())
+            .filter(|db| !db.is_empty())
+            .map(|db| db.to_string())
+            .unwrap_or_else(|| "rdbinsight".to_string());
+
+        ensure!(
+            database
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-'),
+            "ClickHouse database name '{}' contains invalid characters. Only alphanumeric, underscore, and hyphen are allowed",
+            database
+        );
+
+        let username = url.username().to_string();
+
+        let password = url.password().map(|p| p.to_string());
+
+        let mut address = url.clone();
+        address
+            .set_username("")
+            .map_err(|_| anyhow!("failed to set username"))?;
+        address
+            .set_password(None)
+            .map_err(|_| anyhow!("failed to set password"))?;
+        address.set_path("");
+        address.set_query(None);
+
+        Ok(Self {
+            auto_create_tables,
+            proxy_url,
+            address: address.to_string(),
+            username,
+            password,
+            database,
+        })
+    }
+
     /// Validate the ClickHouse configuration
     pub fn validate(&self) -> AnyResult<()> {
         use anyhow::ensure;
 
         ensure!(
             !self.address.is_empty(),
-            "ClickHouse address cannot be empty"
+            "ClickHouse base URL cannot be empty"
         );
 
-        // Basic URL format validation
         ensure!(
             self.address.starts_with("http://") || self.address.starts_with("https://"),
-            "ClickHouse address must start with http:// or https://, got: '{}'",
-            self.address
+            "ClickHouse base URL must start with http:// or https://"
         );
 
-        // Validate database name if provided
-        if let Some(database) = &self.database {
-            ensure!(
-                !database.is_empty(),
-                "ClickHouse database name cannot be empty string"
-            );
-
-            // Basic database name validation (alphanumeric, underscore, hyphen)
-            ensure!(
-                database
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-'),
-                "ClickHouse database name '{}' contains invalid characters. Only alphanumeric, underscore, and hyphen are allowed",
-                database
-            );
-        }
+        ensure!(
+            self.database
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-'),
+            "ClickHouse database name '{}' contains invalid characters. Only alphanumeric, underscore, and hyphen are allowed",
+            self.database
+        );
 
         Ok(())
     }
+
+    /// Create a ClickHouse client based on this configuration
+    pub fn create_client(&self) -> AnyResult<clickhouse::Client> {
+        use std::time::Duration;
+
+        use clickhouse::Client;
+        use hyper_util::{client::legacy::Client as LegacyClient, rt::TokioExecutor};
+        use tracing::info;
+
+        use crate::helper::{proxy_connector::ProxyConnector, sanitize_url};
+
+        if let Some(proxy_url) = self.proxy_url.as_ref() {
+            let safe_url = sanitize_url(proxy_url);
+            info!(operation = "create_clickhouse_client", proxy_host = %safe_url, "Creating ClickHouse client with proxy");
+        } else {
+            info!(
+                operation = "create_clickhouse_client",
+                "Creating ClickHouse client without proxy"
+            );
+        }
+
+        let proxy_connector = ProxyConnector::new(self.proxy_url.as_deref())
+            .map_err(|e| anyhow::anyhow!("Failed to create proxy connector: {e}"))?;
+        let http_client = LegacyClient::builder(TokioExecutor::new())
+            .pool_idle_timeout(Duration::from_secs(90))
+            .build(proxy_connector);
+
+        let mut client = Client::with_http_client(http_client).with_url(&self.address);
+
+        let username = self.username.clone();
+        if !username.is_empty() {
+            client = client.with_user(username);
+        }
+
+        if let Some(password) = self.password.as_deref() {
+            client = client.with_password(password);
+        }
+
+        client = client.with_database(&self.database);
+
+        Ok(client)
+    }
+}
+
+fn default_database() -> String {
+    "rdbinsight".to_string()
 }

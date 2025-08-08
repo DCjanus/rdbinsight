@@ -1,4 +1,4 @@
-use anyhow::Result as AnyResult;
+use anyhow::{Context, Result as AnyResult};
 use bytes::Bytes;
 use clickhouse::{Client, Row};
 use serde::{Deserialize, Serialize};
@@ -112,21 +112,9 @@ pub struct ClickHouseQuerier {
 
 impl ClickHouseQuerier {
     pub async fn new(config: ClickHouseConfig, cluster: String, batch: String) -> AnyResult<Self> {
-        let mut client_builder = Client::default().with_url(&config.address);
-
-        if let Some(username) = &config.username {
-            client_builder = client_builder.with_user(username);
-        }
-
-        if let Some(password) = &config.password {
-            client_builder = client_builder.with_password(password);
-        }
-
-        if let Some(database) = &config.database {
-            client_builder = client_builder.with_database(database);
-        }
-
-        let client = client_builder;
+        let client = config
+            .create_client()
+            .context("Failed to create ClickHouse client")?;
 
         Ok(Self {
             client,

@@ -45,14 +45,14 @@ pub struct RedisConfig {
     diskless: bool,
     snapshot: bool,
     cluster_config_file: Option<String>,
-    username: Option<String>,
+    username: String,
     password: Option<String>,
 }
 
 impl RedisConfig {
     /// Configure Redis with username for authentication
     pub fn with_username(mut self, username: impl Into<String>) -> Self {
-        self.username = Some(username.into());
+        self.username = username.into();
         self
     }
 
@@ -99,7 +99,7 @@ impl Default for RedisConfig {
             diskless: false,
             snapshot: true,
             cluster_config_file: None,
-            username: None,
+            username: String::new(),
             password: None,
         }
     }
@@ -201,9 +201,10 @@ impl RedisInstance {
         };
 
         // If both username and password are configured, create ACL user after startup
-        if let (Some(username), Some(password)) = (&cfg.username, &cfg.password) {
+        if !cfg.username.is_empty() && cfg.password.is_some() {
+            let password = cfg.password.as_ref().unwrap();
             instance
-                .create_acl_user(username, password, cfg.password.as_deref())
+                .create_acl_user(&cfg.username, password, cfg.password.as_deref())
                 .await?;
         }
 

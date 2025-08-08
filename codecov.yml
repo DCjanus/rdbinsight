@@ -2,7 +2,7 @@ coverage:
   status:
     project:
       default:
-        target: 60
+        target: 70
 
 ignore:
   - "src/bin/**"
@@ -17,10 +17,6 @@ github_checks:
   annotations: true 
 
 component_management:
-  default_rules:
-    statuses:
-      - type: project
-        target: 70
   individual_components:
     - component_id: component_parser
       name: "parser"

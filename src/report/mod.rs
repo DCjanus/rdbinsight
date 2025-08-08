@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clickhouse::{Client, Row};
+use clickhouse::Row;
 use serde::Deserialize;
 use time::OffsetDateTime;
 
@@ -102,20 +102,9 @@ async fn get_latest_batch_for_cluster(
     clickhouse_config: &ClickHouseConfig,
     cluster: &str,
 ) -> Result<String> {
-    let mut client_builder = Client::default().with_url(&clickhouse_config.address);
-
-    let username = clickhouse_config.username.clone();
-    if !username.is_empty() {
-        client_builder = client_builder.with_user(username);
-    }
-
-    if let Some(password) = clickhouse_config.password.as_deref() {
-        client_builder = client_builder.with_password(password);
-    }
-
-    client_builder = client_builder.with_database(&clickhouse_config.database);
-
-    let client = client_builder;
+    let client = clickhouse_config
+        .create_client()
+        .context("Failed to create ClickHouse client")?;
 
     let query = "
         SELECT batch

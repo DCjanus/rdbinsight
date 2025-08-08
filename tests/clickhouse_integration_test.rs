@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rdbinsight::{helper::AnyResult, output::clickhouse::ClickHouseOutput};
+use rdbinsight::helper::AnyResult;
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
     core::{IntoContainerPort, WaitFor, wait::HttpWaitStrategy},
@@ -230,11 +230,10 @@ async fn run_clickhouse_test(test_case: &TestCase) -> AnyResult {
         println!("Proxy URL: {}", proxy);
     }
 
-    let client = ClickHouseOutput::create_client(&rdbinsight::config::ClickHouseConfig::new(
-        clickhouse_url.to_string(),
-        false,
-        proxy_url,
-    )?)?;
+    let client =
+        rdbinsight::config::ClickHouseConfig::new(clickhouse_url.to_string(), false, proxy_url)?
+            .create_client()
+            .context("Failed to create ClickHouse client")?;
 
     let result: u16 = client
         .query("SELECT 1+1")

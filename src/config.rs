@@ -381,6 +381,48 @@ impl ClickHouseConfig {
 
         Ok(())
     }
+
+    /// Create a ClickHouse client based on this configuration
+    pub fn create_client(&self) -> AnyResult<clickhouse::Client> {
+        use std::time::Duration;
+
+        use clickhouse::Client;
+        use hyper_util::{client::legacy::Client as LegacyClient, rt::TokioExecutor};
+        use tracing::info;
+
+        use crate::helper::{proxy_connector::ProxyConnector, sanitize_url};
+
+        if let Some(proxy_url) = self.proxy_url.as_ref() {
+            let safe_url = sanitize_url(proxy_url);
+            info!(operation = "create_clickhouse_client", proxy_host = %safe_url, "Creating ClickHouse client with proxy");
+        } else {
+            info!(
+                operation = "create_clickhouse_client",
+                "Creating ClickHouse client without proxy"
+            );
+        }
+
+        let proxy_connector = ProxyConnector::new(self.proxy_url.as_deref())
+            .map_err(|e| anyhow::anyhow!("Failed to create proxy connector: {e}"))?;
+        let http_client = LegacyClient::builder(TokioExecutor::new())
+            .pool_idle_timeout(Duration::from_secs(90))
+            .build(proxy_connector);
+
+        let mut client = Client::with_http_client(http_client).with_url(&self.address);
+
+        let username = self.username.clone();
+        if !username.is_empty() {
+            client = client.with_user(username);
+        }
+
+        if let Some(password) = self.password.as_deref() {
+            client = client.with_password(password);
+        }
+
+        client = client.with_database(&self.database);
+
+        Ok(client)
+    }
 }
 
 fn default_database() -> String {

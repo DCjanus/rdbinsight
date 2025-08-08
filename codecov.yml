@@ -20,7 +20,7 @@ component_management:
   default_rules:
     statuses:
       - type: project
-        target: 60
+        target: 70
   individual_components:
     - component_id: component_parser
       name: "parser"

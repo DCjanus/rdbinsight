@@ -115,16 +115,14 @@ impl ClickHouseQuerier {
         let mut client_builder = Client::default().with_url(config.base_url());
 
         if let Some(username) = config.username() {
-            client_builder = client_builder.with_user(&username);
+            client_builder = client_builder.with_user(username);
         }
 
         if let Some(password) = config.password() {
-            client_builder = client_builder.with_password(&password);
+            client_builder = client_builder.with_password(password);
         }
 
-        if let Some(database) = config.database() {
-            client_builder = client_builder.with_database(&database);
-        }
+        client_builder = client_builder.with_database(config.database());
 
         let client = client_builder;
 

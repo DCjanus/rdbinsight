@@ -56,7 +56,7 @@ impl ClickHouseOutput {
 
         debug!(
             operation = "clickhouse_client_init",
-            address = %config.address,
+            base_url = %config.base_url(),
             "Initializing ClickHouse client"
         );
 
@@ -96,16 +96,14 @@ impl ClickHouseOutput {
         let mut client = Client::with_http_client(http_client).with_url(config.base_url());
 
         if let Some(username) = config.username() {
-            client = client.with_user(&username);
+            client = client.with_user(username);
         }
 
         if let Some(password) = config.password() {
-            client = client.with_password(&password);
+            client = client.with_password(password);
         }
 
-        if let Some(database) = config.database() {
-            client = client.with_database(&database);
-        }
+        client = client.with_database(config.database());
 
         Ok(client)
     }
@@ -322,11 +320,8 @@ mod tests {
     #[test]
     fn test_record_to_row_conversion() {
         let client = Client::default();
-        let config = ClickHouseConfig {
-            address: "http://localhost:8123".to_string(),
-            auto_create_tables: false,
-            proxy_url: None,
-        };
+        let config =
+            ClickHouseConfig::new("http://localhost:8123".to_string(), false, None).unwrap();
         let output = ClickHouseOutput { client, config };
 
         let batch_info = BatchInfo {

@@ -81,6 +81,53 @@ impl DumpConfig {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clickhouse_config_default_database() {
+        let config =
+            ClickHouseConfig::new("http://localhost:8123".to_string(), false, None).unwrap();
+
+        assert_eq!(config.database(), "rdbinsight");
+    }
+
+    #[test]
+    fn test_clickhouse_config_custom_database() {
+        let config =
+            ClickHouseConfig::new("http://localhost:8123/mydb".to_string(), false, None).unwrap();
+
+        assert_eq!(config.database(), "mydb");
+    }
+
+    #[test]
+    fn test_clickhouse_config_validation() {
+        let config =
+            ClickHouseConfig::new("http://localhost:8123".to_string(), false, None).unwrap();
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_clickhouse_config_invalid_url() {
+        let config = ClickHouseConfig::new("invalid-url".to_string(), false, None);
+
+        assert!(config.is_err());
+    }
+
+    #[test]
+    fn test_clickhouse_config_invalid_database_name() {
+        let config = ClickHouseConfig::new(
+            "http://localhost:8123/invalid-db-name!".to_string(),
+            false,
+            None,
+        );
+
+        assert!(config.is_err());
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SourceConfig {
@@ -220,97 +267,144 @@ pub enum OutputConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ClickHouseConfig {
-    pub address: String,
     #[serde(default)]
     pub auto_create_tables: bool,
     pub proxy_url: Option<String>,
+
+    /// Base URL of ClickHouse server (e.g., http://localhost:8123)
+    pub base_url: String,
+    /// Username for authentication (optional)
+    pub username: Option<String>,
+    /// Password for authentication (optional)
+    pub password: Option<String>,
+    /// Database name (defaults to "rdbinsight")
+    #[serde(default = "default_database")]
+    pub database: String,
 }
 
 impl ClickHouseConfig {
-    /// Validate the ClickHouse configuration
-    pub fn validate(&self) -> AnyResult<()> {
+    /// Create a new ClickHouseConfig from URL
+    pub fn new(
+        url: String,
+        auto_create_tables: bool,
+        proxy_url: Option<String>,
+    ) -> AnyResult<Self> {
         use anyhow::ensure;
 
-        ensure!(
-            !self.address.is_empty(),
-            "ClickHouse address cannot be empty"
-        );
+        ensure!(!url.is_empty(), "ClickHouse URL cannot be empty");
 
         // Basic URL format validation
         ensure!(
-            self.address.starts_with("http://") || self.address.starts_with("https://"),
-            "ClickHouse address must start with http:// or https://, got: '{}'",
-            self.address
+            url.starts_with("http://") || url.starts_with("https://"),
+            "ClickHouse URL must start with http:// or https://, got: '{}'",
+            url
         );
 
         // Parse URL to validate format and extract components
-        let url = url::Url::parse(&self.address)
+        let parsed_url = url::Url::parse(&url)
             .map_err(|e| anyhow::anyhow!("Invalid ClickHouse URL format: {}", e))?;
 
         // Validate scheme
         ensure!(
-            url.scheme() == "http" || url.scheme() == "https",
+            parsed_url.scheme() == "http" || parsed_url.scheme() == "https",
             "ClickHouse URL must use http or https scheme"
         );
 
         // Validate host
         ensure!(
-            url.host_str().is_some(),
+            parsed_url.host_str().is_some(),
             "ClickHouse URL must contain a host"
         );
 
-        // Validate database name from path if provided
-        if let Some(segments) = url.path_segments() {
-            let path_parts: Vec<&str> = segments.collect();
-            if !path_parts.is_empty() && !path_parts[0].is_empty() {
-                let database = path_parts[0];
-                ensure!(
-                    database
-                        .chars()
-                        .all(|c| c.is_alphanumeric() || c == '_' || c == '-'),
-                    "ClickHouse database name '{}' contains invalid characters. Only alphanumeric, underscore, and hyphen are allowed",
-                    database
-                );
-            }
-        }
+        // Extract database name from path, default to "rdbinsight"
+        let database = parsed_url
+            .path_segments()
+            .and_then(|mut segments| segments.next())
+            .filter(|db| !db.is_empty())
+            .map(|db| db.to_string())
+            .unwrap_or_else(|| "rdbinsight".to_string());
+
+        // Validate database name
+        ensure!(
+            database
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-'),
+            "ClickHouse database name '{}' contains invalid characters. Only alphanumeric, underscore, and hyphen are allowed",
+            database
+        );
+
+        // Extract username and password
+        let username = if !parsed_url.username().is_empty() {
+            Some(parsed_url.username().to_string())
+        } else {
+            None
+        };
+
+        let password = parsed_url.password().map(|p| p.to_string());
+
+        // Build base URL
+        let mut base_url = parsed_url.clone();
+        base_url.set_username("").ok();
+        base_url.set_password(None).ok();
+        base_url.set_path("");
+        base_url.set_query(None);
+
+        Ok(Self {
+            auto_create_tables,
+            proxy_url,
+            base_url: base_url.to_string(),
+            username,
+            password,
+            database,
+        })
+    }
+
+    /// Validate the ClickHouse configuration
+    pub fn validate(&self) -> AnyResult<()> {
+        use anyhow::ensure;
+
+        ensure!(
+            !self.base_url.is_empty(),
+            "ClickHouse base URL cannot be empty"
+        );
+
+        ensure!(
+            self.base_url.starts_with("http://") || self.base_url.starts_with("https://"),
+            "ClickHouse base URL must start with http:// or https://"
+        );
+
+        ensure!(
+            self.database
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-'),
+            "ClickHouse database name '{}' contains invalid characters. Only alphanumeric, underscore, and hyphen are allowed",
+            self.database
+        );
 
         Ok(())
     }
 
-    /// Extract username from URL
-    pub fn username(&self) -> Option<String> {
-        url::Url::parse(&self.address)
-            .ok()
-            .map(|url| url.username().to_string())
-            .filter(|u| !u.is_empty())
+    /// Get username (already parsed)
+    pub fn username(&self) -> Option<&str> {
+        self.username.as_deref()
     }
 
-    /// Extract password from URL
-    pub fn password(&self) -> Option<String> {
-        url::Url::parse(&self.address)
-            .ok()
-            .and_then(|url| url.password().map(|p| p.to_string()))
+    /// Get password (already parsed)
+    pub fn password(&self) -> Option<&str> {
+        self.password.as_deref()
     }
 
-    /// Extract database name from URL path
-    pub fn database(&self) -> Option<String> {
-        url::Url::parse(&self.address).ok().and_then(|url| {
-            url.path_segments()
-                .and_then(|mut segments| segments.next())
-                .filter(|db| !db.is_empty())
-                .map(|db| db.to_string())
-        })
+    /// Get database name
+    pub fn database(&self) -> &str {
+        &self.database
     }
 
-    /// Extract base URL without path, username, and password
-    pub fn base_url(&self) -> String {
-        if let Ok(mut url) = url::Url::parse(&self.address) {
-            url.set_username("").ok();
-            url.set_password(None).ok();
-            url.set_path("");
-            url.to_string()
-        } else {
-            self.address.clone()
-        }
+    /// Get base URL (already parsed)
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
+}
+
+fn default_database() -> String {
+    "rdbinsight".to_string()
 }

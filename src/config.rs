@@ -273,8 +273,8 @@ pub struct ClickHouseConfig {
     pub auto_create_tables: bool,
     pub proxy_url: Option<String>,
 
-    /// Base URL of ClickHouse server (e.g., http[s]://<host>:[port])
-    pub base_url: String,
+    /// Address of ClickHouse server (e.g., http[s]://<host>:[port])
+    pub address: String,
     /// Username for authentication (empty string means no username)
     pub username: String,
     /// Password for authentication (optional)
@@ -340,17 +340,17 @@ impl ClickHouseConfig {
 
         let password = parsed_url.password().map(|p| p.to_string());
 
-        // Build base URL
-        let mut base_url = parsed_url.clone();
-        base_url.set_username("").ok();
-        base_url.set_password(None).ok();
-        base_url.set_path("");
-        base_url.set_query(None);
+        // Build address
+        let mut address = parsed_url.clone();
+        address.set_username("").ok();
+        address.set_password(None).ok();
+        address.set_path("");
+        address.set_query(None);
 
         Ok(Self {
             auto_create_tables,
             proxy_url,
-            base_url: base_url.to_string(),
+            address: address.to_string(),
             username,
             password,
             database,
@@ -362,12 +362,12 @@ impl ClickHouseConfig {
         use anyhow::ensure;
 
         ensure!(
-            !self.base_url.is_empty(),
+            !self.address.is_empty(),
             "ClickHouse base URL cannot be empty"
         );
 
         ensure!(
-            self.base_url.starts_with("http://") || self.base_url.starts_with("https://"),
+            self.address.starts_with("http://") || self.address.starts_with("https://"),
             "ClickHouse base URL must start with http:// or https://"
         );
 

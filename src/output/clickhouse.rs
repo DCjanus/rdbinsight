@@ -273,6 +273,7 @@ impl ClickHouseOutput {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use url::Url;
 
     use super::*;
     use crate::{
@@ -284,7 +285,8 @@ mod tests {
     fn test_record_to_row_conversion() {
         let client = Client::default();
         let config =
-            ClickHouseConfig::new("http://localhost:8123".to_string(), false, None).unwrap();
+            ClickHouseConfig::new(Url::parse("http://localhost:8123").unwrap(), false, None)
+                .unwrap();
         let output = ClickHouseOutput { client, config };
 
         let batch_info = BatchInfo {

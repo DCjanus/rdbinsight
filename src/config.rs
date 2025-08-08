@@ -84,20 +84,27 @@ impl DumpConfig {
 
 #[cfg(test)]
 mod tests {
+    use url::Url;
+
     use super::*;
 
     #[test]
     fn test_clickhouse_config_default_database() {
         let config =
-            ClickHouseConfig::new("http://localhost:8123".to_string(), false, None).unwrap();
+            ClickHouseConfig::new(Url::parse("http://localhost:8123").unwrap(), false, None)
+                .unwrap();
 
         assert_eq!(config.database, "rdbinsight");
     }
 
     #[test]
     fn test_clickhouse_config_custom_database() {
-        let config =
-            ClickHouseConfig::new("http://localhost:8123/mydb".to_string(), false, None).unwrap();
+        let config = ClickHouseConfig::new(
+            Url::parse("http://localhost:8123/mydb").unwrap(),
+            false,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(config.database, "mydb");
     }
@@ -105,14 +112,17 @@ mod tests {
     #[test]
     fn test_clickhouse_config_validation() {
         let config =
-            ClickHouseConfig::new("http://localhost:8123".to_string(), false, None).unwrap();
+            ClickHouseConfig::new(Url::parse("http://localhost:8123").unwrap(), false, None)
+                .unwrap();
 
         assert!(config.validate().is_ok());
     }
 
     #[test]
     fn test_clickhouse_config_invalid_url() {
-        let config = ClickHouseConfig::new("invalid-url".to_string(), false, None);
+        // Invalid scheme should be rejected by ClickHouseConfig::new
+        let config =
+            ClickHouseConfig::new(Url::parse("tcp://localhost:8123").unwrap(), false, None);
 
         assert!(config.is_err());
     }
@@ -120,7 +130,7 @@ mod tests {
     #[test]
     fn test_clickhouse_config_invalid_database_name() {
         let config = ClickHouseConfig::new(
-            "http://localhost:8123/invalid-db-name!".to_string(),
+            Url::parse("http://localhost:8123/invalid-db-name!").unwrap(),
             false,
             None,
         );

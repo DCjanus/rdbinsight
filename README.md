@@ -2,7 +2,6 @@
 
 [![codecov](https://codecov.io/gh/DCjanus/rdbinsight/graph/badge.svg?token=KXVIGig53g)](https://codecov.io/gh/DCjanus/rdbinsight)
 [![dependency status](https://deps.rs/repo/github/dcjanus/rdbinsight/status.svg)](https://deps.rs/repo/github/dcjanus/rdbinsight)
-
 [![CI](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml/badge.svg)](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml)
 
 RDBInsight is a Redis analysis and diagnostic tool that converts RDB snapshots into structured data suitable for OLAP workloads, helping engineers investigate memory and performance issues.

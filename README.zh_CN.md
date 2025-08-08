@@ -2,7 +2,6 @@
 
 [![codecov](https://codecov.io/gh/DCjanus/rdbinsight/graph/badge.svg?token=KXVIGig53g)](https://codecov.io/gh/DCjanus/rdbinsight)
 [![dependency status](https://deps.rs/repo/github/dcjanus/rdbinsight/status.svg)](https://deps.rs/repo/github/dcjanus/rdbinsight)
-
 [![CI](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml/badge.svg)](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml)
 
 RDBInsight 是一款 Redis 分析与诊断工具，通过将 RDB 快照转换为便于 OLAP 处理的结构化数据，帮助定位内存及性能相关问题。

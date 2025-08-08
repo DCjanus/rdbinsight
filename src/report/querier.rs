@@ -303,7 +303,8 @@ impl ClickHouseQuerier {
     async fn initialize_prefix_discovery(&self) -> AnyResult<(u64, Vec<PrefixPartition>)> {
         let initial_partitions = self.get_prefix_partitions(&Bytes::new()).await?;
         let total_size: u64 = initial_partitions.iter().map(|p| p.total_size).sum();
-        let threshold = total_size / 100; // 1% threshold
+        // 1% threshold with a minimum of 1 to avoid zero threshold on tiny datasets
+        let threshold = (total_size / 100).max(1);
 
         tracing::info!(
             operation = "dynamic_prefix_discovery_start",
@@ -327,6 +328,7 @@ impl ClickHouseQuerier {
 
         // Process initial partitions directly
         self.process_partitions(
+            &Bytes::new(),
             initial_partitions,
             threshold,
             &mut significant_prefixes,
@@ -345,6 +347,7 @@ impl ClickHouseQuerier {
 
             let partitions = self.get_prefix_partitions(&current_prefix).await?;
             self.process_partitions(
+                &current_prefix,
                 partitions,
                 threshold,
                 &mut significant_prefixes,
@@ -358,6 +361,7 @@ impl ClickHouseQuerier {
 
     async fn process_partitions(
         &self,
+        parent_prefix: &Bytes,
         partitions: Vec<PrefixPartition>,
         threshold: u64,
         significant_prefixes: &mut Vec<PrefixAggregate>,
@@ -366,6 +370,11 @@ impl ClickHouseQuerier {
         for partition in partitions {
             if partition.total_size >= threshold {
                 let lcp = longest_common_prefix(&partition.min_key, &partition.max_key);
+
+                // Only consider deeper prefixes; skip if LCP does not extend the parent
+                if lcp.len() <= parent_prefix.len() {
+                    continue;
+                }
 
                 tracing::debug!(
                     operation = "significant_prefix_found",

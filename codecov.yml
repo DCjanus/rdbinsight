@@ -2,7 +2,7 @@ coverage:
   status:
     project:
       default:
-        target: 60
+        target: 70
 
 ignore:
   - "src/bin/**"
@@ -17,10 +17,6 @@ github_checks:
   annotations: true 
 
 component_management:
-  default_rules:
-    statuses:
-      - type: project
-        target: 60
   individual_components:
     - component_id: component_parser
       name: "parser"
@@ -38,3 +34,10 @@ component_management:
           # Temporarily lower coverage target for `source`.
           # TODO: Add testcontainers-based Redis Cluster & Codis integration tests and raise this to 80.
           target: 45
+    - component_id: component_report
+      name: "report"
+      paths:
+        - "src/report/**"
+      statuses:
+        - type: project
+          target: 80

@@ -9,9 +9,14 @@ use tracing::debug;
 use url::Url;
 
 mod common;
+use common::clickhouse::start_clickhouse;
 
+// Kept for historical context; now handled in common::clickhouse
+#[allow(dead_code)]
 const CLICKHOUSE_IMAGE: &str = "clickhouse/clickhouse-server";
+#[allow(dead_code)]
 const CLICKHOUSE_TAG: &str = "23.8";
+#[allow(dead_code)]
 const CLICKHOUSE_PORT: u16 = 8123;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,41 +84,12 @@ impl TestInfrastructure {
     }
 
     async fn setup_clickhouse(network_name: &str) -> Result<ClickHouseSetup> {
-        let clickhouse_image = GenericImage::new(CLICKHOUSE_IMAGE, CLICKHOUSE_TAG)
-            .with_exposed_port(CLICKHOUSE_PORT.tcp())
-            .with_wait_for(WaitFor::http(
-                HttpWaitStrategy::new("/ping")
-                    .with_port(CLICKHOUSE_PORT.tcp())
-                    .with_response_matcher(|res| res.status().is_success()),
-            ))
-            .with_network(network_name.to_string())
-            .with_env_var("CLICKHOUSE_DB", "rdbinsight")
-            .with_env_var("CLICKHOUSE_USER", "default")
-            .with_env_var("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "1");
-
-        let clickhouse_container = clickhouse_image
-            .start()
-            .await
-            .context("Failed to start ClickHouse container")?;
+        let inst = start_clickhouse(Some(network_name)).await?;
         debug!("ClickHouse container started");
-
-        let clickhouse_host_port = clickhouse_container
-            .get_host_port_ipv4(CLICKHOUSE_PORT)
-            .await
-            .context("Failed to get ClickHouse container host port")?;
-
-        let clickhouse_internal_ip = clickhouse_container
-            .get_bridge_ip_address()
-            .await
-            .context("Failed to get ClickHouse container bridge IP address")?;
-
-        let internal_url = format!("http://{clickhouse_internal_ip}:{CLICKHOUSE_PORT}");
-        let host_url = format!("http://127.0.0.1:{clickhouse_host_port}");
-
         Ok(ClickHouseSetup {
-            _container: clickhouse_container,
-            internal_url,
-            host_url,
+            _container: inst.container,
+            internal_url: inst.internal_url,
+            host_url: inst.host_url,
         })
     }
 

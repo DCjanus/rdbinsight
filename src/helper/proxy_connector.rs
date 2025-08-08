@@ -66,20 +66,6 @@ impl ProxyConnector {
             _ => bail!("Unsupported proxy scheme: {}", url.scheme()),
         }
     }
-
-    /// Create with authentication for SOCKS5
-    pub fn with_socks5_auth(
-        proxy_url: &str,
-        username: String,
-        password: String,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let mut connector = HttpConnector::new();
-        connector.set_keepalive(Some(std::time::Duration::from_secs(30)));
-
-        let parsed_url: Uri = proxy_url.parse()?;
-        let socks = SocksV5::new(parsed_url, connector).with_auth(username, password);
-        Ok(ProxyConnector::Socks5(socks))
-    }
 }
 
 #[derive(Debug)]

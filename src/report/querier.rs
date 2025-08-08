@@ -327,7 +327,7 @@ impl ClickHouseQuerier {
         let mut significant_prefixes: Vec<PrefixAggregate> = Vec::new();
 
         // Process initial partitions directly
-        self.process_parrtitions(
+        self.process_partitions(
             &Bytes::new(),
             initial_partitions,
             threshold,

@@ -10,6 +10,7 @@ use common::clickhouse::start_clickhouse;
 use time::OffsetDateTime;
 use tracing::info;
 use url::Url;
+
 use crate::common::init_log_for_debug;
 
 fn make_records() -> Vec<Record> {

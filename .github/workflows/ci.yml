@@ -63,7 +63,7 @@ jobs:
         run: cargo +nightly fmt --all -- --check
 
       - name: Run cargo clippy (stable)
-        run: cargo clippy --all -- -D warnings
+        run: cargo +stable clippy --all -- -D warnings
 
       - name: Generate coverage (nextest)
         run: |

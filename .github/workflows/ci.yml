@@ -183,10 +183,10 @@ jobs:
 
       - name: Create and push multi-arch manifest
         env:
-          IMAGE: ghcr.io/${{ github.repository }}
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           set -euo pipefail
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
           source digests/amd64/digest.env
           AMD_DIGEST="$DIGEST"
           source digests/arm64/digest.env

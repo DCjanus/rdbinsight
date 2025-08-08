@@ -10,6 +10,7 @@ use common::clickhouse::start_clickhouse;
 use time::OffsetDateTime;
 use tracing::info;
 use url::Url;
+use crate::common::init_log_for_debug;
 
 fn make_records() -> Vec<Record> {
     use rdbinsight::parser::{core::raw::RDBStr, model::StringEncoding};
@@ -47,7 +48,7 @@ fn make_records() -> Vec<Record> {
 #[tokio::test]
 async fn test_report_generate_data_with_clickhouse() {
     // init simple logging for debug
-    let _ = tracing_subscriber::fmt::try_init();
+    init_log_for_debug();
 
     // 1) start clickhouse
     info!("Starting ClickHouse container");

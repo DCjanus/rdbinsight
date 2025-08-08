@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::{Context, Result as AnyResult};
 use bytes::Bytes;
 use clickhouse::{Client, Row};
@@ -303,7 +305,8 @@ impl ClickHouseQuerier {
     async fn initialize_prefix_discovery(&self) -> AnyResult<(u64, Vec<PrefixPartition>)> {
         let initial_partitions = self.get_prefix_partitions(&Bytes::new()).await?;
         let total_size: u64 = initial_partitions.iter().map(|p| p.total_size).sum();
-        let threshold = total_size / 100; // 1% threshold
+        // 1% threshold with a minimum of 1 to avoid zero threshold on tiny datasets
+        let threshold = (total_size / 100).max(1);
 
         tracing::info!(
             operation = "dynamic_prefix_discovery_start",
@@ -324,13 +327,16 @@ impl ClickHouseQuerier {
     ) -> AnyResult<Vec<PrefixAggregate>> {
         let mut exploration_stack: Vec<Bytes> = Vec::new();
         let mut significant_prefixes: Vec<PrefixAggregate> = Vec::new();
+        let mut visited_prefixes: HashSet<Bytes> = HashSet::new();
 
         // Process initial partitions directly
         self.process_partitions(
+            &Bytes::new(),
             initial_partitions,
             threshold,
             &mut significant_prefixes,
             &mut exploration_stack,
+            &mut visited_prefixes,
         )
         .await;
 
@@ -345,10 +351,12 @@ impl ClickHouseQuerier {
 
             let partitions = self.get_prefix_partitions(&current_prefix).await?;
             self.process_partitions(
+                &current_prefix,
                 partitions,
                 threshold,
                 &mut significant_prefixes,
                 &mut exploration_stack,
+                &mut visited_prefixes,
             )
             .await;
         }
@@ -358,30 +366,40 @@ impl ClickHouseQuerier {
 
     async fn process_partitions(
         &self,
+        parent_prefix: &Bytes,
         partitions: Vec<PrefixPartition>,
         threshold: u64,
         significant_prefixes: &mut Vec<PrefixAggregate>,
         exploration_stack: &mut Vec<Bytes>,
+        visited_prefixes: &mut HashSet<Bytes>,
     ) {
         for partition in partitions {
             if partition.total_size >= threshold {
                 let lcp = longest_common_prefix(&partition.min_key, &partition.max_key);
 
-                tracing::debug!(
-                    operation = "significant_prefix_found",
-                    prefix = %String::from_utf8_lossy(&lcp),
-                    total_size = partition.total_size,
-                    key_count = partition.key_count,
-                    "Found significant prefix using LCP"
-                );
+                // Only consider deeper prefixes; skip if LCP does not extend the parent
+                if lcp.len() <= parent_prefix.len() {
+                    continue;
+                }
 
-                significant_prefixes.push(PrefixAggregate {
-                    prefix: lcp.clone(),
-                    total_size: partition.total_size,
-                    key_count: partition.key_count,
-                });
+                // Deduplicate to avoid re-exploring the same prefix endlessly
+                if visited_prefixes.insert(lcp.clone()) {
+                    tracing::debug!(
+                        operation = "significant_prefix_found",
+                        prefix = %String::from_utf8_lossy(&lcp),
+                        total_size = partition.total_size,
+                        key_count = partition.key_count,
+                        "Found significant prefix using LCP"
+                    );
 
-                exploration_stack.push(lcp);
+                    significant_prefixes.push(PrefixAggregate {
+                        prefix: lcp.clone(),
+                        total_size: partition.total_size,
+                        key_count: partition.key_count,
+                    });
+
+                    exploration_stack.push(lcp);
+                }
             }
         }
     }

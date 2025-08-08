@@ -56,5 +56,5 @@ typed-builder = "0.21.0"
 url = "2.5.4"
 
 [dev-dependencies]
-testcontainers = { version = "0.24.0", features = ["http_wait"] }
+testcontainers = { version = "0.25.0", features = ["http_wait"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }

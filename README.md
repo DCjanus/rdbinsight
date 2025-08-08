@@ -102,7 +102,6 @@ The query-based workflow removes the need for Redis-side commands, and similar t
 
 - [ ] Use testcontainers to build Redis Cluster integration tests and verify parsing accuracy in cluster scenarios.
 - [ ] Use testcontainers to create a Codis cluster test environment (based on the `pikadb/codis:v3.5.5` image) to ensure compatibility.
-- [ ] Optimize codecov test coverage thresholds by implementing reasonable module-based coverage targets for different components (parser, output, source, etc.).
 
 ### Performance
 

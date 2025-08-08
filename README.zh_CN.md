@@ -101,7 +101,6 @@ ORDER BY key_cnt DESC;
 
 - [ ] 使用 testcontainers 构建 Redis Cluster 集成测试，验证集群场景下的数据解析准确性
 - [ ] 使用 testcontainers 创建 Codis 集群测试环境（基于 `pikadb/codis:v3.5.5` 镜像），确保 Codis 兼容性
-- [ ] 通过合理的模块划分优化 codecov 测试覆盖率阈值，为不同组件（parser、output、source 等）设置合理的覆盖率目标
 
 ### 性能优化
 

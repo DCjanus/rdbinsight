@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use anyhow::{Context, Result as AnyResult};
 use bytes::Bytes;
 use clickhouse::{Client, Row};
@@ -327,7 +325,6 @@ impl ClickHouseQuerier {
     ) -> AnyResult<Vec<PrefixAggregate>> {
         let mut exploration_stack: Vec<Bytes> = Vec::new();
         let mut significant_prefixes: Vec<PrefixAggregate> = Vec::new();
-        let mut visited_prefixes: HashSet<Bytes> = HashSet::new();
 
         // Process initial partitions directly
         self.process_partitions(
@@ -336,7 +333,6 @@ impl ClickHouseQuerier {
             threshold,
             &mut significant_prefixes,
             &mut exploration_stack,
-            &mut visited_prefixes,
         )
         .await;
 
@@ -356,7 +352,6 @@ impl ClickHouseQuerier {
                 threshold,
                 &mut significant_prefixes,
                 &mut exploration_stack,
-                &mut visited_prefixes,
             )
             .await;
         }
@@ -371,7 +366,6 @@ impl ClickHouseQuerier {
         threshold: u64,
         significant_prefixes: &mut Vec<PrefixAggregate>,
         exploration_stack: &mut Vec<Bytes>,
-        visited_prefixes: &mut HashSet<Bytes>,
     ) {
         for partition in partitions {
             if partition.total_size >= threshold {
@@ -382,24 +376,21 @@ impl ClickHouseQuerier {
                     continue;
                 }
 
-                // Deduplicate to avoid re-exploring the same prefix endlessly
-                if visited_prefixes.insert(lcp.clone()) {
-                    tracing::debug!(
-                        operation = "significant_prefix_found",
-                        prefix = %String::from_utf8_lossy(&lcp),
-                        total_size = partition.total_size,
-                        key_count = partition.key_count,
-                        "Found significant prefix using LCP"
-                    );
+                tracing::debug!(
+                    operation = "significant_prefix_found",
+                    prefix = %String::from_utf8_lossy(&lcp),
+                    total_size = partition.total_size,
+                    key_count = partition.key_count,
+                    "Found significant prefix using LCP"
+                );
 
-                    significant_prefixes.push(PrefixAggregate {
-                        prefix: lcp.clone(),
-                        total_size: partition.total_size,
-                        key_count: partition.key_count,
-                    });
+                significant_prefixes.push(PrefixAggregate {
+                    prefix: lcp.clone(),
+                    total_size: partition.total_size,
+                    key_count: partition.key_count,
+                });
 
-                    exploration_stack.push(lcp);
-                }
+                exploration_stack.push(lcp);
             }
         }
     }

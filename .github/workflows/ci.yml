@@ -1,5 +1,3 @@
-# Unified CI workflow: fmt, clippy, tests, coverage, and Docker publish
-
 name: CI
 
 on:
@@ -9,14 +7,13 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Cancel in-flight runs for the same ref to save CI minutes
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  tests:
-    name: Tests (fmt + clippy + coverage)
+  check:
+    name: Check (fmt + clippy + tests)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -76,7 +73,7 @@ jobs:
 
   docker-builds:
     name: Docker Build & Push (${{ matrix.name }})
-    needs: [tests]
+    needs: [check]
     if: ${{ github.event_name != 'pull_request' }}
     strategy:
       fail-fast: false

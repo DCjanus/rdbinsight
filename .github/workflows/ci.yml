@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - master
+    tags:
+      - 'v*'
   pull_request:
   workflow_dispatch:
 
@@ -113,7 +115,6 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=tag
-            type=sha
 
       - name: Build and push (${{ matrix.platform }})
         id: build
@@ -179,7 +180,6 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=tag
-            type=sha
 
       - name: Create and push multi-arch manifest
         env:

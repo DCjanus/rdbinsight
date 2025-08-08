@@ -161,11 +161,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           flavor: |
-            latest=auto
+            latest=false
           tags: |
             type=ref,event=branch
             type=ref,event=tag
-            # set latest tag for default branch
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Create and push multi-arch manifest

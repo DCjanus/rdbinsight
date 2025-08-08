@@ -14,6 +14,7 @@ use rdbinsight::{
 use time::OffsetDateTime;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use url::Url;
 
 #[derive(Parser)]
 struct MainCli {
@@ -176,7 +177,7 @@ struct ClickHouseOutputArgs {
     ///
     /// Default database: rdbinsight
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
-    url: String,
+    url: Url,
 
     /// Automatically create tables if they don't exist
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_AUTO_CREATE_TABLES")]
@@ -207,7 +208,7 @@ struct ReportArgs {
     ///
     /// Default database: rdbinsight
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
-    clickhouse_url: String,
+    clickhouse_url: Url,
 
     /// HTTP proxy URL for ClickHouse connections
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PROXY_URL")]

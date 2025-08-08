@@ -1,8 +1,9 @@
 use std::{path::PathBuf, pin::Pin};
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use crate::{
     helper::AnyResult,
@@ -286,47 +287,27 @@ pub struct ClickHouseConfig {
 
 impl ClickHouseConfig {
     /// Create a new ClickHouseConfig from URL
-    pub fn new(
-        url: String,
-        auto_create_tables: bool,
-        proxy_url: Option<String>,
-    ) -> AnyResult<Self> {
+    pub fn new(url: Url, auto_create_tables: bool, proxy_url: Option<String>) -> AnyResult<Self> {
         use anyhow::ensure;
 
-        ensure!(!url.is_empty(), "ClickHouse URL cannot be empty");
-
-        // Basic URL format validation
         ensure!(
-            url.starts_with("http://") || url.starts_with("https://"),
+            url.scheme() == "http" || url.scheme() == "https",
             "ClickHouse URL must start with http:// or https://, got: '{}'",
             url
         );
 
-        // Parse URL to validate format and extract components
-        let parsed_url = url::Url::parse(&url)
-            .map_err(|e| anyhow::anyhow!("Invalid ClickHouse URL format: {}", e))?;
-
-        // Validate scheme
         ensure!(
-            parsed_url.scheme() == "http" || parsed_url.scheme() == "https",
-            "ClickHouse URL must use http or https scheme"
-        );
-
-        // Validate host
-        ensure!(
-            parsed_url.host_str().is_some(),
+            url.host_str().is_some(),
             "ClickHouse URL must contain a host"
         );
 
-        // Extract database name from path, default to "rdbinsight"
-        let database = parsed_url
+        let database = url
             .path_segments()
             .and_then(|mut segments| segments.next())
             .filter(|db| !db.is_empty())
             .map(|db| db.to_string())
             .unwrap_or_else(|| "rdbinsight".to_string());
 
-        // Validate database name
         ensure!(
             database
                 .chars()
@@ -335,15 +316,17 @@ impl ClickHouseConfig {
             database
         );
 
-        // Extract username and password
-        let username = parsed_url.username().to_string();
+        let username = url.username().to_string();
 
-        let password = parsed_url.password().map(|p| p.to_string());
+        let password = url.password().map(|p| p.to_string());
 
-        // Build address
-        let mut address = parsed_url.clone();
-        address.set_username("").ok();
-        address.set_password(None).ok();
+        let mut address = url.clone();
+        address
+            .set_username("")
+            .map_err(|_| anyhow!("failed to set username"))?;
+        address
+            .set_password(None)
+            .map_err(|_| anyhow!("failed to set password"))?;
         address.set_path("");
         address.set_query(None);
 

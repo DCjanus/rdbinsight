@@ -1,7 +1,13 @@
 # syntax=docker/dockerfile:1
-FROM rustlang/rust:nightly-alpine AS builder
+FROM rustlang/rust:nightly-bookworm-slim AS builder
 
-RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        binutils \
+        pkg-config \
+        libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /usr/src/app
 
 COPY . .
@@ -10,11 +16,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --bin rdbinsight && \
     cp target/release/rdbinsight /tmp/rdbinsight
 
-RUN strip /tmp/rdbinsight
+FROM debian:bookworm-slim
 
-FROM alpine:3.20
-
-RUN apk add --no-cache ca-certificates
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /tmp/rdbinsight /usr/local/bin/rdbinsight
 

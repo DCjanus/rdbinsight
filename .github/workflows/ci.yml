@@ -60,13 +60,12 @@ jobs:
       - name: Run cargo clippy (nightly)
         run: cargo +nightly clippy --all -- -D warnings
 
-      - name: Generate coverage (nextest)
+      - name: Generate coverage report (cargo llvm-cov + nextest)
         run: |
           CARGO_LLVM_COV_SETUP=yes \
           cargo +nightly llvm-cov nextest \
             --all-features --workspace \
-            --branch --codecov --output-path codecov.json \
-            -- --status-level=all
+            --branch --codecov --output-path codecov.json
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5

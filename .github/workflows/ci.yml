@@ -95,11 +95,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute image name (lowercase)
+        id: vars
+        shell: bash
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ steps.vars.outputs.image }}
 
       - name: Build and push (${{ matrix.platform }})
         id: build
@@ -110,7 +116,7 @@ jobs:
           push: true
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,push=true
+          outputs: type=image,name=${{ steps.vars.outputs.image }},push-by-digest=true,push=true
 
       - name: Persist image digest
         run: |
@@ -143,6 +149,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute image name (lowercase)
+        id: vars
+        shell: bash
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Download digest (amd64)
         uses: actions/download-artifact@v4
         with:
@@ -159,7 +171,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ steps.vars.outputs.image }}
           flavor: |
             latest=false
           tags: |

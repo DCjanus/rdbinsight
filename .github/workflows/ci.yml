@@ -25,15 +25,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install stable Rust toolchain (clippy)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
       - name: Install nightly Rust toolchain (rustfmt + llvm-tools-preview)
         uses: dtolnay/rust-toolchain@nightly
         with:
-          components: rustfmt, llvm-tools-preview
+          components: rustfmt, llvm-tools-preview, clippy
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -62,8 +57,8 @@ jobs:
       - name: Run cargo fmt --check (nightly)
         run: cargo +nightly fmt --all -- --check
 
-      - name: Run cargo clippy (stable)
-        run: cargo +stable clippy --all -- -D warnings
+      - name: Run cargo clippy (nightly)
+        run: cargo +nightly clippy --all -- -D warnings
 
       - name: Generate coverage (nextest)
         run: |

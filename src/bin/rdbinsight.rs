@@ -31,7 +31,7 @@ struct MainCli {
 
 fn default_concurrency() -> usize {
     // Conservative default that works well for both single instances and small clusters
-    (num_cpus::get() / 2).clamp(1, 8)
+    (num_cpus::get() / 2).clamp(1, 16)
 }
 
 #[derive(Subcommand)]

@@ -100,11 +100,6 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
-          flavor: |
-            latest=auto
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
 
       - name: Build and push (${{ matrix.platform }})
         id: build
@@ -114,8 +109,8 @@ jobs:
           file: ./Dockerfile
           push: true
           platforms: ${{ matrix.platform }}
-          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,push=true
 
       - name: Persist image digest
         run: |
@@ -170,6 +165,8 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=tag
+            # set latest tag for default branch
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Create and push multi-arch manifest
         env:

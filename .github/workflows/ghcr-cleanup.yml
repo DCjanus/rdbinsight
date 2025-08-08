@@ -13,9 +13,7 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete truly untagged GHCR images (dependency-safe)
-        uses: quartx-analytics/ghcr-cleaner@v1
+      - name: Clean up GHCR (delete only untagged, dependency-aware)
+        uses: dataaxiom/ghcr-cleanup-action@v1
         with:
-          owner-type: user
-          token: ${{ secrets.GHCR_PAT }}
-          package-name: ${{ github.event.repository.name }}
+          delete-untagged: true

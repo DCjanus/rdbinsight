@@ -86,14 +86,12 @@ impl DumpConfig {
 pub enum SourceConfig {
     RedisStandalone {
         cluster_name: String,
-        batch_id: Option<String>,
         address: String,
         username: Option<String>,
         password: Option<String>,
     },
     RedisCluster {
         cluster_name: String,
-        batch_id: Option<String>,
         addrs: Vec<String>,
         username: Option<String>,
         password: Option<String>,
@@ -103,13 +101,11 @@ pub enum SourceConfig {
     #[serde(rename = "rdb_file")]
     RDBFile {
         cluster_name: String,
-        batch_id: Option<String>,
         path: String,
         instance: String,
     },
     Codis {
         cluster_name: Option<String>,
-        batch_id: Option<String>,
         dashboard_addr: String,
         password: Option<String>,
         #[serde(default)]

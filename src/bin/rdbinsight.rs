@@ -25,13 +25,13 @@ struct MainCli {
     verbose: bool,
 
     /// Global concurrency override
-    #[arg(long, default_value_t = default_concurrency(), global = true)]
+    #[arg(long, default_value_t = default_concurrency(), global = true, env = "RDBINSIGHT_CONCURRENCY")]
     concurrency: usize,
 }
 
 fn default_concurrency() -> usize {
     // Conservative default that works well for both single instances and small clusters
-    (num_cpus::get() / 2).clamp(1, 8)
+    (num_cpus::get() / 2).clamp(1, 16)
 }
 
 #[derive(Subcommand)]
@@ -76,12 +76,8 @@ struct DumpRedisArgs {
     #[arg(long)]
     password: Option<String>,
 
-    /// Batch ID for this import
-    #[arg(long)]
-    batch_id: Option<String>,
-
     /// Batch timestamp (RFC3339, default = now)
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
 
     #[command(subcommand)]
@@ -110,12 +106,8 @@ struct DumpClusterArgs {
     #[arg(long)]
     require_slave: bool,
 
-    /// Batch ID for this import
-    #[arg(long)]
-    batch_id: Option<String>,
-
     /// Batch timestamp (RFC3339, default = now)
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
 
     #[command(subcommand)]
@@ -136,12 +128,8 @@ struct DumpFileArgs {
     #[arg(long)]
     instance: String,
 
-    /// Batch ID for this import
-    #[arg(long)]
-    batch_id: Option<String>,
-
     /// Batch timestamp (RFC3339, default = now)
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
 
     #[command(subcommand)]
@@ -166,12 +154,8 @@ struct DumpCodisArgs {
     #[arg(long)]
     require_slave: bool,
 
-    /// Batch ID for this import
-    #[arg(long)]
-    batch_id: Option<String>,
-
     /// Batch timestamp (RFC3339, default = now)
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
 
     #[command(subcommand)]
@@ -187,62 +171,62 @@ enum OutputCommand {
 #[derive(Parser)]
 struct ClickHouseOutputArgs {
     /// ClickHouse server URL (e.g., http://127.0.0.1:8124)
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
     url: String,
 
     /// ClickHouse username
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_USERNAME")]
     username: Option<String>,
 
     /// ClickHouse password
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PASSWORD")]
     password: Option<String>,
 
     /// ClickHouse database name
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_DATABASE")]
     database: Option<String>,
 
     /// Automatically create tables if they don't exist
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_AUTO_CREATE_TABLES")]
     auto_create_tables: bool,
 
     /// HTTP proxy URL for ClickHouse connections
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PROXY_URL")]
     proxy_url: Option<String>,
 }
 
 #[derive(Parser)]
 struct ReportArgs {
     /// Cluster name
-    #[clap(long)]
+    #[clap(long, env = "RDBINSIGHT_CLUSTER")]
     cluster: String,
 
     /// Batch timestamp in RFC3339 format (defaults to latest batch)
-    #[clap(long)]
+    #[clap(long, env = "RDBINSIGHT_BATCH")]
     batch: Option<String>,
 
     /// Output HTML file path
-    #[clap(short, long)]
+    #[clap(short, long, env = "RDBINSIGHT_REPORT_OUTPUT")]
     output: Option<PathBuf>,
 
     /// ClickHouse server URL (e.g., http://127.0.0.1:8124)
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
     clickhouse_url: String,
 
     /// ClickHouse username
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_USERNAME")]
     clickhouse_username: Option<String>,
 
     /// ClickHouse password
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PASSWORD")]
     clickhouse_password: Option<String>,
 
     /// ClickHouse database name
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_DATABASE")]
     clickhouse_database: Option<String>,
 
     /// HTTP proxy URL for ClickHouse connections
-    #[arg(long)]
+    #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PROXY_URL")]
     clickhouse_proxy_url: Option<String>,
 }
 
@@ -259,7 +243,7 @@ enum MiscCommand {
 #[derive(Parser)]
 struct GenCompletionArgs {
     /// Shell type (e.g., bash, zsh, fish, elvish, powershell)
-    #[arg(long, value_parser = value_parser!(Shell))]
+    #[arg(long, value_parser = value_parser!(Shell), env = "RDBINSIGHT_SHELL")]
     shell: Option<Shell>,
 }
 
@@ -333,7 +317,6 @@ fn dump_command_to_config(
         DumpCommand::Redis(args) => {
             let source = SourceConfig::RedisStandalone {
                 cluster_name: args.cluster,
-                batch_id: args.batch_id,
                 address: args.addr,
                 username: args.username,
                 password: args.password,
@@ -343,7 +326,6 @@ fn dump_command_to_config(
         DumpCommand::Cluster(args) => {
             let source = SourceConfig::RedisCluster {
                 cluster_name: args.cluster,
-                batch_id: args.batch_id,
                 addrs: args.nodes,
                 username: args.username,
                 password: args.password,
@@ -354,7 +336,6 @@ fn dump_command_to_config(
         DumpCommand::File(args) => {
             let source = SourceConfig::RDBFile {
                 cluster_name: args.cluster,
-                batch_id: args.batch_id,
                 path: args.path.to_string_lossy().to_string(),
                 instance: args.instance,
             };
@@ -363,7 +344,6 @@ fn dump_command_to_config(
         DumpCommand::Codis(args) => {
             let source = SourceConfig::Codis {
                 cluster_name: args.cluster,
-                batch_id: args.batch_id,
                 dashboard_addr: args.dashboard,
                 password: args.password,
                 require_slave: args.require_slave,
@@ -439,18 +419,6 @@ async fn dump_to_clickhouse(dump_cmd: DumpCommand, concurrency: usize) -> Result
             operation = "batch_timestamp_provided",
             timestamp = %timestamp_str,
             "Using provided batch timestamp"
-        );
-        parsed_timestamp.to_offset(time::UtcOffset::UTC)
-    } else if let Ok(timestamp_str) = std::env::var("RDBINSIGHT_BATCH_TIMESTAMP") {
-        let parsed_timestamp = OffsetDateTime::parse(
-            &timestamp_str,
-            &time::format_description::well_known::Rfc3339,
-        )
-        .with_context(|| anyhow!("Failed to parse batch timestamp: {timestamp_str}"))?;
-        debug!(
-            operation = "batch_timestamp_from_env",
-            timestamp = %timestamp_str,
-            "Using batch timestamp from environment variable"
         );
         parsed_timestamp.to_offset(time::UtcOffset::UTC)
     } else {

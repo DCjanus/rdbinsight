@@ -101,7 +101,7 @@ struct LatestBatchRow {
     batch: OffsetDateTime,
 }
 
-async fn get_latest_batch_for_cluster(
+pub async fn get_latest_batch_for_cluster(
     clickhouse_config: &ClickHouseConfig,
     cluster: &str,
 ) -> Result<String> {

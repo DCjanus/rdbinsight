@@ -3,7 +3,7 @@ use rdbinsight::{
     config::ClickHouseConfig,
     output::clickhouse::{BatchInfo, ClickHouseOutput},
     record::{Record, RecordEncoding, RecordType},
-    report::ReportGenerator,
+    report::{ReportGenerator, get_latest_batch_for_cluster},
 };
 mod common;
 use common::clickhouse::start_clickhouse;
@@ -82,8 +82,8 @@ async fn test_report_generate_data_with_clickhouse() {
     output.commit_batch(&batch_info).await.unwrap();
 
     // 4) build report generator for the same batch and fetch data
-    let batch_str = batch_ts
-        .format(&time::format_description::well_known::Rfc3339)
+    let batch_str = get_latest_batch_for_cluster(&ch_config, &cluster)
+        .await
         .unwrap();
     let generator = ReportGenerator::new(ch_config.clone(), cluster.clone(), batch_str.clone())
         .await

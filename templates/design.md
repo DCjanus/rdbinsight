@@ -148,3 +148,12 @@ Retains existing report features, refactoring with DaisyUI components.
 - **Backend Integration:** Consumes `cluster_issues` data from the report generation system
 - **Export Enhancement:** JSON export includes human-readable key names for big keys alongside base64-encoded data
 - **Conditional Rendering:** Each issue category only displays when relevant problems are detected, maintaining a clean interface
+
+## 5. Footer
+
+### 5.1. Project Information Footer
+
+- **Purpose:** Provides project attribution with link to source code repository
+- **Design:** Minimal, low-contrast, unobtrusive styling that doesn't distract from main content
+- **Content:** Simple project name with repository link
+- **Layout:** Center-aligned, positioned at bottom of page

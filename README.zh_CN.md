@@ -13,10 +13,10 @@ RDBInsight 是一款 Redis 分析与诊断工具，通过将 RDB 快照转换为
 最小示例：
 
 ```bash
-rdbinsight dump cluster \
+rdbinsight dump from-cluster \
   --nodes 127.0.0.1:7000,127.0.0.1:7001 \
   --cluster your_cluster \
-  clickhouse \
+  into-clickhouse \
   --url http://username:password@127.0.0.1:8124/rdbinsight \
   --auto-create-tables
 ```

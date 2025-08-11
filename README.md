@@ -13,10 +13,10 @@ English | [中文](README.zh_CN.md)
 Minimal example (installation omitted):
 
 ```bash
-rdbinsight dump cluster \
+rdbinsight dump from-cluster \
   --nodes 127.0.0.1:7000,127.0.0.1:7001 \
   --cluster your_cluster \
-  clickhouse \
+  into-clickhouse \
   --url http://username:password@127.0.0.1:8124/rdbinsight \
   --auto-create-tables
 ```

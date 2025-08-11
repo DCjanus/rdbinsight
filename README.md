@@ -8,6 +8,10 @@ RDBInsight is a Redis analysis and diagnostic tool that converts RDB snapshots i
 
 English | [中文](README.zh_CN.md)
 
+## Important Notice
+
+This project is under active development. Backward compatibility is not guaranteed between versions, and interfaces, CLI flags, and output formats may change without notice. Do not use this software in production environments.
+
 ## Usage
 
 Minimal example (installation omitted):

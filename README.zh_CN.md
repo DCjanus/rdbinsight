@@ -8,15 +8,19 @@ RDBInsight 是一款 Redis 分析与诊断工具，通过将 RDB 快照转换为
 
 [English](README.md) | 中文
 
+## 重要说明
+
+本项目处于积极开发阶段，版本之间不保证向下兼容，接口、命令行参数及输出格式可能在未通知的情况下发生变化。请勿在生产环境使用本软件。
+
 ## 使用示例（Usage）
 
 最小示例：
 
 ```bash
-rdbinsight dump cluster \
+rdbinsight dump from-cluster \
   --nodes 127.0.0.1:7000,127.0.0.1:7001 \
   --cluster your_cluster \
-  clickhouse \
+  into-clickhouse \
   --url http://username:password@127.0.0.1:8124/rdbinsight \
   --auto-create-tables
 ```

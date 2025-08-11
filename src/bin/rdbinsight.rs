@@ -48,15 +48,16 @@ enum Command {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::enum_variant_names)]
 enum DumpCommand {
     /// Dump from Redis standalone instance
-    Redis(DumpRedisArgs),
+    FromRedis(DumpRedisArgs),
     /// Dump from Redis cluster
-    Cluster(DumpClusterArgs),
+    FromCluster(DumpClusterArgs),
     /// Dump from RDB file
-    File(DumpFileArgs),
+    FromFile(DumpFileArgs),
     /// Dump from Codis cluster
-    Codis(DumpCodisArgs),
+    FromCodis(DumpCodisArgs),
 }
 
 #[derive(Parser)]
@@ -166,7 +167,7 @@ struct DumpCodisArgs {
 #[derive(Subcommand)]
 enum OutputCommand {
     /// Output to ClickHouse
-    Clickhouse(ClickHouseOutputArgs),
+    IntoClickhouse(ClickHouseOutputArgs),
 }
 
 #[derive(Parser)]
@@ -299,7 +300,7 @@ fn dump_command_to_config(
     use rdbinsight::config::{ClickHouseConfig, DumpConfig, OutputConfig, SourceConfig};
 
     let (source_config, batch_timestamp, output_cmd) = match dump_cmd {
-        DumpCommand::Redis(args) => {
+        DumpCommand::FromRedis(args) => {
             let source = SourceConfig::RedisStandalone {
                 cluster_name: args.cluster,
                 address: args.addr,
@@ -308,7 +309,7 @@ fn dump_command_to_config(
             };
             (source, args.batch_timestamp, args.output)
         }
-        DumpCommand::Cluster(args) => {
+        DumpCommand::FromCluster(args) => {
             let source = SourceConfig::RedisCluster {
                 cluster_name: args.cluster,
                 addrs: args.nodes,
@@ -318,7 +319,7 @@ fn dump_command_to_config(
             };
             (source, args.batch_timestamp, args.output)
         }
-        DumpCommand::File(args) => {
+        DumpCommand::FromFile(args) => {
             let source = SourceConfig::RDBFile {
                 cluster_name: args.cluster,
                 path: args.path.to_string_lossy().to_string(),
@@ -326,7 +327,7 @@ fn dump_command_to_config(
             };
             (source, args.batch_timestamp, args.output)
         }
-        DumpCommand::Codis(args) => {
+        DumpCommand::FromCodis(args) => {
             let source = SourceConfig::Codis {
                 cluster_name: args.cluster,
                 dashboard_addr: args.dashboard,
@@ -339,7 +340,7 @@ fn dump_command_to_config(
 
     // Extract output config - currently only ClickHouse is supported
     let output_config = match output_cmd {
-        OutputCommand::Clickhouse(ch_args) => {
+        OutputCommand::IntoClickhouse(ch_args) => {
             let ch_config =
                 ClickHouseConfig::new(ch_args.url, ch_args.auto_create_tables, ch_args.proxy_url)?;
             OutputConfig::Clickhouse(ch_config)

@@ -46,5 +46,5 @@ down_dev:
 
 demo: up_dev
     cargo run --release --bin fill_redis_memory -- 'redis://127.0.0.1:6380' '512M'
-    cargo run --release --bin rdbinsight -- dump redis --addr '127.0.0.1:6380' --cluster 'dev-test-cluster' clickhouse --url 'http://127.0.0.1:8124' --username 'rdbinsight' --password 'rdbinsight' --database 'rdbinsight' --auto-create-tables
-    cargo run --release --bin rdbinsight -- report --cluster 'dev-test-cluster' --clickhouse-url 'http://127.0.0.1:8124' --clickhouse-username 'rdbinsight' --clickhouse-password 'rdbinsight' --clickhouse-database 'rdbinsight'
+    cargo run --release --bin rdbinsight -- dump from-redis --addr '127.0.0.1:6380' --cluster 'dev-test-cluster' into-clickhouse --url 'http://rdbinsight:rdbinsight@127.0.0.1:8124' --auto-create-tables
+    cargo run --release --bin rdbinsight -- report --cluster 'dev-test-cluster' --clickhouse-url 'http://rdbinsight:rdbinsight@127.0.0.1:8124'

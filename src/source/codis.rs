@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use anyhow::{Context as AnyhowContext, Ok, anyhow, bail, ensure};
+use anyhow::{Context as AnyhowContext, anyhow, bail, ensure};
 use reqwest::Client;
 use serde::Deserialize;
 use tracing::{debug, info, warn};

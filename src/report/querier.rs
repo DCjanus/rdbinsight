@@ -286,15 +286,12 @@ impl ClickHouseQuerier {
     }
 
     pub async fn get_top_prefixes(&self) -> AnyResult<Vec<PrefixAggregate>> {
-        // Step 1: Initialize discovery - calculate threshold and get initial partitions
         let (threshold, initial_partitions) = self.initialize_prefix_discovery().await?;
 
-        // Step 2: Explore prefix tree using depth-first search with LCP optimization
         let mut significant_prefixes = self
             .explore_prefix_tree(threshold, initial_partitions)
             .await?;
 
-        // Step 3: Finalize results - sort and log completion
         self.finalize_discovery_results(&mut significant_prefixes, threshold);
 
         Ok(significant_prefixes)
@@ -303,7 +300,6 @@ impl ClickHouseQuerier {
     async fn initialize_prefix_discovery(&self) -> AnyResult<(u64, Vec<PrefixPartition>)> {
         let initial_partitions = self.get_prefix_partitions(&Bytes::new()).await?;
         let total_size: u64 = initial_partitions.iter().map(|p| p.total_size).sum();
-        // 1% threshold with a minimum of 1 to avoid zero threshold on tiny datasets
         let threshold = (total_size / 100).max(1);
 
         tracing::info!(
@@ -326,7 +322,6 @@ impl ClickHouseQuerier {
         let mut exploration_stack: Vec<Bytes> = Vec::new();
         let mut significant_prefixes: Vec<PrefixAggregate> = Vec::new();
 
-        // Process initial partitions directly
         self.process_partitions(
             &Bytes::new(),
             initial_partitions,
@@ -336,9 +331,8 @@ impl ClickHouseQuerier {
         )
         .await;
 
-        // Continue exploring deeper prefixes
         while let Some(current_prefix) = exploration_stack.pop() {
-            tracing::debug!(
+            tracing::info!(
                 operation = "prefix_exploration",
                 current_prefix = %String::from_utf8_lossy(&current_prefix),
                 stack_size = exploration_stack.len(),
@@ -718,25 +712,14 @@ impl ClickHouseQuerier {
             "Starting report generation"
         );
 
-        let (
-            db_aggregates,
-            type_aggregates,
-            instance_aggregates,
-            top_keys,
-            top_prefixes,
-            big_keys,
-            codis_slot_skew,
-            redis_cluster_slot_skew,
-        ) = tokio::try_join!(
-            self.get_db_aggregates(),
-            self.get_type_aggregates(),
-            self.get_instance_aggregates(),
-            self.get_top_keys(),
-            self.get_top_prefixes(),
-            self.query_big_keys(),
-            self.query_codis_slot_skew(),
-            self.query_redis_cluster_slot_skew()
-        )?;
+        let top_prefixes = self.get_top_prefixes().await?;
+        let big_keys = self.query_big_keys().await?;
+        let db_aggregates = self.get_db_aggregates().await?;
+        let type_aggregates = self.get_type_aggregates().await?;
+        let instance_aggregates = self.get_instance_aggregates().await?;
+        let top_keys = self.get_top_keys().await?;
+        let codis_slot_skew = self.query_codis_slot_skew().await?;
+        let redis_cluster_slot_skew = self.query_redis_cluster_slot_skew().await?;
 
         let cluster_issues = ClusterIssues {
             big_keys,

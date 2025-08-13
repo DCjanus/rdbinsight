@@ -39,12 +39,12 @@ coverage: init_test
     @echo "Report ready: target/coverage/html/index.html"
 
 up_dev:
-    docker-compose -f dev/docker-compose.yml up -d --force-recreate --renew-anon-volumes
+    docker-compose -f dev/docker-compose.yml up -d --force-recreate --renew-anon-volumes --wait
 
 down_dev:
     docker-compose -f dev/docker-compose.yml down
 
-demo: up_dev
-    cargo run --release --bin fill_redis_memory -- 'redis://127.0.0.1:6380' '512M'
+demo with_data='true': up_dev
+    if {{with_data}} == 'true'; then cargo run --release --bin fill_redis_memory -- 'redis://127.0.0.1:6380' '512M'; fi
     cargo run --release --bin rdbinsight -- dump from-redis --addr '127.0.0.1:6380' --cluster 'dev-test-cluster' into-clickhouse --url 'http://rdbinsight:rdbinsight@127.0.0.1:8124' --auto-create-tables
     cargo run --release --bin rdbinsight -- report --cluster 'dev-test-cluster' --clickhouse-url 'http://rdbinsight:rdbinsight@127.0.0.1:8124'

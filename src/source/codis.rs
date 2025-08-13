@@ -72,32 +72,55 @@ impl CodisClient {
         group: &'a Group,
         require_slave: bool,
     ) -> AnyResult<&'a GroupServer> {
-        // TODO: Handle replica_group attribute - some Codis Groups may have read replicas enabled,
-        // which could affect require_slave behavior even for replica nodes
         ensure!(
             !group.servers.is_empty(),
             "Group {} has no servers",
             group.id
         );
 
-        if require_slave && group.servers.len() == 1 {
-            bail!(
-                "Group {} has no replica servers, but require_slave is true",
-                group.id
-            );
-        }
-        if group.servers.len() == 1 {
-            warn!(
-                operation = "group_single_server",
-                group_id = group.id,
-                "Group has only one server, will use it as master"
-            );
+        let (master, slaves) = group
+            .servers
+            .split_first()
+            .expect("Group has servers checked above");
+
+        let no_read_slave = slaves.iter().find(|s| !s.replica_group);
+        let read_slave = slaves.iter().find(|s| s.replica_group);
+
+        if require_slave && no_read_slave.is_none() {
+            if read_slave.is_none() {
+                bail!(
+                    "Group {} has no replica servers, but require_slave is true",
+                    group.id
+                );
+            } else {
+                bail!(
+                    "Group {} only has replicas with read traffic, but require_slave is true",
+                    group.id
+                );
+            }
         }
 
-        Ok(group
-            .servers
-            .last()
-            .expect("should have at least one server"))
+        if let Some(selected) = no_read_slave {
+            return Ok(selected);
+        }
+
+        if let Some(selected) = read_slave {
+            warn!(
+                operation = "codis_replica_read_server_picked",
+                group_id = group.id,
+                server_addr = %selected.addr,
+                "Picked replica server with read traffic"
+            );
+            return Ok(selected);
+        }
+
+        warn!(
+            operation = "codis_master_server_picked",
+            group_id = group.id,
+            server_addr = %master.addr,
+            "Picked master server"
+        );
+        Ok(master)
     }
 
     /// Fetch Codis overview data from Dashboard

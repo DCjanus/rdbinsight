@@ -128,3 +128,55 @@ async fn test_report_generate_data_with_clickhouse() {
     assert!(!data.cluster_issues.codis_slot_skew);
     assert!(!data.cluster_issues.redis_cluster_slot_skew);
 }
+
+#[tokio::test]
+async fn test_report_generate_data_with_empty_cluster() {
+    // init simple logging for debug
+    init_log_for_debug();
+
+    // 1) start clickhouse
+    info!("Starting ClickHouse container");
+    let env = start_clickhouse(None).await.unwrap();
+    info!("ClickHouse container started: {}", env.host_url);
+
+    // 2) build clickhouse config and output (auto-create tables)
+    let ch_url = Url::parse(&env.host_url).unwrap();
+    let ch_config = ClickHouseConfig::new(ch_url, true, None).unwrap();
+    let output = ClickHouseOutput::new(ch_config.clone()).await.unwrap();
+
+    // 3) create an empty batch and commit (no data written)
+    let cluster = "empty-cluster".to_string();
+    let batch_ts = OffsetDateTime::now_utc();
+    let batch_info = BatchInfo {
+        cluster: cluster.clone(),
+        batch: batch_ts,
+    };
+
+    // Only commit the batch without writing any records
+    output.commit_batch(&batch_info).await.unwrap();
+
+    // 4) build report generator for the empty batch and fetch data
+    let batch_str = get_latest_batch_for_cluster(&ch_config, &cluster)
+        .await
+        .unwrap();
+    let generator = ReportGenerator::new(ch_config.clone(), cluster.clone(), batch_str.clone())
+        .await
+        .unwrap();
+    let data = generator.generate_data().await.unwrap();
+
+    // 5) assertions for empty cluster
+    assert_eq!(data.cluster, cluster);
+    assert_eq!(data.batch, batch_str);
+
+    // All aggregates should be empty for empty cluster
+    assert!(data.db_aggregates.is_empty());
+    assert!(data.type_aggregates.is_empty());
+    assert!(data.instance_aggregates.is_empty());
+    assert!(data.top_keys.is_empty());
+    assert!(data.top_prefixes.is_empty());
+
+    // cluster issues should also be empty
+    assert!(data.cluster_issues.big_keys.is_empty());
+    assert!(!data.cluster_issues.codis_slot_skew);
+    assert!(!data.cluster_issues.redis_cluster_slot_skew);
+}

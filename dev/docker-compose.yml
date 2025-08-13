@@ -8,6 +8,12 @@ services:
     ports:
       - "6380:6379" # Host port 6380 -> Container port 6379
     command: redis-server --appendonly no --save "" --maxmemory 256mb --maxmemory-policy allkeys-lru --repl-diskless-sync-delay 0
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     networks:
       - rdbinsight-dev
 
@@ -25,6 +31,12 @@ services:
       nofile:
         soft: 262144
         hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user=rdbinsight", "--password=rdbinsight", "--query=SELECT 1"]
+      interval: 1s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
     networks:
       - rdbinsight-dev
 

@@ -4,10 +4,10 @@
 
 use std::time::Duration;
 
-use anyhow::{Context as AnyhowContext, anyhow, bail, ensure};
+use anyhow::{Context as AnyhowContext, Ok, anyhow, bail, ensure};
 use reqwest::Client;
 use serde::Deserialize;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::helper::AnyResult;
 
@@ -100,9 +100,27 @@ impl CodisClient {
             }
         }
 
-        let selected = no_read_slave.or(read_slave).unwrap_or(master);
+        if let Some(selected) = no_read_slave {
+            return Ok(selected);
+        }
 
-        Ok(selected)
+        if let Some(selected) = read_slave {
+            warn!(
+                operation = "codis_replica_read_server_picked",
+                group_id = group.id,
+                server_addr = %selected.addr,
+                "Picked replica server with read traffic"
+            );
+            return Ok(selected);
+        }
+
+        warn!(
+            operation = "codis_master_server_picked",
+            group_id = group.id,
+            server_addr = %master.addr,
+            "Picked master server"
+        );
+        Ok(master)
     }
 
     /// Fetch Codis overview data from Dashboard

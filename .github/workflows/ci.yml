@@ -30,6 +30,14 @@ jobs:
         with:
           components: rustfmt, llvm-tools-preview, clippy
 
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-target-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-${{ steps.toolchain.outputs.cachekey }}-
+
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 

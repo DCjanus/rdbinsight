@@ -310,7 +310,9 @@ fn dump_command_to_config(
     dump_cmd: DumpCommand,
     concurrency: usize,
 ) -> Result<(rdbinsight::config::DumpConfig, Option<String>)> {
-    use rdbinsight::config::{ClickHouseConfig, DumpConfig, OutputConfig, ParquetConfig, SourceConfig};
+    use rdbinsight::config::{
+        ClickHouseConfig, DumpConfig, OutputConfig, ParquetConfig, SourceConfig,
+    };
 
     let (source_config, batch_timestamp, output_cmd) = match dump_cmd {
         DumpCommand::FromRedis(args) => {

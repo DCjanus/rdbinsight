@@ -1,6 +1,10 @@
 use std::path::PathBuf;
+
 use anyhow::Result;
+
 use crate::config::ParquetCompression;
+
+pub mod path;
 
 /// Placeholder ParquetOutput struct for Parquet file output
 pub struct ParquetOutput {

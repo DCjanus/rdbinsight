@@ -30,12 +30,12 @@
 目标：实现安全可读的批目录名与实例文件名转义，以及目录创建逻辑；这些工具仅服务于 Parquet，放在 Parquet 模块内部。
 
 ### 实现步骤
-- [ ] 在 `src/output/parquet/path.rs` 新增工具函数：
-  - [ ] `format_batch_dir(OffsetDateTime utc) -> String`：返回 `YYYY-MM-DD_HH-mm-ss.SSSZ`。
-  - [ ] `make_tmp_batch_dir(name: &str) -> String`：返回 `tmp_<name>`。
-  - [ ] `sanitize_instance_filename(instance: &str) -> String`：将 `:` 替换为 `-`。
-  - [ ] `ensure_dir(path: &Path)`：逐层创建目录。
-- [ ] 在 `src/output/parquet/` 下为上述函数添加单元测试，覆盖：
+- [x] 在 `src/output/parquet/path.rs` 新增工具函数：
+  - [x] `format_batch_dir(OffsetDateTime utc) -> String`：返回 `YYYY-MM-DD_HH-mm-ss.SSSZ`。
+  - [x] `make_tmp_batch_dir(name: &str) -> String`：返回 `tmp_<name>`。
+  - [x] `sanitize_instance_filename(instance: &str) -> String`：将 `:` 替换为 `-`。
+  - [x] `ensure_dir(path: &Path)`：逐层创建目录。
+- [x] 在 `src/output/parquet/` 下为上述函数添加单元测试，覆盖：
   - 日期格式正确且为 UTC；
   - `127.0.0.1:6379` → `127.0.0.1-6379`；
   - 临时批目录名前缀 `tmp_`；

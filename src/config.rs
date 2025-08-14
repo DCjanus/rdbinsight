@@ -2,8 +2,8 @@ use std::{path::PathBuf, pin::Pin};
 
 use anyhow::{Context, anyhow};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
@@ -301,7 +301,11 @@ impl ParquetConfig {
         // Check if directory exists or can be created
         if !self.dir.exists() {
             if let Some(parent) = self.dir.parent() {
-                anyhow::ensure!(parent.exists(), "Parent directory '{}' does not exist", parent.display());
+                anyhow::ensure!(
+                    parent.exists(),
+                    "Parent directory '{}' does not exist",
+                    parent.display()
+                );
             }
         }
 

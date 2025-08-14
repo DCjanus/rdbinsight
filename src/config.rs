@@ -1,6 +1,6 @@
 use std::{path::PathBuf, pin::Pin};
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, ensure};
 use async_trait::async_trait;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
@@ -298,13 +298,7 @@ impl ParquetConfig {
 
     /// Validate the Parquet configuration
     pub fn validate(&self) -> AnyResult<()> {
-        if let Some(parent) = self.dir.parent() {
-            anyhow::ensure!(
-                parent.exists(),
-                "Parent directory '{}' does not exist",
-                parent.display()
-            );
-        }
+        ensure!(!self.dir.is_file(), "Parquet directory cannot be a file");
 
         Ok(())
     }

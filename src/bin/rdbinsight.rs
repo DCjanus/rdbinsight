@@ -6,7 +6,7 @@ use clap::{CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
-    config::OutputConfig,
+    config::{OutputConfig, ParquetCompression},
     output::clickhouse::{BatchInfo, ClickHouseOutput},
     record::{Record, RecordStream},
     source::{RDBStream, RdbSourceConfig},
@@ -168,6 +168,8 @@ struct DumpCodisArgs {
 enum OutputCommand {
     /// Output to ClickHouse
     IntoClickhouse(ClickHouseOutputArgs),
+    /// Output to Parquet files
+    IntoParquet(ParquetOutputArgs),
 }
 
 #[derive(Parser)]
@@ -187,6 +189,17 @@ struct ClickHouseOutputArgs {
     /// HTTP proxy URL for ClickHouse connections
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PROXY_URL")]
     proxy_url: Option<String>,
+}
+
+#[derive(Parser)]
+struct ParquetOutputArgs {
+    /// Output directory for Parquet files
+    #[arg(long)]
+    dir: PathBuf,
+
+    /// Compression algorithm
+    #[arg(long, value_enum, default_value_t = ParquetCompression::Zstd)]
+    compression: ParquetCompression,
 }
 
 #[derive(Parser)]
@@ -297,7 +310,7 @@ fn dump_command_to_config(
     dump_cmd: DumpCommand,
     concurrency: usize,
 ) -> Result<(rdbinsight::config::DumpConfig, Option<String>)> {
-    use rdbinsight::config::{ClickHouseConfig, DumpConfig, OutputConfig, SourceConfig};
+    use rdbinsight::config::{ClickHouseConfig, DumpConfig, OutputConfig, ParquetConfig, SourceConfig};
 
     let (source_config, batch_timestamp, output_cmd) = match dump_cmd {
         DumpCommand::FromRedis(args) => {
@@ -338,12 +351,15 @@ fn dump_command_to_config(
         }
     };
 
-    // Extract output config - currently only ClickHouse is supported
     let output_config = match output_cmd {
         OutputCommand::IntoClickhouse(ch_args) => {
             let ch_config =
                 ClickHouseConfig::new(ch_args.url, ch_args.auto_create_tables, ch_args.proxy_url)?;
             OutputConfig::Clickhouse(ch_config)
+        }
+        OutputCommand::IntoParquet(parquet_args) => {
+            let parquet_config = ParquetConfig::new(parquet_args.dir, parquet_args.compression)?;
+            OutputConfig::Parquet(parquet_config)
         }
     };
 
@@ -428,6 +444,10 @@ async fn dump_to_clickhouse(dump_cmd: DumpCommand, concurrency: usize) -> Result
             ClickHouseOutput::new(clickhouse_config.clone())
                 .await
                 .with_context(|| "Failed to initialize ClickHouse output")?
+        }
+        OutputConfig::Parquet(_parquet_config) => {
+            // TODO: Implement Parquet output initialization in later stages
+            return Err(anyhow::anyhow!("Parquet output not yet implemented"));
         }
     };
 

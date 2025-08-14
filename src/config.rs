@@ -3,6 +3,7 @@ use std::{path::PathBuf, pin::Pin};
 use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use clap::ValueEnum;
 use url::Url;
 
 use crate::{
@@ -75,6 +76,9 @@ impl DumpConfig {
         match &self.output {
             OutputConfig::Clickhouse(clickhouse_config) => {
                 clickhouse_config.validate()?;
+            }
+            OutputConfig::Parquet(parquet_config) => {
+                parquet_config.validate()?;
             }
         }
 
@@ -276,6 +280,41 @@ impl RdbSourceConfig for SourceConfig {
 pub enum OutputConfig {
     #[serde(rename = "clickhouse")]
     Clickhouse(ClickHouseConfig),
+    #[serde(rename = "parquet")]
+    Parquet(ParquetConfig),
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ParquetConfig {
+    pub dir: PathBuf,
+    pub compression: ParquetCompression,
+}
+
+impl ParquetConfig {
+    /// Create a new ParquetConfig
+    pub fn new(dir: PathBuf, compression: ParquetCompression) -> AnyResult<Self> {
+        Ok(Self { dir, compression })
+    }
+
+    /// Validate the Parquet configuration
+    pub fn validate(&self) -> AnyResult<()> {
+        // Check if directory exists or can be created
+        if !self.dir.exists() {
+            if let Some(parent) = self.dir.parent() {
+                anyhow::ensure!(parent.exists(), "Parent directory '{}' does not exist", parent.display());
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum ParquetCompression {
+    Zstd,
+    Snappy,
+    None,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

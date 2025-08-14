@@ -12,16 +12,16 @@
 目标：在不影响现有 ClickHouse 流程的前提下，新增 Parquet 输出选项及最小配置，并保证可编译。
 
 ### 实现步骤
-- [ ] 在 `src/bin/rdbinsight.rs` 中为 `OutputCommand` 增加 `IntoParquet(ParquetOutputArgs)`；新增 `ParquetOutputArgs`，参数：
+- [x] 在 `src/bin/rdbinsight.rs` 中为 `OutputCommand` 增加 `IntoParquet(ParquetOutputArgs)`；新增 `ParquetOutputArgs`，参数：
   - `--dir <path>`（必填）
   - `--compression <zstd|snappy|none>`（可选，默认 `zstd`）
-- [ ] 在 `src/config.rs` 中增加 Parquet 输出配置结构（如 `ParquetConfig`）与 `OutputConfig::Parquet(ParquetConfig)`；实现基础 `validate()`。
-- [ ] 在主流程中解析 CLI 后，依据 `OutputConfig` 分支初始化对应输出（暂时仅创建 `ParquetOutput` 占位结构，不落地写文件）。
-- [ ] 更新 `Cargo.toml` 依赖：引入 `parquet` 与 `arrow`，开启 `parquet` 的 `arrow` 与 `async` 特性，确保与现有 `tokio` 版本兼容；在本计划后续阶段中将使用 `parquet::arrow::async_writer::AsyncArrowWriter`（参考文档：[parquet async_writer](https://docs.rs/parquet/latest/parquet/arrow/async_writer/index.html)）。
+- [x] 在 `src/config.rs` 中增加 Parquet 输出配置结构（如 `ParquetConfig`）与 `OutputConfig::Parquet(ParquetConfig)`；实现基础 `validate()`。
+- [x] 在主流程中解析 CLI 后，依据 `OutputConfig` 分支初始化对应输出（暂时仅创建 `ParquetOutput` 占位结构，不落地写文件）。
+- [x] 更新 `Cargo.toml` 依赖：引入 `parquet` 与 `arrow`，开启 `parquet` 的 `arrow` 与 `async` 特性，确保与现有 `tokio` 版本兼容；在本计划后续阶段中将使用 `parquet::arrow::async_writer::AsyncArrowWriter`（参考文档：[parquet async_writer](https://docs.rs/parquet/latest/parquet/arrow/async_writer/index.html)）。
 
 ### 验证步骤
-- [ ] 运行 `cargo build`，确认可编译。
-- [ ] 执行 `rdbinsight dump ... into-parquet --dir /tmp/out`（或等价 CLI），确认 CLI 解析无报错（功能待后续阶段实现）。
+- [x] 运行 `cargo build`，确认可编译。
+- [x] 执行 `rdbinsight dump ... into-parquet --dir /tmp/out`（或等价 CLI），确认 CLI 解析无报错（功能待后续阶段实现）。
 
 ---
 

@@ -11,6 +11,7 @@ ignored = ["serde_with"]
 
 [dependencies]
 anyhow = "1.0.98"
+arrow = "56.0.0"
 async-trait = "0.1.88"
 async_async_io = "0.2.3"
 backoff = { version = "0.4", features = ["tokio"] }
@@ -30,6 +31,7 @@ lzf = "1.0.0"
 memchr = "2.7.5"
 num_cpus = "1.17.0"
 num_enum = "0.7.3"
+parquet = { version = "56.0.0", features = ["arrow", "async"] }
 rand = "0.9.1"
 redis = { version = "0.32.4", features = [
     "cluster",

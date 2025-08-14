@@ -479,7 +479,13 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
                 .await
                 .with_context(|| "Failed to initialize ClickHouse output")?;
 
-            process_streams_to_clickhouse(streams, clickhouse_output, batch_info, config.concurrency).await?;
+            process_streams_to_clickhouse(
+                streams,
+                clickhouse_output,
+                batch_info,
+                config.concurrency,
+            )
+            .await?;
         }
         OutputConfig::Parquet(parquet_config) => {
             debug!(
@@ -496,7 +502,8 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
             .await
             .with_context(|| "Failed to initialize Parquet output")?;
 
-            process_streams_to_parquet(streams, parquet_output, batch_info, config.concurrency).await?;
+            process_streams_to_parquet(streams, parquet_output, batch_info, config.concurrency)
+                .await?;
         }
     }
 
@@ -593,6 +600,7 @@ async fn process_streams_to_parquet(
 
     // We need to share the parquet_output across tasks, so we'll use Arc<Mutex<>>
     use std::sync::Arc;
+
     use tokio::sync::Mutex;
     let shared_parquet_output = Arc::new(Mutex::new(parquet_output));
 
@@ -888,7 +896,9 @@ async fn process_records_to_parquet(
     // Finalize this instance
     {
         let mut parquet_output = parquet_output.lock().await;
-        parquet_output.finalize_instance(&instance).await
+        parquet_output
+            .finalize_instance(&instance)
+            .await
             .with_context(|| format!("Failed to finalize Parquet instance: {instance}"))?;
     }
 
@@ -948,6 +958,7 @@ async fn write_parquet_batch_with_retry(
                 warn!(
                     operation = "parquet_batch_write_retry",
                     instance = %instance,
+                    records_count = records.len(),
                     error = %e,
                     "Failed to write batch to Parquet, will retry"
                 );
@@ -957,7 +968,13 @@ async fn write_parquet_batch_with_retry(
 
     backoff::future::retry(backoff_strategy.clone(), operation)
         .await
-        .with_context(|| "Failed to write batch to Parquet after retries")
+        .with_context(|| {
+            format!(
+                "Failed to write batch of {} records to Parquet for instance {} after retries",
+                records.len(),
+                instance
+            )
+        })
 }
 
 async fn commit_batch_with_retry(

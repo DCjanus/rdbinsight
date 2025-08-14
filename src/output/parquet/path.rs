@@ -31,9 +31,27 @@ pub fn sanitize_instance_filename(instance: &str) -> String {
         .replace(' ', "_") // Spaces in hostnames
 }
 
-/// Ensure directory exists, creating parent directories as needed
+/// Ensure a directory exists, creating it and all parent directories if necessary
 pub async fn ensure_dir(path: &Path) -> Result<()> {
-    tokio::fs::create_dir_all(path).await?;
+    use anyhow::{Context, ensure};
+
+    ensure!(!path.is_file(), "Path is a file: {}", path.display());
+
+    tokio::fs::create_dir_all(path)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to create directory and parents for path: {} (check permissions and disk space)",
+                path.display()
+            )
+        })?;
+
+    tracing::debug!(
+        operation = "directory_created",
+        path = %path.display(),
+        "Directory created successfully"
+    );
+
     Ok(())
 }
 

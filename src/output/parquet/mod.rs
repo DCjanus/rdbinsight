@@ -2,16 +2,12 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use arrow::record_batch::RecordBatch;
-use parquet::{
-    arrow::async_writer::AsyncArrowWriter,
-    file::properties::WriterProperties,
-};
+use parquet::{arrow::async_writer::AsyncArrowWriter, file::properties::WriterProperties};
 use tokio::fs::File;
 use tracing::{info, warn};
 
-use crate::{config::ParquetCompression, output::clickhouse::BatchInfo, record::Record};
-
 use self::{mapper::record_to_columns, path::*};
+use crate::{config::ParquetCompression, output::clickhouse::BatchInfo, record::Record};
 
 pub mod mapper;
 pub mod path;
@@ -32,16 +28,21 @@ impl WriterHandle {
         final_path: PathBuf,
         compression: ParquetCompression,
     ) -> Result<Self> {
-        let file = File::create(&temp_path)
-            .await
-            .with_context(|| format!("Failed to create temp parquet file: {}", temp_path.display()))?;
+        let file = File::create(&temp_path).await.with_context(|| {
+            format!(
+                "Failed to create temp parquet file: {}",
+                temp_path.display()
+            )
+        })?;
 
         let schema = Arc::new(schema::create_redis_record_schema());
-        
+
         // Configure compression
         let props = match compression {
             ParquetCompression::Zstd => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()))
+                .set_compression(parquet::basic::Compression::ZSTD(
+                    parquet::basic::ZstdLevel::default(),
+                ))
                 .build(),
             ParquetCompression::Snappy => WriterProperties::builder()
                 .set_compression(parquet::basic::Compression::SNAPPY)
@@ -72,27 +73,42 @@ impl WriterHandle {
     }
 
     async fn write_batch(&mut self, batch: RecordBatch) -> Result<()> {
-        self.writer
-            .write(&batch)
-            .await
-            .with_context(|| format!("Failed to write batch to parquet for instance: {}", self.instance))?;
+        self.writer.write(&batch).await.with_context(|| {
+            format!(
+                "Failed to write batch to parquet file {temp_path} for instance: {instance}",
+                temp_path = self.temp_path.display(),
+                instance = self.instance
+            )
+        })?;
         Ok(())
     }
 
     async fn close(self) -> Result<()> {
-        self.writer
-            .close()
-            .await
-            .with_context(|| format!("Failed to close parquet writer for instance: {}", self.instance))?;
+        info!(
+            operation = "parquet_writer_closing",
+            instance = %self.instance,
+            temp_path = %self.temp_path.display(),
+            final_path = %self.final_path.display(),
+            "Closing Parquet writer"
+        );
+
+        self.writer.close().await.with_context(|| {
+            format!(
+                "Failed to close parquet writer for file {temp_path} for instance: {instance}",
+                temp_path = self.temp_path.display(),
+                instance = self.instance
+            )
+        })?;
 
         // Atomically rename from temp to final
         tokio::fs::rename(&self.temp_path, &self.final_path)
             .await
             .with_context(|| {
                 format!(
-                    "Failed to rename parquet file from {} to {}",
+                    "Failed to rename parquet file from {} to {} for instance: {}",
                     self.temp_path.display(),
-                    self.final_path.display()
+                    self.final_path.display(),
+                    self.instance
                 )
             })?;
 
@@ -110,7 +126,6 @@ impl WriterHandle {
 
 /// Parquet output handler that manages per-instance writers
 pub struct ParquetOutput {
-    dir: PathBuf,
     compression: ParquetCompression,
     writers: HashMap<String, WriterHandle>,
     pub(crate) temp_batch_dir: PathBuf,
@@ -128,14 +143,17 @@ impl ParquetOutput {
         // Generate batch directory names
         let batch_dir_name = format_batch_dir(batch_info.batch);
         let temp_batch_dir_name = make_tmp_batch_dir(&batch_dir_name);
-        
+
         let temp_batch_dir = dir.join(cluster).join(temp_batch_dir_name);
         let final_batch_dir = dir.join(cluster).join(batch_dir_name);
 
         // Create the temporary batch directory
-        ensure_dir(&temp_batch_dir)
-            .await
-            .with_context(|| format!("Failed to create temp batch directory: {}", temp_batch_dir.display()))?;
+        ensure_dir(&temp_batch_dir).await.with_context(|| {
+            format!(
+                "Failed to create temp batch directory: {}",
+                temp_batch_dir.display()
+            )
+        })?;
 
         info!(
             operation = "parquet_batch_dir_created",
@@ -146,7 +164,6 @@ impl ParquetOutput {
         );
 
         Ok(Self {
-            dir,
             compression,
             writers: HashMap::new(),
             temp_batch_dir,
@@ -166,7 +183,7 @@ impl ParquetOutput {
             let sanitized_instance = sanitize_instance_filename(instance);
             let temp_filename = format!("{sanitized_instance}.parquet.tmp");
             let final_filename = format!("{sanitized_instance}.parquet");
-            
+
             let temp_path = self.temp_batch_dir.join(temp_filename);
             let final_path = self.temp_batch_dir.join(final_filename);
 
@@ -176,18 +193,31 @@ impl ParquetOutput {
                 final_path,
                 self.compression,
             )
-            .await?;
+            .await
+            .with_context(|| format!("Failed to create Parquet writer for instance: {instance}"))?;
 
             self.writers.insert(instance.to_string(), writer);
         }
 
         // Convert records to Arrow RecordBatch
-        let record_batch = record_to_columns(records, batch_info, instance)
-            .with_context(|| format!("Failed to convert records to columns for instance: {instance}"))?;
+        let record_batch = record_to_columns(records, batch_info, instance).with_context(|| {
+            format!(
+                "Failed to convert {records_count} records to columns for instance: {instance}",
+                records_count = records.len()
+            )
+        })?;
 
         // Write to the instance's writer
         let writer = self.writers.get_mut(instance).unwrap();
-        writer.write_batch(record_batch).await?;
+        writer.write_batch(record_batch).await
+            .with_context(|| format!("Failed to write batch of {records_count} records to Parquet for instance: {instance}", records_count = records.len()))?;
+
+        info!(
+            operation = "parquet_batch_written",
+            instance = %instance,
+            records_count = records.len(),
+            "Batch written to Parquet"
+        );
 
         Ok(())
     }
@@ -217,17 +247,29 @@ impl ParquetOutput {
     pub async fn finalize_batch(mut self) -> Result<()> {
         // Close all remaining writers
         for (instance, writer) in self.writers.drain() {
+            info!(
+                operation = "parquet_writer_finalizing",
+                instance = %instance,
+                "Finalizing remaining Parquet writer during batch finalization"
+            );
             writer.close().await.with_context(|| {
                 format!("Failed to close writer during batch finalization for instance: {instance}")
             })?;
         }
+
+        info!(
+            operation = "parquet_batch_dir_renaming",
+            temp_batch_dir = %self.temp_batch_dir.display(),
+            final_batch_dir = %self.final_batch_dir.display(),
+            "Renaming temporary batch directory to final"
+        );
 
         // Rename batch directory from tmp_ to final
         tokio::fs::rename(&self.temp_batch_dir, &self.final_batch_dir)
             .await
             .with_context(|| {
                 format!(
-                    "Failed to rename batch directory from {} to {}",
+                    "Failed to rename batch directory from {} to {} (ensure no other process is accessing these files)",
                     self.temp_batch_dir.display(),
                     self.final_batch_dir.display()
                 )
@@ -296,10 +338,7 @@ mod tests {
         .unwrap();
 
         let instance = "127.0.0.1:6379";
-        let records = vec![
-            create_test_record(0, "key1"),
-            create_test_record(1, "key2"),
-        ];
+        let records = vec![create_test_record(0, "key1"), create_test_record(1, "key2")];
 
         // Write records
         parquet_output
@@ -343,7 +382,7 @@ mod tests {
 
         let instance1 = "127.0.0.1:6379";
         let instance2 = "127.0.0.1:6380";
-        
+
         let records1 = vec![create_test_record(0, "key1")];
         let records2 = vec![create_test_record(1, "key2")];
 
@@ -391,7 +430,7 @@ mod tests {
         .unwrap();
 
         let instance = "127.0.0.1:6379";
-        
+
         // Write multiple batches to same instance
         let records1 = vec![create_test_record(0, "key1")];
         let records2 = vec![create_test_record(1, "key2")];

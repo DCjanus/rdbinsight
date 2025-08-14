@@ -42,7 +42,7 @@
   - `ensure_dir` 在已存在目录时幂等。
 
 ### 验证步骤
-- [ ] 运行 `just test`（或 `cargo test`），确认工具函数测试全部通过。
+- [x] 运行 `just test`（或 `cargo test`），确认工具函数测试全部通过。
 
 ---
 

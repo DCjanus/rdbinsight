@@ -4,7 +4,9 @@ use anyhow::Result;
 
 use crate::config::ParquetCompression;
 
+pub mod mapper;
 pub mod path;
+pub mod schema;
 
 /// Placeholder ParquetOutput struct for Parquet file output
 pub struct ParquetOutput {

@@ -6,6 +6,9 @@ description = "A command-line tool for parsing and analyzing Redis RDB."
 
 default-run = "rdbinsight"
 
+[package.metadata.cargo-machete]
+ignored = ["parquet"]
+
 [dependencies]
 anyhow = "1.0.98"
 arrow = "56.0.0"

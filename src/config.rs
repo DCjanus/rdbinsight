@@ -298,15 +298,12 @@ impl ParquetConfig {
 
     /// Validate the Parquet configuration
     pub fn validate(&self) -> AnyResult<()> {
-        // Check if directory exists or can be created
-        if !self.dir.exists() {
-            if let Some(parent) = self.dir.parent() {
-                anyhow::ensure!(
-                    parent.exists(),
-                    "Parent directory '{}' does not exist",
-                    parent.display()
-                );
-            }
+        if let Some(parent) = self.dir.parent() {
+            anyhow::ensure!(
+                parent.exists(),
+                "Parent directory '{}' does not exist",
+                parent.display()
+            );
         }
 
         Ok(())

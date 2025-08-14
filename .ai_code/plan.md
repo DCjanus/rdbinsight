@@ -51,8 +51,8 @@
 目标：依据 `.ai_code/design.md` 定义 Arrow/Parquet Schema，并实现从 `Record` 到 Arrow 列的映射（仅内存对象，尚不写盘）。
 
 ### 实现步骤
-- [ ] 新建 `src/output/parquet/schema.rs`：
-  - [ ] 定义 Arrow `Schema`，字段与类型严格按设计文档：
+- [x] 新建 `src/output/parquet/schema.rs`：
+  - [x] 定义 Arrow `Schema`，字段与类型严格按设计文档：
     - `cluster: Utf8`
     - `batch: Timestamp(Nanosecond, UTC)`
     - `instance: Utf8`
@@ -67,15 +67,15 @@
     - `freq: Int32 nullable`
     - `codis_slot: Int32 nullable`
     - `redis_slot: Int32 nullable`
-- [ ] 新建 `src/output/parquet/mapper.rs`：提供 `record_to_columns(records: &[Record], batch_info: &BatchInfo, instance: &str) -> RecordBatch`。
-- [ ] 为映射逻辑添加单元测试：
+- [x] 新建 `src/output/parquet/mapper.rs`：提供 `record_to_columns(records: &[Record], batch_info: &BatchInfo, instance: &str) -> RecordBatch`。
+- [x] 为映射逻辑添加单元测试：
   - `key` 为二进制；
   - `batch` 纳秒精度、UTC；
   - `expire_at` 毫秒精度；
   - 可空字段为 `None` 时正确为空值。
 
 ### 验证步骤
-- [ ] 运行 `just test`，确认 schema 与映射测试通过。
+- [x] 运行 `just test`，确认 schema 与映射测试通过。
 
 ---
 

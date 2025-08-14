@@ -17,6 +17,7 @@
   - `--compression <zstd|snappy|none>`（可选，默认 `zstd`）
 - [ ] 在 `src/config.rs` 中增加 Parquet 输出配置结构（如 `ParquetConfig`）与 `OutputConfig::Parquet(ParquetConfig)`；实现基础 `validate()`。
 - [ ] 在主流程中解析 CLI 后，依据 `OutputConfig` 分支初始化对应输出（暂时仅创建 `ParquetOutput` 占位结构，不落地写文件）。
+- [ ] 更新 `Cargo.toml` 依赖：引入 `parquet` 与 `arrow`，开启 `parquet` 的 `arrow` 与 `async` 特性，确保与现有 `tokio` 版本兼容；在本计划后续阶段中将使用 `parquet::arrow::async_writer::AsyncArrowWriter`（参考文档：[parquet async_writer](https://docs.rs/parquet/latest/parquet/arrow/async_writer/index.html)）。
 
 ### 验证步骤
 - [ ] 运行 `cargo build`，确认可编译。
@@ -26,15 +27,15 @@
 
 ## 阶段二：路径与命名工具（批目录与实例文件）
 
-目标：实现安全可读的批目录名与实例文件名转义，以及目录创建逻辑。
+目标：实现安全可读的批目录名与实例文件名转义，以及目录创建逻辑；这些工具仅服务于 Parquet，放在 Parquet 模块内部。
 
 ### 实现步骤
-- [ ] 新增一个内部工具模块（如 `src/output/path_utils.rs` 或放在 `output/mod.rs` 下）：
+- [ ] 在 `src/output/parquet/path.rs` 新增工具函数：
   - [ ] `format_batch_dir(OffsetDateTime utc) -> String`：返回 `YYYY-MM-DD_HH-mm-ss.SSSZ`。
   - [ ] `make_tmp_batch_dir(name: &str) -> String`：返回 `tmp_<name>`。
   - [ ] `sanitize_instance_filename(instance: &str) -> String`：将 `:` 替换为 `-`。
   - [ ] `ensure_dir(path: &Path)`：逐层创建目录。
-- [ ] 为上述函数添加单元测试，覆盖：
+- [ ] 在 `src/output/parquet/` 下为上述函数添加单元测试，覆盖：
   - 日期格式正确且为 UTC；
   - `127.0.0.1:6379` → `127.0.0.1-6379`；
   - 临时批目录名前缀 `tmp_`；
@@ -80,22 +81,29 @@
 
 ## 阶段四：每实例一个 Parquet Writer（.parquet.tmp 写入与完成重命名）
 
-目标：实现 per-instance 的 Parquet writer 生命周期与压缩配置，实例完成后将 `*.parquet.tmp` 原子重命名为 `*.parquet`。
+目标：实现 per-instance 的 Parquet writer 生命周期与压缩配置，实例完成后将 `*.parquet.tmp` 原子重命名为 `*.parquet`。采用异步 Parquet writer（`AsyncArrowWriter`）。
 
 ### 实现步骤
 - [ ] 新建 `src/output/parquet/mod.rs` 并导出 `ParquetOutput`：
   - [ ] 管理 `instance -> writer` 的映射（如 `HashMap<String, WriterHandle>`）。
-  - [ ] `WriterHandle` 持有目标临时文件路径、Arrow writer 及累计状态。
-  - [ ] 压缩：解析 `--compression` 为 Arrow/Parquet 对应选项（默认 ZSTD）。
-  - [ ] `write(records, batch_info, instance)`：
+  - [ ] `WriterHandle`：持有异步 Parquet writer 与其底层文件句柄/路径：
+    - `tokio::fs::File` 作为底层句柄；
+    - 一个本地 `FsAsyncFileWriter` 适配器，实现 `parquet::arrow::async_writer::AsyncFileWriter`，将 `write`/`complete` 委托给 `tokio::fs::File`；
+    - `AsyncArrowWriter<FsAsyncFileWriter>` 作为真正 writer；
+    - 路径信息（`*.parquet.tmp` 与目标 `*.parquet`）。
+  - [ ] 压缩：使用 `WriterProperties`（或等效异步选项）设置列族默认压缩算法，基于 `--compression`（默认 ZSTD）。
+  - [ ] `write(records, batch_info, instance)`（异步）：
     - 若该实例 writer 不存在：
-      - 构造批目录路径：`/<dir>/<cluster>/tmp_<batch_dir>/`；`ensure_dir`；
-      - 生成实例文件名（`:`→`-`），创建 `*.parquet.tmp` 并初始化 writer；
-    - 将第 3 阶段的 `RecordBatch` 追加到 writer。
-  - [ ] `finalize_instance(instance)`：关闭 writer 并 `rename(<file>.parquet.tmp -> <file>.parquet)`。
+      - 使用第二阶段工具生成路径：`/<dir>/<cluster>/tmp_<batch_dir>/`；`ensure_dir`；
+      - 生成实例文件名（`:`→`-`），创建 `*.parquet.tmp`，构造 `FsAsyncFileWriter` 与 `AsyncArrowWriter`；
+    - 将第 3 阶段的 `RecordBatch` 传给 `AsyncArrowWriter::write(&batch).await`。
+  - [ ] `finalize_instance(instance)`：
+    - 调用 `AsyncArrowWriter::close().await`；
+    - 原子重命名：`rename(<file>.parquet.tmp -> <file>.parquet)`。
 - [ ] 单元测试（使用 `tempfile`）：
-  - 写入一个实例的两批数据，关闭后存在 `.parquet` 且无 `.tmp`；
-  - 内容行数与写入条数一致。
+  - 写入一个实例的两批数据，关闭后存在 `.parquet` 且无 `.parquet.tmp`；
+  - 内容行数与写入条数一致；
+  - 异步上下文下（tokio runtime）运行通过。
 
 ### 验证步骤
 - [ ] 运行 `just test`，确认 Writer 生命周期测试通过。
@@ -108,11 +116,11 @@
 
 ### 实现步骤
 - [ ] 在 `src/bin/rdbinsight.rs` 中：
-  - [ ] 依据 `OutputConfig::Parquet` 分支初始化 `ParquetOutput`，计算 `batch_dir` 名称，并提前创建 `tmp_<batch_dir>` 目录。
+  - [ ] 依据 `OutputConfig::Parquet` 分支初始化 `ParquetOutput`，计算 `batch_dir` 名称，并提前创建 `tmp_<batch_dir>` 目录（调用第二阶段的工具函数）。
   - [ ] 新增 `process_records_to_parquet`（与现有 `process_records_to_clickhouse` 类似的循环）：
     - 复用现有批量缓冲阈值；
-    - 每批调用 `ParquetOutput.write(...)`；
-    - 流结束时调用 `finalize_instance(instance)`。
+    - 每批调用 `ParquetOutput.write(...).await`；
+    - 流结束时调用 `finalize_instance(instance).await`。
   - [ ] 当所有实例完成后，执行批目录重命名：`tmp_<batch_dir> -> <batch_dir>`。
 - [ ] 确保日志字段顺序符合规范（`operation` 优先）。
 
@@ -155,4 +163,4 @@
 
 ---
 
-备注：以上各阶段严格限定在“引入 Parquet 输出能力”的范围内；外部排序、run 归并、断点续写/覆盖策略、高级写出参数等均不在本阶段内。
+备注：以上各阶段严格限定在“引入 Parquet 输出能力”的范围内；外部排序、run 归并、断点续写/覆盖策略、高级写出参数等均不在本阶段内。引用文档：[parquet async_writer](https://docs.rs/parquet/latest/parquet/arrow/async_writer/index.html)

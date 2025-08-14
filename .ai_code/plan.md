@@ -84,29 +84,28 @@
 目标：实现 per-instance 的 Parquet writer 生命周期与压缩配置，实例完成后将 `*.parquet.tmp` 原子重命名为 `*.parquet`。采用异步 Parquet writer（`AsyncArrowWriter`）。
 
 ### 实现步骤
-- [ ] 新建 `src/output/parquet/mod.rs` 并导出 `ParquetOutput`：
-  - [ ] 管理 `instance -> writer` 的映射（如 `HashMap<String, WriterHandle>`）。
-  - [ ] `WriterHandle`：持有异步 Parquet writer 与其底层文件句柄/路径：
+- [x] 新建 `src/output/parquet/mod.rs` 并导出 `ParquetOutput`：
+  - [x] 管理 `instance -> writer` 的映射（如 `HashMap<String, WriterHandle>`）。
+  - [x] `WriterHandle`：持有异步 Parquet writer 与其底层文件句柄/路径：
     - `tokio::fs::File` 作为底层句柄；
-    - 一个本地 `FsAsyncFileWriter` 适配器，实现 `parquet::arrow::async_writer::AsyncFileWriter`，将 `write`/`complete` 委托给 `tokio::fs::File`；
-    - `AsyncArrowWriter<FsAsyncFileWriter>` 作为真正 writer；
+    - 直接使用 `AsyncArrowWriter<File>`（parquet 库已为 `AsyncWrite` trait 实现了 `AsyncFileWriter`）；
     - 路径信息（`*.parquet.tmp` 与目标 `*.parquet`）。
-  - [ ] 压缩：使用 `WriterProperties`（或等效异步选项）设置列族默认压缩算法，基于 `--compression`（默认 ZSTD）。
-  - [ ] `write(records, batch_info, instance)`（异步）：
+  - [x] 压缩：使用 `WriterProperties` 设置列族默认压缩算法，基于 `--compression`（默认 ZSTD）。
+  - [x] `write(records, batch_info, instance)`（异步）：
     - 若该实例 writer 不存在：
       - 使用第二阶段工具生成路径：`/<dir>/<cluster>/tmp_<batch_dir>/`；`ensure_dir`；
-      - 生成实例文件名（`:`→`-`），创建 `*.parquet.tmp`，构造 `FsAsyncFileWriter` 与 `AsyncArrowWriter`；
+      - 生成实例文件名（`:`→`-`），创建 `*.parquet.tmp`，构造 `AsyncArrowWriter`；
     - 将第 3 阶段的 `RecordBatch` 传给 `AsyncArrowWriter::write(&batch).await`。
-  - [ ] `finalize_instance(instance)`：
+  - [x] `finalize_instance(instance)`：
     - 调用 `AsyncArrowWriter::close().await`；
     - 原子重命名：`rename(<file>.parquet.tmp -> <file>.parquet)`。
-- [ ] 单元测试（使用 `tempfile`）：
+- [x] 单元测试（使用 `tempfile`）：
   - 写入一个实例的两批数据，关闭后存在 `.parquet` 且无 `.parquet.tmp`；
   - 内容行数与写入条数一致；
   - 异步上下文下（tokio runtime）运行通过。
 
 ### 验证步骤
-- [ ] 运行 `just test`，确认 Writer 生命周期测试通过。
+- [x] 运行 `just test`，确认 Writer 生命周期测试通过。
 
 ---
 
@@ -115,21 +114,21 @@
 目标：在不影响 ClickHouse 分支的前提下，接入 Parquet 分支，保证每实例独立写入并在实例完成时完成临时文件重命名；全部实例完成后重命名批目录。
 
 ### 实现步骤
-- [ ] 在 `src/bin/rdbinsight.rs` 中：
-  - [ ] 依据 `OutputConfig::Parquet` 分支初始化 `ParquetOutput`，计算 `batch_dir` 名称，并提前创建 `tmp_<batch_dir>` 目录（调用第二阶段的工具函数）。
-  - [ ] 新增 `process_records_to_parquet`（与现有 `process_records_to_clickhouse` 类似的循环）：
+- [x] 在 `src/bin/rdbinsight.rs` 中：
+  - [x] 依据 `OutputConfig::Parquet` 分支初始化 `ParquetOutput`，计算 `batch_dir` 名称，并提前创建 `tmp_<batch_dir>` 目录（调用第二阶段的工具函数）。
+  - [x] 新增 `process_records_to_parquet`（与现有 `process_records_to_clickhouse` 类似的循环）：
     - 复用现有批量缓冲阈值；
     - 每批调用 `ParquetOutput.write(...).await`；
     - 流结束时调用 `finalize_instance(instance).await`。
-  - [ ] 当所有实例完成后，执行批目录重命名：`tmp_<batch_dir> -> <batch_dir>`。
-- [ ] 确保日志字段顺序符合规范（`operation` 优先）。
+  - [x] 当所有实例完成后，执行批目录重命名：`tmp_<batch_dir> -> <batch_dir>`。
+- [x] 确保日志字段顺序符合规范（`operation` 优先）。
 
 ### 验证步骤
-- [ ] 运行 `cargo build`；
-- [ ] 使用小数据源运行一次 dump（任一来源），确认产物目录：
+- [x] 运行 `cargo build`；
+- [x] 使用小数据源运行一次 dump（任一来源），确认产物目录：
   - `/<dir>/<cluster>/tmp_<batch_dir>/instance.parquet.tmp`（运行中）
   - 全部结束后为：`/<dir>/<cluster>/<batch_dir>/instance.parquet`
-- [ ] 使用 Parquet 工具（如 `parquet-tools` 或 Arrow 读取）检查字段与行数。
+- [x] 使用 Parquet 工具（如 `parquet-tools` 或 Arrow 读取）检查字段与行数。
 
 ---
 

@@ -10,16 +10,16 @@
 ## 阶段一：输出抽象与类型脚手架
 
 ### 实现步骤
-- [ ] 新增 `output::types`（或 `output::mod` 顶层）定义 `Chunk`：`{ cluster: String, batch_ts: OffsetDateTime, instance: String, records: Vec<Record> }`。
-- [ ] 新增 `output::sink`（或 `output::mod` 顶层）定义 `enum Output { ClickHouse(ClickHouseOutput), Parquet(ParquetOutput) }`，并为其添加方法签名：
+- [x] 新增 `output::types`（或 `output::mod` 顶层）定义 `Chunk`：`{ cluster: String, batch_ts: OffsetDateTime, instance: String, records: Vec<Record> }`。
+- [x] 新增 `output::sink`（或 `output::mod` 顶层）定义 `enum Output { ClickHouse(ClickHouseOutput), Parquet(ParquetOutput) }`，并为其添加方法签名：
   - `async fn write_chunk(&mut self, chunk: Chunk) -> AnyResult<()>`
   - `async fn finalize_instance(&mut self, instance: &str) -> AnyResult<()>`
   - `async fn finalize_batch(self) -> AnyResult<()>`
-- [ ] 在 `config::OutputConfig` 增加工厂方法：`create_output(&self, cluster: &str, batch_ts: OffsetDateTime) -> AnyResult<Output>`（仅声明与空实现/`todo!`，暂不影响现有逻辑）。
+- [x] 在 `config::OutputConfig` 增加工厂方法：`create_output(&self, cluster: &str, batch_ts: OffsetDateTime) -> AnyResult<Output>`（仅声明与空实现/`todo!`，暂不影响现有逻辑）。
 
 ### 验证步骤
-- [ ] 运行构建：`cargo build` 应通过。
-- [ ] Lint（如有）：`cargo clippy --all-targets --all-features -D warnings` 应无新告警。
+- [x] 运行构建：`cargo build` 应通过。
+- [x] Lint（如有）：`cargo clippy --all-targets --all-features -D warnings` 应无新告警。
 
 ---
 

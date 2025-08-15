@@ -32,7 +32,8 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
         let mut conn = client.get_multiplexed_tokio_connection().await?;
         let mut pipe = redis::pipe();
         for i in 0..100u32 {
-            pipe.set(format!("str_key_{}", i), format!("value_{}", i)).ignore();
+            pipe.set(format!("str_key_{}", i), format!("value_{}", i))
+                .ignore();
         }
         pipe.query_async::<()>(&mut conn).await?;
     }
@@ -103,7 +104,10 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     // Verify the output files exist
     let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_info.batch);
     let final_batch_dir = output_dir.join(cluster_name).join(batch_dir_name);
-    assert!(final_batch_dir.exists(), "Final batch directory should exist");
+    assert!(
+        final_batch_dir.exists(),
+        "Final batch directory should exist"
+    );
 
     let sanitized_instance = instance.replace(':', "-");
     let instance_file = final_batch_dir.join(format!("{sanitized_instance}.parquet"));

@@ -26,17 +26,17 @@
 ## 阶段二：实现 Output 枚举分支（不改动现有调用路径）
 
 ### 实现步骤
-- [ ] 在 `ClickHouseOutput` 中实现 `Output::write_chunk` 与 `Output::finalize_batch`/`finalize_instance` 分支逻辑：
+- [x] 在 `ClickHouseOutput` 中实现 `Output::write_chunk` 与 `Output::finalize_batch`/`finalize_instance` 分支逻辑：
   - 复用当前 `write()` 的批量插入逻辑，将 `Chunk` 字段映射到行模型。
   - `finalize_instance` 为 no-op。
   - `finalize_batch(self)` 使用 `cluster + batch_ts` 执行批次提交。
-- [ ] 在 `ParquetOutput` 中实现 `Output::write_chunk` 与 `finalize_instance`/`finalize_batch` 分支逻辑：
+- [x] 在 `ParquetOutput` 中实现 `Output::write_chunk` 与 `finalize_instance`/`finalize_batch` 分支逻辑：
   - 复用当前按实例 `WriterHandle` 写入与 `finalize_instance`/`finalize_batch` 语义。
-- [ ] 完成 `OutputConfig::create_output` 的返回枚举（仍不在主流程启用）。
+- [x] 完成 `OutputConfig::create_output` 的返回枚举（仍不在主流程启用）。
 
 ### 验证步骤
-- [ ] 运行构建：`cargo build` 应通过。
-- [ ] 运行单测：`just test` 应全部通过（不修改现有测试）。
+- [x] 运行构建：`cargo build` 应通过。
+- [x] 运行单测：`just test` 应全部通过（不修改现有测试）。
 
 ---
 

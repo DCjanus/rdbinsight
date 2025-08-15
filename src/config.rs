@@ -286,13 +286,32 @@ pub enum OutputConfig {
 }
 
 impl OutputConfig {
-    pub fn create_output(
+    pub async fn create_output(
         &self,
-        cluster: &str,
+        cluster: String,
         batch_ts: OffsetDateTime,
     ) -> AnyResult<crate::output::sink::Output> {
-        let _ = (cluster, batch_ts);
-        todo!("Implemented in later phase");
+        match self {
+            OutputConfig::Clickhouse(clickhouse_config) => {
+                let ch_output = crate::output::clickhouse::ClickHouseOutput::new_with_batch_info(
+                    clickhouse_config.clone(),
+                    cluster,
+                    batch_ts,
+                )
+                .await?;
+                Ok(crate::output::sink::Output::ClickHouse(ch_output))
+            }
+            OutputConfig::Parquet(parquet_config) => {
+                let parquet_output = crate::output::parquet::ParquetOutput::new_with_batch_info(
+                    parquet_config.dir.clone(),
+                    parquet_config.compression,
+                    cluster,
+                    batch_ts,
+                )
+                .await?;
+                Ok(crate::output::sink::Output::Parquet(parquet_output))
+            }
+        }
     }
 }
 

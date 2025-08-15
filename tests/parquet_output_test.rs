@@ -3,93 +3,86 @@ use std::path::PathBuf;
 use anyhow::Result;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use rdbinsight::{
-    config::{DumpConfig, OutputConfig, ParquetCompression, ParquetConfig, SourceConfig},
+    config::ParquetCompression,
     output::{clickhouse::BatchInfo, parquet::ParquetOutput},
-    source::RdbSourceConfig,
+    source::{RdbSourceConfig, SourceType, standalone::Config as StandaloneConfig},
 };
 use tempfile::TempDir;
 use time::OffsetDateTime;
 
 mod common;
 
-/// Test the Parquet output functionality end-to-end using a small RDB file
+/// Test the Parquet output functionality end-to-end using a live Redis via testcontainers
 #[tokio::test]
 async fn test_parquet_output_end_to_end() -> Result<()> {
     // Create a temporary directory for output
     let temp_dir = TempDir::new()?;
     let output_dir = temp_dir.path().to_path_buf();
 
-    // Use a small test RDB file
-    let rdb_file_path = PathBuf::from("tests/dumps/string_raw_encoding_test_redis_8.0.rdb");
-    assert!(rdb_file_path.exists(), "Test RDB file should exist");
+    // Start a Redis instance using testcontainers (no snapshot to speed up and match other tests)
+    let redis = crate::common::setup::RedisConfig::default()
+        .with_snapshot(false)
+        .build()
+        .await?;
 
-    // Set up configuration
+    // Seed minimal data into Redis
+    {
+        use redis::Client;
+        let client = Client::open(redis.connection_string.as_str())?;
+        let mut conn = client.get_multiplexed_tokio_connection().await?;
+        let mut pipe = redis::pipe();
+        for i in 0..100u32 {
+            pipe.set(format!("str_key_{}", i), format!("value_{}", i)).ignore();
+        }
+        pipe.query_async::<()>(&mut conn).await?;
+    }
+
+    // Prepare Standalone source to fetch RDB over replication
+    fn extract_address(redis_url: &str) -> String {
+        redis_url
+            .strip_prefix("redis://")
+            .unwrap_or(redis_url)
+            .to_string()
+    }
+
+    let address = extract_address(&redis.connection_string);
+    let cfg = StandaloneConfig::new(address.clone(), String::new(), None);
+
+    // Set up batch and output
     let cluster_name = "test-cluster";
-    let instance = "127.0.0.1:6379";
-    let batch_timestamp = OffsetDateTime::now_utc();
-
-    let source_config = SourceConfig::RDBFile {
-        cluster_name: cluster_name.to_string(),
-        path: rdb_file_path.to_string_lossy().to_string(),
-        instance: instance.to_string(),
-    };
-
-    let parquet_config = ParquetConfig::new(output_dir.clone(), ParquetCompression::None)?;
-    let output_config = OutputConfig::Parquet(parquet_config);
-
-    let config = DumpConfig {
-        source: source_config,
-        output: output_config,
-        concurrency: 1,
-    };
-
-    // Validate the configuration
-    config.validate()?;
-
-    // Create batch info
+    let instance = address.as_str();
     let batch_info = BatchInfo {
         cluster: cluster_name.to_string(),
-        batch: batch_timestamp,
+        batch: OffsetDateTime::now_utc(),
     };
 
-    // Get RDB streams from source
-    let streams = config.source.get_rdb_streams().await?;
+    let mut parquet_output = ParquetOutput::new(
+        output_dir.clone(),
+        rdbinsight::config::ParquetCompression::None,
+        cluster_name,
+        &batch_info,
+    )
+    .await?;
+
+    // Get RDB stream and process records
+    let mut streams = cfg.get_rdb_streams().await?;
     assert_eq!(streams.len(), 1, "Should have exactly one stream");
-
-    // Initialize Parquet output
-    let mut parquet_output = match &config.output {
-        OutputConfig::Parquet(parquet_config) => {
-            ParquetOutput::new(
-                parquet_config.dir.clone(),
-                parquet_config.compression,
-                cluster_name,
-                &batch_info,
-            )
-            .await?
-        }
-        _ => unreachable!("Should be Parquet config"),
-    };
-
-    // Process the stream
-    let mut stream = streams.into_iter().next().unwrap();
+    let mut stream = streams.remove(0);
     stream.as_mut().prepare().await?;
 
-    // Collect records manually to avoid complex stream processing
-    let mut total_records = 0;
+    let mut total_records = 0usize;
     let mut record_buffer = Vec::new();
     const BATCH_SIZE: usize = 100;
 
     use futures_util::StreamExt;
     use rdbinsight::record::RecordStream;
 
-    let mut record_stream = RecordStream::new(stream, rdbinsight::source::SourceType::File);
-
+    let mut record_stream = RecordStream::new(stream, SourceType::Standalone);
     while let Some(record_result) = record_stream.next().await {
         let record = record_result?;
         total_records += 1;
         record_buffer.push(record);
 
-        // Write in batches
         if record_buffer.len() >= BATCH_SIZE {
             parquet_output
                 .write(&record_buffer, &batch_info, instance)
@@ -98,29 +91,22 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
         }
     }
 
-    // Write remaining records
     if !record_buffer.is_empty() {
         parquet_output
             .write(&record_buffer, &batch_info, instance)
             .await?;
     }
 
-    // Finalize the instance
     parquet_output.finalize_instance(instance).await?;
-
-    // Finalize the batch
     parquet_output.finalize_batch().await?;
 
     // Verify the output files exist
     let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_info.batch);
     let final_batch_dir = output_dir.join(cluster_name).join(batch_dir_name);
+    assert!(final_batch_dir.exists(), "Final batch directory should exist");
 
-    assert!(
-        final_batch_dir.exists(),
-        "Final batch directory should exist"
-    );
-
-    let instance_file = final_batch_dir.join("127.0.0.1-6379.parquet");
+    let sanitized_instance = instance.replace(':', "-");
+    let instance_file = final_batch_dir.join(format!("{sanitized_instance}.parquet"));
     assert!(instance_file.exists(), "Instance parquet file should exist");
 
     // Verify the parquet file contains the expected number of records
@@ -128,7 +114,7 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
     let reader = builder.build()?;
 
-    let mut total_rows = 0;
+    let mut total_rows = 0usize;
     for batch_result in reader {
         let batch = batch_result?;
         total_rows += batch.num_rows();

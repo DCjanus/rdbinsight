@@ -122,5 +122,4 @@ ORDER BY key_cnt DESC;
 
 ### 性能优化
 
-- [ ] 将 RDB 解析和 ClickHouse 写入拆分为独立协程，通过有界 Channel 连接，提升整体吞吐量
 - [ ] 评估 mimalloc 内存分配器替代默认分配器的性能收益，优化大文件解析场景

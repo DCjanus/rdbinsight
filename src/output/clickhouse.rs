@@ -17,6 +17,8 @@ pub struct BatchInfo {
 pub struct ClickHouseOutput {
     client: Client,
     config: ClickHouseConfig,
+    cluster: String,
+    batch_ts: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Row, Serialize, Deserialize)]
@@ -47,13 +49,18 @@ pub struct BatchCompletedRow {
 }
 
 impl ClickHouseOutput {
-    pub async fn new(config: ClickHouseConfig) -> AnyResult<Self> {
+    pub async fn new(
+        config: ClickHouseConfig,
+        cluster: String,
+        batch_ts: OffsetDateTime,
+    ) -> AnyResult<Self> {
         use tracing::debug;
 
         debug!(
             operation = "clickhouse_client_init",
             address = %config.address,
-            "Initializing ClickHouse client"
+            cluster = %cluster,
+            "Initializing ClickHouse client with batch info"
         );
 
         let client = config
@@ -62,6 +69,8 @@ impl ClickHouseOutput {
         let output = Self {
             client,
             config: config.clone(),
+            cluster,
+            batch_ts,
         };
 
         debug!("Validating ClickHouse tables and schema...");
@@ -224,10 +233,44 @@ impl ClickHouseOutput {
         Ok(())
     }
 
+    pub async fn write_chunk(&mut self, chunk: crate::output::types::Chunk) -> AnyResult<()> {
+        if chunk.records.is_empty() {
+            return Ok(());
+        }
+
+        let mut insert: Insert<RedisRecordRow> = self.client.insert("redis_records_raw")?;
+        for record in &chunk.records {
+            let row = self.record_to_row_from_chunk(record, &chunk);
+            insert.write(&row).await?;
+        }
+        insert.end().await?;
+
+        Ok(())
+    }
+
     pub async fn commit_batch(&self, batch_info: &BatchInfo) -> AnyResult<()> {
         let completion_row = BatchCompletedRow {
             cluster: batch_info.cluster.clone(),
             batch: batch_info.batch,
+        };
+
+        let mut insert: Insert<BatchCompletedRow> =
+            self.client.insert("import_batches_completed")?;
+        insert.write(&completion_row).await?;
+        insert.end().await?;
+
+        Ok(())
+    }
+
+    pub async fn finalize_instance(&mut self, _instance: &str) -> AnyResult<()> {
+        // No-op for ClickHouse - instances don't need individual finalization
+        Ok(())
+    }
+
+    pub async fn finalize_batch(self) -> AnyResult<()> {
+        let completion_row = BatchCompletedRow {
+            cluster: self.cluster,
+            batch: self.batch_ts,
         };
 
         let mut insert: Insert<BatchCompletedRow> =
@@ -268,6 +311,36 @@ impl ClickHouseOutput {
             redis_slot: record.redis_slot,
         }
     }
+
+    fn record_to_row_from_chunk(
+        &self,
+        record: &Record,
+        chunk: &crate::output::types::Chunk,
+    ) -> RedisRecordRow {
+        let key_bytes = match &record.key {
+            crate::parser::core::raw::RDBStr::Str(bytes) => bytes.clone(),
+            crate::parser::core::raw::RDBStr::Int(i) => Bytes::from(i.to_string()),
+        };
+
+        RedisRecordRow {
+            cluster: chunk.cluster.clone(),
+            batch: chunk.batch_ts,
+            instance: chunk.instance.clone(),
+            db: record.db,
+            key: key_bytes,
+            r#type: record.type_name().to_string(),
+            member_count: record.member_count.unwrap_or(0),
+            rdb_size: record.rdb_size,
+            encoding: record.encoding_name(),
+            expire_at: record.expire_at_ms.map(|ms| {
+                OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000).unwrap()
+            }),
+            idle_seconds: record.idle_seconds,
+            freq: record.freq,
+            codis_slot: record.codis_slot,
+            redis_slot: record.redis_slot,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -287,7 +360,12 @@ mod tests {
         let config =
             ClickHouseConfig::new(Url::parse("http://localhost:8123").unwrap(), false, None)
                 .unwrap();
-        let output = ClickHouseOutput { client, config };
+        let output = ClickHouseOutput {
+            client,
+            config,
+            cluster: "test-cluster".to_string(),
+            batch_ts: OffsetDateTime::from_unix_timestamp(1640995200).unwrap(),
+        };
 
         let batch_info = BatchInfo {
             cluster: "test-cluster".to_string(),

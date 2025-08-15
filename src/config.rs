@@ -4,6 +4,7 @@ use anyhow::{Context, anyhow, ensure};
 use async_trait::async_trait;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use url::Url;
 
 use crate::{
@@ -282,6 +283,36 @@ pub enum OutputConfig {
     Clickhouse(ClickHouseConfig),
     #[serde(rename = "parquet")]
     Parquet(ParquetConfig),
+}
+
+impl OutputConfig {
+    pub async fn create_output(
+        &self,
+        cluster: String,
+        batch_ts: OffsetDateTime,
+    ) -> AnyResult<crate::output::sink::Output> {
+        match self {
+            OutputConfig::Clickhouse(clickhouse_config) => {
+                let ch_output = crate::output::clickhouse::ClickHouseOutput::new(
+                    clickhouse_config.clone(),
+                    cluster,
+                    batch_ts,
+                )
+                .await?;
+                Ok(crate::output::sink::Output::ClickHouse(ch_output))
+            }
+            OutputConfig::Parquet(parquet_config) => {
+                let parquet_output = crate::output::parquet::ParquetOutput::new_with_batch_info(
+                    parquet_config.dir.clone(),
+                    parquet_config.compression,
+                    cluster,
+                    batch_ts,
+                )
+                .await?;
+                Ok(crate::output::sink::Output::Parquet(parquet_output))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

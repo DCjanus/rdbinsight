@@ -1,4 +1,4 @@
-use std::{path::PathBuf, pin::Pin, time::Instant};
+use std::{path::PathBuf, pin::Pin, sync::Arc, time::Instant};
 
 use anyhow::{Context, Result, anyhow};
 use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
@@ -6,8 +6,11 @@ use clap::{CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
-    config::OutputConfig,
-    output::clickhouse::{BatchInfo, ClickHouseOutput},
+    config::{OutputConfig, ParquetCompression},
+    output::{
+        clickhouse::{BatchInfo, ClickHouseOutput},
+        parquet::ParquetOutput,
+    },
     record::{Record, RecordStream},
     source::{RDBStream, RdbSourceConfig},
 };
@@ -168,6 +171,8 @@ struct DumpCodisArgs {
 enum OutputCommand {
     /// Output to ClickHouse
     IntoClickhouse(ClickHouseOutputArgs),
+    /// Output to Parquet files
+    IntoParquet(ParquetOutputArgs),
 }
 
 #[derive(Parser)]
@@ -187,6 +192,17 @@ struct ClickHouseOutputArgs {
     /// HTTP proxy URL for ClickHouse connections
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PROXY_URL")]
     proxy_url: Option<String>,
+}
+
+#[derive(Parser)]
+struct ParquetOutputArgs {
+    /// Output directory for Parquet files
+    #[arg(long)]
+    dir: PathBuf,
+
+    /// Compression algorithm
+    #[arg(long, value_enum, default_value_t = ParquetCompression::Zstd)]
+    compression: ParquetCompression,
 }
 
 #[derive(Parser)]
@@ -248,7 +264,7 @@ async fn main() -> Result<()> {
         .init();
 
     match main_cli.command {
-        Command::Dump(dump_cmd) => dump_to_clickhouse(dump_cmd, main_cli.concurrency).await,
+        Command::Dump(dump_cmd) => dump_records(dump_cmd, main_cli.concurrency).await,
         Command::Report(args) => run_report(args).await,
         Command::Misc(misc_cmd) => match misc_cmd {
             MiscCommand::PrintClickhouseSchema => {
@@ -297,7 +313,9 @@ fn dump_command_to_config(
     dump_cmd: DumpCommand,
     concurrency: usize,
 ) -> Result<(rdbinsight::config::DumpConfig, Option<String>)> {
-    use rdbinsight::config::{ClickHouseConfig, DumpConfig, OutputConfig, SourceConfig};
+    use rdbinsight::config::{
+        ClickHouseConfig, DumpConfig, OutputConfig, ParquetConfig, SourceConfig,
+    };
 
     let (source_config, batch_timestamp, output_cmd) = match dump_cmd {
         DumpCommand::FromRedis(args) => {
@@ -338,12 +356,15 @@ fn dump_command_to_config(
         }
     };
 
-    // Extract output config - currently only ClickHouse is supported
     let output_config = match output_cmd {
         OutputCommand::IntoClickhouse(ch_args) => {
             let ch_config =
                 ClickHouseConfig::new(ch_args.url, ch_args.auto_create_tables, ch_args.proxy_url)?;
             OutputConfig::Clickhouse(ch_config)
+        }
+        OutputCommand::IntoParquet(parquet_args) => {
+            let parquet_config = ParquetConfig::new(parquet_args.dir, parquet_args.compression)?;
+            OutputConfig::Parquet(parquet_config)
         }
     };
 
@@ -359,7 +380,7 @@ fn dump_command_to_config(
     Ok((config, batch_timestamp))
 }
 
-async fn dump_to_clickhouse(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
+async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     debug!(
         operation = "config_parsing",
         "Parsing CLI arguments into configuration"
@@ -411,26 +432,6 @@ async fn dump_to_clickhouse(dump_cmd: DumpCommand, concurrency: usize) -> Result
         now
     };
 
-    info!(
-        operation = "cluster_dump_start",
-        cluster = %cluster_name,
-        concurrency = %config.concurrency,
-        "Starting dump for cluster"
-    );
-
-    let clickhouse_output = match &config.output {
-        OutputConfig::Clickhouse(clickhouse_config) => {
-            debug!(
-                operation = "clickhouse_output_init",
-                config = ?clickhouse_config,
-                "Initializing ClickHouse output"
-            );
-            ClickHouseOutput::new(clickhouse_config.clone())
-                .await
-                .with_context(|| "Failed to initialize ClickHouse output")?
-        }
-    };
-
     let batch_info = BatchInfo {
         cluster: cluster_name.to_string(),
         batch: batch_timestamp,
@@ -441,6 +442,13 @@ async fn dump_to_clickhouse(dump_cmd: DumpCommand, concurrency: usize) -> Result
         cluster = %batch_info.cluster,
         timestamp = %batch_info.batch,
         "Batch info created"
+    );
+
+    info!(
+        operation = "cluster_dump_start",
+        cluster = %cluster_name,
+        concurrency = %config.concurrency,
+        "Starting dump for cluster"
     );
 
     debug!(
@@ -459,9 +467,66 @@ async fn dump_to_clickhouse(dump_cmd: DumpCommand, concurrency: usize) -> Result
     );
     let total_streams = streams.len();
 
+    // Process based on output type
+    match &config.output {
+        OutputConfig::Clickhouse(clickhouse_config) => {
+            debug!(
+                operation = "clickhouse_output_init",
+                config = ?clickhouse_config,
+                "Initializing ClickHouse output"
+            );
+            let clickhouse_output = ClickHouseOutput::new(clickhouse_config.clone())
+                .await
+                .with_context(|| "Failed to initialize ClickHouse output")?;
+
+            process_streams_to_clickhouse(
+                streams,
+                clickhouse_output,
+                batch_info,
+                config.concurrency,
+            )
+            .await?;
+        }
+        OutputConfig::Parquet(parquet_config) => {
+            debug!(
+                operation = "parquet_output_init",
+                config = ?parquet_config,
+                "Initializing Parquet output"
+            );
+            let parquet_output = ParquetOutput::new(
+                parquet_config.dir.clone(),
+                parquet_config.compression,
+                &cluster_name,
+                &batch_info,
+            )
+            .await
+            .with_context(|| "Failed to initialize Parquet output")?;
+
+            process_streams_to_parquet(streams, parquet_output, batch_info, config.concurrency)
+                .await?;
+        }
+    }
+
+    info!(
+        operation = "dump_completed",
+        cluster = %cluster_name,
+        total_instances = total_streams,
+        "Dump completed successfully for all instances"
+    );
+    Ok(())
+}
+
+async fn process_streams_to_clickhouse(
+    streams: Vec<Pin<Box<dyn RDBStream>>>,
+    clickhouse_output: ClickHouseOutput,
+    batch_info: BatchInfo,
+    concurrency: usize,
+) -> Result<()> {
+    let total_streams = streams.len();
+
     futures_util::stream::iter(streams)
         .map(Ok)
-        .try_for_each_concurrent(config.concurrency, |stream| {
+        .try_for_each_concurrent(concurrency, |stream| {
             let clickhouse_output = clickhouse_output.clone();
             let batch_info = batch_info.clone();
             async move {
@@ -521,6 +586,78 @@ async fn dump_to_clickhouse(dump_cmd: DumpCommand, concurrency: usize) -> Result
         total_instances = total_streams,
         "Batch committed successfully for all instances"
     );
+
+    Ok(())
+}
+
+async fn process_streams_to_parquet(
+    streams: Vec<Pin<Box<dyn RDBStream>>>,
+    parquet_output: ParquetOutput,
+    batch_info: BatchInfo,
+    concurrency: usize,
+) -> Result<()> {
+    let total_streams = streams.len();
+
+    // We need to share the parquet_output across tasks, so we'll use Arc<Mutex<>>
+    use std::sync::Arc;
+
+    use tokio::sync::Mutex;
+    let shared_parquet_output = Arc::new(Mutex::new(parquet_output));
+
+    futures_util::stream::iter(streams)
+        .map(Ok)
+        .try_for_each_concurrent(concurrency, |stream| {
+            let shared_parquet_output = shared_parquet_output.clone();
+            let batch_info = batch_info.clone();
+            async move {
+                let instance = stream.instance();
+                info!(
+                    operation = "instance_processing_start",
+                    instance = %instance,
+                    "Starting processing"
+                );
+
+                tokio::spawn(async move {
+                    process_records_to_parquet(stream, shared_parquet_output, batch_info)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to process RDB stream from instance: {instance}")
+                        })
+                })
+                .await??;
+
+                Ok::<(), anyhow::Error>(())
+            }
+        })
+        .await
+        .with_context(|| {
+            format!("Failed to process RDB streams ({total_streams} total instances)")
+        })?;
+
+    debug!(
+        operation = "all_streams_processed",
+        total_instances = total_streams,
+        "All RDB streams processed successfully"
+    );
+
+    // Finalize the batch directory after all instances are complete
+    let parquet_output = Arc::try_unwrap(shared_parquet_output)
+        .map_err(|_| anyhow::anyhow!("Failed to take ownership of parquet output"))?
+        .into_inner();
+
+    parquet_output
+        .finalize_batch()
+        .await
+        .with_context(|| "Failed to finalize parquet batch")?;
+
+    info!(
+        operation = "parquet_batch_finalized",
+        cluster = %batch_info.cluster,
+        batch = %batch_info.batch,
+        total_instances = total_streams,
+        "Parquet batch finalized successfully for all instances"
+    );
+
     Ok(())
 }
 
@@ -647,6 +784,137 @@ async fn process_records_to_clickhouse(
     Ok(())
 }
 
+async fn process_records_to_parquet(
+    mut stream: Pin<Box<dyn RDBStream>>,
+    parquet_output: Arc<tokio::sync::Mutex<ParquetOutput>>,
+    batch_info: BatchInfo,
+) -> Result<()> {
+    let instance = stream.instance();
+    let source_type = stream.source_type();
+
+    stream
+        .prepare()
+        .await
+        .context("Failed to prepare RDB stream")?;
+
+    const BATCH_SIZE: usize = 1_000_000;
+
+    let start_time = Instant::now();
+    let mut total_records = 0u64;
+    let mut record_buffer: Vec<Record> = Vec::with_capacity(BATCH_SIZE);
+
+    let mut record_stream = RecordStream::new(stream, source_type);
+
+    let backoff_strategy = ExponentialBackoffBuilder::new()
+        .with_initial_interval(std::time::Duration::from_secs(1))
+        .with_max_interval(std::time::Duration::from_secs(10))
+        .with_max_elapsed_time(Some(std::time::Duration::from_secs(60)))
+        .build();
+
+    loop {
+        match record_stream.next().await {
+            Some(Ok(record)) => {
+                total_records += 1;
+                record_buffer.push(record);
+
+                if record_buffer.len() >= BATCH_SIZE {
+                    write_parquet_batch_with_retry(
+                        &parquet_output,
+                        &record_buffer,
+                        &batch_info,
+                        &instance,
+                        &backoff_strategy,
+                    )
+                    .await?;
+                    info!(
+                        operation = "batch_written",
+                        instance = %instance,
+                        batch_size = record_buffer.len(),
+                        total_records = total_records,
+                        "Wrote batch of records"
+                    );
+                    record_buffer.clear();
+                }
+
+                if total_records.is_multiple_of(100_000) {
+                    debug!(
+                        operation = "progress_update",
+                        instance = %instance,
+                        processed_records = total_records,
+                        "Processing progress"
+                    );
+                }
+            }
+            Some(Err(e)) => {
+                let elapsed = start_time.elapsed();
+                error!(
+                    operation = "parser_error",
+                    instance = %instance,
+                    processed_records = total_records,
+                    elapsed_seconds = elapsed.as_secs(),
+                    error = %e,
+                    "Parser error during processing"
+                );
+
+                // Add root cause chain information
+                let mut cause_chain = Vec::new();
+                let mut current_error: &dyn std::error::Error = e.as_ref();
+                while let Some(cause) = current_error.source() {
+                    cause_chain.push(format!("{cause}"));
+                    current_error = cause;
+                }
+
+                if !cause_chain.is_empty() {
+                    error!(
+                        operation = "error_chain",
+                        instance = %instance,
+                        error_chain = %cause_chain.join(" -> "),
+                        "Error chain details"
+                    );
+                }
+
+                return Err(e.context(format!(
+                    "Failed to process RDB stream from instance {instance} after {total_records} records in {elapsed:?}"
+                )));
+            }
+            None => {
+                if !record_buffer.is_empty() {
+                    write_parquet_batch_with_retry(
+                        &parquet_output,
+                        &record_buffer,
+                        &batch_info,
+                        &instance,
+                        &backoff_strategy,
+                    )
+                    .await?;
+                }
+                break;
+            }
+        }
+    }
+
+    // Finalize this instance
+    {
+        let mut parquet_output = parquet_output.lock().await;
+        parquet_output
+            .finalize_instance(&instance)
+            .await
+            .with_context(|| format!("Failed to finalize Parquet instance: {instance}"))?;
+    }
+
+    let duration = start_time.elapsed();
+    info!(
+        operation = "instance_processing_completed",
+        instance = %instance,
+        total_records = total_records,
+        duration_seconds = duration.as_secs_f64(),
+        records_per_second = total_records as f64 / duration.as_secs_f64(),
+        "Instance processing completed"
+    );
+
+    Ok(())
+}
+
 async fn write_batch_with_retry(
     clickhouse_output: &ClickHouseOutput,
     records: &[Record],
@@ -672,6 +940,41 @@ async fn write_batch_with_retry(
     backoff::future::retry(backoff_strategy.clone(), operation)
         .await
         .with_context(|| "Failed to write batch to ClickHouse after retries")
+}
+
+async fn write_parquet_batch_with_retry(
+    parquet_output: &Arc<tokio::sync::Mutex<ParquetOutput>>,
+    records: &[Record],
+    batch_info: &BatchInfo,
+    instance: &str,
+    backoff_strategy: &ExponentialBackoff,
+) -> Result<()> {
+    let operation = || async {
+        let mut parquet_output = parquet_output.lock().await;
+        parquet_output
+            .write(records, batch_info, instance)
+            .await
+            .map_err(|e| {
+                warn!(
+                    operation = "parquet_batch_write_retry",
+                    instance = %instance,
+                    records_count = records.len(),
+                    error = %e,
+                    "Failed to write batch to Parquet, will retry"
+                );
+                backoff::Error::transient(e)
+            })
+    };
+
+    backoff::future::retry(backoff_strategy.clone(), operation)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to write batch of {} records to Parquet for instance {} after retries",
+                records.len(),
+                instance
+            )
+        })
 }
 
 async fn commit_batch_with_retry(

@@ -1,0 +1,141 @@
+use std::path::Path;
+
+use anyhow::Result;
+use time::{OffsetDateTime, UtcOffset};
+
+/// Format batch directory name in UTC format: YYYY-MM-DD_HH-mm-ss.SSSZ
+pub fn format_batch_dir(datetime: OffsetDateTime) -> String {
+    let utc = datetime.to_offset(UtcOffset::UTC);
+    format!(
+        "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}.{:03}Z",
+        utc.year(),
+        utc.month() as u8,
+        utc.day(),
+        utc.hour(),
+        utc.minute(),
+        utc.second(),
+        utc.millisecond()
+    )
+}
+
+/// Create temporary batch directory name with tmp_ prefix
+pub fn make_tmp_batch_dir(name: &str) -> String {
+    format!("tmp_{name}")
+}
+
+/// Sanitize instance filename for filesystem compatibility
+/// Handles domains and hostnames with ports
+pub fn sanitize_instance_filename(instance: &str) -> String {
+    instance
+        .replace(':', "-") // Port separator: host:6379 -> host-6379
+        .replace(' ', "_") // Spaces in hostnames
+}
+
+/// Ensure a directory exists, creating it and all parent directories if necessary
+pub async fn ensure_dir(path: &Path) -> Result<()> {
+    use anyhow::{Context, ensure};
+
+    ensure!(!path.is_file(), "Path is a file: {}", path.display());
+
+    tokio::fs::create_dir_all(path)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to create directory and parents for path: {} (check permissions and disk space)",
+                path.display()
+            )
+        })?;
+
+    tracing::debug!(
+        operation = "directory_created",
+        path = %path.display(),
+        "Directory created successfully"
+    );
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::tempdir;
+    use time::{Date, Month, Time};
+
+    use super::*;
+
+    #[test]
+    fn test_format_batch_dir() {
+        // Create a specific UTC datetime for testing
+        let date = Date::from_calendar_date(2025, Month::August, 14).unwrap();
+        let time = Time::from_hms_milli(12, 34, 56, 123).unwrap();
+        let utc = OffsetDateTime::new_utc(date, time);
+
+        let result = format_batch_dir(utc);
+        assert_eq!(result, "2025-08-14_12-34-56.123Z");
+    }
+
+    #[test]
+    fn test_make_tmp_batch_dir() {
+        let result = make_tmp_batch_dir("2025-08-14_12-34-56.123Z");
+        assert_eq!(result, "tmp_2025-08-14_12-34-56.123Z");
+    }
+
+    #[test]
+    fn test_sanitize_instance_filename() {
+        // Test IP with port
+        let result = sanitize_instance_filename("127.0.0.1:6379");
+        assert_eq!(result, "127.0.0.1-6379");
+
+        // Test hostname with port
+        let result = sanitize_instance_filename("redis-server:6379");
+        assert_eq!(result, "redis-server-6379");
+
+        // Test domain with port
+        let result = sanitize_instance_filename("redis.example.com:6379");
+        assert_eq!(result, "redis.example.com-6379");
+
+        // Test hostname with spaces
+        let result = sanitize_instance_filename("redis server:6379");
+        assert_eq!(result, "redis_server-6379");
+
+        // Test with multiple colons
+        let result = sanitize_instance_filename("host:6379:backup");
+        assert_eq!(result, "host-6379-backup");
+
+        // Test with no special characters
+        let result = sanitize_instance_filename("localhost");
+        assert_eq!(result, "localhost");
+    }
+
+    #[tokio::test]
+    async fn test_ensure_dir() {
+        let temp_dir = tempdir().unwrap();
+        let test_path = temp_dir.path().join("level1").join("level2").join("level3");
+
+        // Directory should not exist initially
+        assert!(!test_path.exists());
+
+        // Create directory
+        ensure_dir(&test_path).await.unwrap();
+
+        // Directory should exist now
+        assert!(test_path.exists());
+        assert!(test_path.is_dir());
+
+        // Calling again should be idempotent (no error)
+        ensure_dir(&test_path).await.unwrap();
+        assert!(test_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_dir_with_existing_directory() {
+        let temp_dir = tempdir().unwrap();
+        let test_path = temp_dir.path();
+
+        // Directory already exists
+        assert!(test_path.exists());
+
+        // Should not error when directory already exists
+        ensure_dir(test_path).await.unwrap();
+        assert!(test_path.exists());
+    }
+}

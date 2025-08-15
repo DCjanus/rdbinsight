@@ -1,0 +1,355 @@
+use std::sync::Arc;
+
+use arrow::{
+    array::{
+        BinaryArray, Int32Array, Int64Array, StringArray, TimestampMillisecondArray,
+        TimestampNanosecondArray,
+    },
+    record_batch::RecordBatch,
+};
+
+use super::schema::create_redis_record_schema;
+use crate::{output::clickhouse::BatchInfo, parser::core::raw::RDBStr, record::Record};
+
+/// Convert a slice of Records to an Arrow RecordBatch
+pub fn record_to_columns(
+    records: &[Record],
+    batch_info: &BatchInfo,
+    instance: &str,
+) -> arrow::error::Result<RecordBatch> {
+    let schema = Arc::new(create_redis_record_schema());
+    let num_records = records.len();
+
+    // Prepare column data
+    let mut cluster_data = Vec::with_capacity(num_records);
+    let mut batch_data = Vec::with_capacity(num_records);
+    let mut instance_data = Vec::with_capacity(num_records);
+    let mut db_data = Vec::with_capacity(num_records);
+    let mut key_data: Vec<Vec<u8>> = Vec::with_capacity(num_records);
+    let mut type_data = Vec::with_capacity(num_records);
+    let mut member_count_data = Vec::with_capacity(num_records);
+    let mut rdb_size_data = Vec::with_capacity(num_records);
+    let mut encoding_data = Vec::with_capacity(num_records);
+    let mut expire_at_data = Vec::with_capacity(num_records);
+    let mut idle_seconds_data = Vec::with_capacity(num_records);
+    let mut freq_data = Vec::with_capacity(num_records);
+    let mut codis_slot_data = Vec::with_capacity(num_records);
+    let mut redis_slot_data = Vec::with_capacity(num_records);
+
+    // Convert batch timestamp to nanoseconds since Unix epoch
+    let batch_nanos = batch_info.batch.unix_timestamp_nanos() as i64;
+
+    for record in records {
+        // Cluster (same for all records in this batch)
+        cluster_data.push(batch_info.cluster.clone());
+
+        // Batch timestamp (same for all records in this batch)
+        batch_data.push(batch_nanos);
+
+        // Instance (same for all records in this batch)
+        instance_data.push(instance.to_string());
+
+        // Database number - convert u64 to i64 for Arrow compatibility
+        db_data.push(record.db as i64);
+
+        // Key - convert RDBStr to binary data
+        let key_bytes = match &record.key {
+            RDBStr::Str(bytes) => bytes.to_vec(),
+            RDBStr::Int(int_val) => int_val.to_string().into_bytes(),
+        };
+        key_data.push(key_bytes);
+
+        // Type
+        type_data.push(record.type_name().to_string());
+
+        // Member count - convert Option<u64> to i64, default to 0 for None
+        member_count_data.push(record.member_count.unwrap_or(0) as i64);
+
+        // RDB size - convert u64 to i64
+        rdb_size_data.push(record.rdb_size as i64);
+
+        // Encoding
+        encoding_data.push(record.encoding_name());
+
+        // Expire time - convert milliseconds Option<u64> to Option<i64>
+        expire_at_data.push(record.expire_at_ms.map(|ms| ms as i64));
+
+        // Idle seconds - convert Option<u64> to Option<i64>
+        idle_seconds_data.push(record.idle_seconds.map(|s| s as i64));
+
+        // Frequency - convert Option<u8> to Option<i32>
+        freq_data.push(record.freq.map(|f| f as i32));
+
+        // Codis slot - convert Option<u16> to Option<i32>
+        codis_slot_data.push(record.codis_slot.map(|s| s as i32));
+
+        // Redis slot - convert Option<u16> to Option<i32>
+        redis_slot_data.push(record.redis_slot.map(|s| s as i32));
+    }
+
+    // Create Arrow arrays
+    let cluster_array = Arc::new(StringArray::from(cluster_data));
+    let batch_array = Arc::new(TimestampNanosecondArray::from(batch_data).with_timezone("UTC"));
+    let instance_array = Arc::new(StringArray::from(instance_data));
+    let db_array = Arc::new(Int64Array::from(db_data));
+
+    // Convert Vec<Vec<u8>> to Vec<&[u8]> for BinaryArray
+    let key_refs: Vec<&[u8]> = key_data.iter().map(|v| v.as_slice()).collect();
+    let key_array = Arc::new(BinaryArray::from(key_refs));
+
+    let type_array = Arc::new(StringArray::from(type_data));
+    let member_count_array = Arc::new(Int64Array::from(member_count_data));
+    let rdb_size_array = Arc::new(Int64Array::from(rdb_size_data));
+    let encoding_array = Arc::new(StringArray::from(encoding_data));
+    let expire_at_array =
+        Arc::new(TimestampMillisecondArray::from(expire_at_data).with_timezone("UTC"));
+    let idle_seconds_array = Arc::new(Int64Array::from(idle_seconds_data));
+    let freq_array = Arc::new(Int32Array::from(freq_data));
+    let codis_slot_array = Arc::new(Int32Array::from(codis_slot_data));
+    let redis_slot_array = Arc::new(Int32Array::from(redis_slot_data));
+
+    // Create RecordBatch
+    RecordBatch::try_new(schema, vec![
+        cluster_array,
+        batch_array,
+        instance_array,
+        db_array,
+        key_array,
+        type_array,
+        member_count_array,
+        rdb_size_array,
+        encoding_array,
+        expire_at_array,
+        idle_seconds_array,
+        freq_array,
+        codis_slot_array,
+        redis_slot_array,
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow::array::Array;
+    use bytes::Bytes;
+    use time::OffsetDateTime;
+
+    use super::*;
+    use crate::{
+        parser::model::StringEncoding,
+        record::{RecordEncoding, RecordType},
+    };
+
+    fn create_test_batch_info() -> BatchInfo {
+        BatchInfo {
+            cluster: "test-cluster".to_string(),
+            batch: OffsetDateTime::from_unix_timestamp_nanos(1691999696123456789).unwrap(),
+        }
+    }
+
+    fn create_test_record() -> Record {
+        Record::builder()
+            .db(0)
+            .key(RDBStr::Str(Bytes::from("test_key")))
+            .r#type(RecordType::String)
+            .encoding(RecordEncoding::String(StringEncoding::Raw))
+            .rdb_size(100)
+            .member_count(Some(1))
+            .expire_at_ms(Some(1691999999000))
+            .idle_seconds(Some(300))
+            .freq(Some(5))
+            .codis_slot(Some(256))
+            .redis_slot(Some(8192))
+            .build()
+    }
+
+    #[test]
+    fn test_records_to_record_batch_basic() {
+        let batch_info = create_test_batch_info();
+        let record = create_test_record();
+        let records = vec![record];
+
+        let result = record_to_columns(&records, &batch_info, "127.0.0.1:6379");
+        assert!(result.is_ok());
+
+        let record_batch = result.unwrap();
+        assert_eq!(record_batch.num_rows(), 1);
+        assert_eq!(record_batch.num_columns(), 14);
+    }
+
+    #[test]
+    fn test_key_as_binary() {
+        let batch_info = create_test_batch_info();
+        let record = create_test_record();
+        let records = vec![record];
+
+        let record_batch = record_to_columns(&records, &batch_info, "127.0.0.1:6379").unwrap();
+
+        // Get key column (index 4)
+        let key_array = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+
+        assert_eq!(key_array.len(), 1);
+        assert_eq!(key_array.value(0), b"test_key");
+    }
+
+    #[test]
+    fn test_batch_timestamp_nanoseconds() {
+        let batch_info = create_test_batch_info();
+        let record = create_test_record();
+        let records = vec![record];
+
+        let record_batch = record_to_columns(&records, &batch_info, "127.0.0.1:6379").unwrap();
+
+        // Get batch column (index 1)
+        let batch_array = record_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<TimestampNanosecondArray>()
+            .unwrap();
+
+        assert_eq!(batch_array.len(), 1);
+        assert_eq!(batch_array.value(0), 1691999696123456789);
+    }
+
+    #[test]
+    fn test_expire_at_milliseconds() {
+        let batch_info = create_test_batch_info();
+        let record = create_test_record();
+        let records = vec![record];
+
+        let record_batch = record_to_columns(&records, &batch_info, "127.0.0.1:6379").unwrap();
+
+        // Get expire_at column (index 9)
+        let expire_at_array = record_batch
+            .column(9)
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+
+        assert_eq!(expire_at_array.len(), 1);
+        assert_eq!(expire_at_array.value(0), 1691999999000);
+    }
+
+    #[test]
+    fn test_nullable_fields_with_none_values() {
+        let batch_info = create_test_batch_info();
+        let record = Record::builder()
+            .db(0)
+            .key(RDBStr::Str(Bytes::from("test_key")))
+            .r#type(RecordType::String)
+            .encoding(RecordEncoding::String(StringEncoding::Raw))
+            .rdb_size(100)
+            .member_count(Some(1))
+            // All nullable fields set to None
+            .expire_at_ms(None)
+            .idle_seconds(None)
+            .freq(None)
+            .codis_slot(None)
+            .redis_slot(None)
+            .build();
+        let records = vec![record];
+
+        let record_batch = record_to_columns(&records, &batch_info, "127.0.0.1:6379").unwrap();
+
+        // Test expire_at is null
+        let expire_at_array = record_batch
+            .column(9)
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        assert!(expire_at_array.is_null(0));
+
+        // Test idle_seconds is null
+        let idle_seconds_array = record_batch
+            .column(10)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert!(idle_seconds_array.is_null(0));
+
+        // Test freq is null
+        let freq_array = record_batch
+            .column(11)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert!(freq_array.is_null(0));
+
+        // Test codis_slot is null
+        let codis_slot_array = record_batch
+            .column(12)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert!(codis_slot_array.is_null(0));
+
+        // Test redis_slot is null
+        let redis_slot_array = record_batch
+            .column(13)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        assert!(redis_slot_array.is_null(0));
+    }
+
+    #[test]
+    fn test_integer_key_conversion() {
+        let batch_info = create_test_batch_info();
+        let record = Record::builder()
+            .db(0)
+            .key(RDBStr::Int(42))
+            .r#type(RecordType::String)
+            .encoding(RecordEncoding::String(StringEncoding::Raw))
+            .rdb_size(100)
+            .member_count(Some(1))
+            .build();
+        let records = vec![record];
+
+        let record_batch = record_to_columns(&records, &batch_info, "127.0.0.1:6379").unwrap();
+
+        // Get key column (index 4)
+        let key_array = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+
+        assert_eq!(key_array.len(), 1);
+        assert_eq!(key_array.value(0), b"42");
+    }
+
+    #[test]
+    fn test_multiple_records() {
+        let batch_info = create_test_batch_info();
+        let record1 = create_test_record();
+        let mut record2 = create_test_record();
+        record2.db = 1;
+        record2.key = RDBStr::Str(Bytes::from("another_key"));
+
+        let records = vec![record1, record2];
+
+        let record_batch = record_to_columns(&records, &batch_info, "127.0.0.1:6379").unwrap();
+        assert_eq!(record_batch.num_rows(), 2);
+
+        // Check db values
+        let db_array = record_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(db_array.value(0), 0);
+        assert_eq!(db_array.value(1), 1);
+
+        // Check key values
+        let key_array = record_batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+        assert_eq!(key_array.value(0), b"test_key");
+        assert_eq!(key_array.value(1), b"another_key");
+    }
+}

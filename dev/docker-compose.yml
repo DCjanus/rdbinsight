@@ -14,8 +14,6 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
-    networks:
-      - rdbinsight-dev
 
   clickhouse:
     image: clickhouse/clickhouse-server:latest
@@ -32,14 +30,8 @@ services:
         soft: 262144
         hard: 262144
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--user=rdbinsight", "--password=rdbinsight", "--query=SELECT 1"]
+      test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1'"]
       interval: 1s
       timeout: 5s
       retries: 15
       start_period: 15s
-    networks:
-      - rdbinsight-dev
-
-networks:
-  rdbinsight-dev:
-    driver: bridge

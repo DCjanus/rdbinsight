@@ -6,11 +6,9 @@ description = "A command-line tool for parsing and analyzing Redis RDB."
 
 default-run = "rdbinsight"
 
-[package.metadata.cargo-machete]
-ignored = ["serde_with"]
-
 [dependencies]
 anyhow = "1.0.98"
+arrow = "56.0.0"
 async-trait = "0.1.88"
 async_async_io = "0.2.3"
 backoff = { version = "0.4", features = ["tokio"] }
@@ -30,6 +28,7 @@ lzf = "1.0.0"
 memchr = "2.7.5"
 num_cpus = "1.17.0"
 num_enum = "0.7.3"
+parquet = { version = "56.0.0", features = ["arrow", "async"] }
 rand = "0.9.1"
 redis = { version = "0.32.4", features = [
     "cluster",
@@ -57,5 +56,6 @@ typed-builder = "0.21.0"
 url = "2.5.4"
 
 [dev-dependencies]
+tempfile = "3.20.0"
 testcontainers = { version = "0.25.0", features = ["http_wait"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }

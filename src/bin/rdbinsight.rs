@@ -475,9 +475,13 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
                 config = ?clickhouse_config,
                 "Initializing ClickHouse output"
             );
-            let clickhouse_output = ClickHouseOutput::new(clickhouse_config.clone())
-                .await
-                .with_context(|| "Failed to initialize ClickHouse output")?;
+            let clickhouse_output = ClickHouseOutput::new(
+                clickhouse_config.clone(),
+                cluster_name.to_string(),
+                batch_timestamp,
+            )
+            .await
+            .with_context(|| "Failed to initialize ClickHouse output")?;
 
             process_streams_to_clickhouse(
                 streams,

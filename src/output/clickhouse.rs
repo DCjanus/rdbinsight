@@ -49,33 +49,7 @@ pub struct BatchCompletedRow {
 }
 
 impl ClickHouseOutput {
-    pub async fn new(config: ClickHouseConfig) -> AnyResult<Self> {
-        use tracing::debug;
-
-        debug!(
-            operation = "clickhouse_client_init",
-            address = %config.address,
-            "Initializing ClickHouse client"
-        );
-
-        let client = config
-            .create_client()
-            .context("Failed to create ClickHouse client")?;
-        let output = Self {
-            client,
-            config: config.clone(),
-            cluster: "".to_string(), // Placeholder, will be set later
-            batch_ts: OffsetDateTime::now_utc(), // Placeholder, will be set later
-        };
-
-        debug!("Validating ClickHouse tables and schema...");
-        output.validate_or_create_tables().await?;
-        debug!("ClickHouse initialization completed successfully");
-
-        Ok(output)
-    }
-
-    pub async fn new_with_batch_info(
+    pub async fn new(
         config: ClickHouseConfig,
         cluster: String,
         batch_ts: OffsetDateTime,

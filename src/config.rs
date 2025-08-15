@@ -293,7 +293,7 @@ impl OutputConfig {
     ) -> AnyResult<crate::output::sink::Output> {
         match self {
             OutputConfig::Clickhouse(clickhouse_config) => {
-                let ch_output = crate::output::clickhouse::ClickHouseOutput::new_with_batch_info(
+                let ch_output = crate::output::clickhouse::ClickHouseOutput::new(
                     clickhouse_config.clone(),
                     cluster,
                     batch_ts,

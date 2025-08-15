@@ -43,21 +43,21 @@
 ## 阶段三：统一生产者-消费者流水线（新增，不移除旧逻辑）
 
 ### 实现步骤
-- [ ] 在 `src/bin/rdbinsight.rs` 中新增统一函数：
+- [x] 在 `src/bin/rdbinsight.rs` 中新增统一函数：
   - `process_streams_with_output(streams, output: Output, cluster: String, batch_ts: OffsetDateTime, concurrency: usize, channel_capacity: usize, batch_size: usize)`：
-    - 定义 `enum OutputMsg { Chunk(Chunk), InstanceDone { instance: String } }`；
-    - 生产者：对每个 `RDBStream` 并发解析，按 `batch_size` 封装 `Chunk` 发送，结束发送 `InstanceDone`；
-    - 消费者：持有 `Output`，循环 `recv`；收到 `Chunk` 调用 `write_chunk`，收到 `InstanceDone` 调用 `finalize_instance`；drain 完后 `finalize_batch(self)`；
-    - 对 `write_chunk`/`finalize_instance`/`finalize_batch` 使用统一 `backoff` 重试策略；
-    - 输出进度日志（累计 records、实例完成数/总数）。
-- [ ] 在 `dump_records` 中接入新流水线（保留旧的 `process_streams_to_clickhouse/parquet` 代码未删，作为回退）。
+  - 定义 `enum OutputMsg { Chunk(Chunk), InstanceDone { instance: String } }`；
+  - 生产者：对每个 `RDBStream` 并发解析，按 `batch_size` 封装 `Chunk` 发送，结束发送 `InstanceDone`；
+  - 消费者：持有 `Output`，循环 `recv`；收到 `Chunk` 调用 `write_chunk`，收到 `InstanceDone` 调用 `finalize_instance`；drain 完后 `finalize_batch(self)`；
+  - 对 `write_chunk`/`finalize_instance`/`finalize_batch` 使用统一 `backoff` 重试策略；
+  - 输出进度日志（累计 records、实例完成数/总数）。
+- [x] 在 `dump_records` 中接入新流水线（保留旧的 `process_streams_to_clickhouse/parquet` 代码未删，作为回退）。
   - ClickHouse/Parquet 分支均通过工厂创建 `Output` 并调用统一函数。
   - 选择合适的默认 `channel_capacity`/`batch_size`（延续现有 `BATCH_SIZE=1_000_000`；`capacity = concurrency * 4`）。
 
 ### 验证步骤
-- [ ] 运行构建：`cargo build` 应通过。
-- [ ] 运行单测：`just test` 应全部通过。
-- [ ] 手动冒烟（可选）：使用 `FromFile → Parquet` 路径在小样本上运行，确认能生成 parquet 文件且目录 `tmp_...` → 最终目录 rename 生效。
+- [x] 运行构建：`cargo build` 应通过。
+- [x] 运行单测：`just test` 应全部通过。
+- [x] 手动冒烟（可选）：使用 `FromFile → Parquet` 路径在小样本上运行，确认能生成 parquet 文件且目录 `tmp_...` → 最终目录 rename 生效。
 
 ---
 

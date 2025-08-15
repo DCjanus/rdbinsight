@@ -1,12 +1,12 @@
 use std::{path::PathBuf, pin::Pin, sync::Arc, time::Instant};
 
 use anyhow::{Context, Result, anyhow};
-use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
+use backoff::{ExponentialBackoff, ExponentialBackoffBuilder, backoff::Backoff};
 use clap::{CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
-    config::{OutputConfig, ParquetCompression},
+    config::ParquetCompression,
     output::{
         clickhouse::{BatchInfo, ClickHouseOutput},
         parquet::ParquetOutput,
@@ -467,49 +467,27 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     );
     let total_streams = streams.len();
 
-    // Process based on output type
-    match &config.output {
-        OutputConfig::Clickhouse(clickhouse_config) => {
-            debug!(
-                operation = "clickhouse_output_init",
-                config = ?clickhouse_config,
-                "Initializing ClickHouse output"
-            );
-            let clickhouse_output = ClickHouseOutput::new(
-                clickhouse_config.clone(),
-                cluster_name.to_string(),
-                batch_timestamp,
-            )
-            .await
-            .with_context(|| "Failed to initialize ClickHouse output")?;
+    // New unified pipeline using Output factory
+    let output = config
+        .output
+        .create_output(cluster_name.to_string(), batch_timestamp)
+        .await
+        .with_context(|| "Failed to create output from configuration")?;
 
-            process_streams_to_clickhouse(
-                streams,
-                clickhouse_output,
-                batch_info,
-                config.concurrency,
-            )
-            .await?;
-        }
-        OutputConfig::Parquet(parquet_config) => {
-            debug!(
-                operation = "parquet_output_init",
-                config = ?parquet_config,
-                "Initializing Parquet output"
-            );
-            let parquet_output = ParquetOutput::new(
-                parquet_config.dir.clone(),
-                parquet_config.compression,
-                &cluster_name,
-                &batch_info,
-            )
-            .await
-            .with_context(|| "Failed to initialize Parquet output")?;
+    // Use defaults from existing code: batch_size = 1_000_000; capacity = concurrency * 4
+    const BATCH_SIZE: usize = 1_000_000;
+    let channel_capacity = config.concurrency.saturating_mul(4);
 
-            process_streams_to_parquet(streams, parquet_output, batch_info, config.concurrency)
-                .await?;
-        }
-    }
+    process_streams_with_output(
+        streams,
+        output,
+        cluster_name.to_string(),
+        batch_timestamp,
+        config.concurrency,
+        channel_capacity,
+        BATCH_SIZE,
+    )
+    .await?;
 
     info!(
         operation = "dump_completed",
@@ -520,6 +498,202 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     Ok(())
 }
 
+// Unified producer-consumer pipeline that decouples parsing and output
+async fn process_streams_with_output(
+    streams: Vec<Pin<Box<dyn RDBStream>>>,
+    mut output: rdbinsight::output::sink::Output,
+    cluster: String,
+    batch_ts: OffsetDateTime,
+    concurrency: usize,
+    channel_capacity: usize,
+    batch_size: usize,
+) -> Result<()> {
+    use tokio::sync::mpsc;
+
+    #[derive(Debug)]
+    enum OutputMsg {
+        Chunk(rdbinsight::output::types::Chunk),
+        InstanceDone { instance: String },
+    }
+
+    let total_instances = streams.len();
+
+    let (tx, mut rx) = mpsc::channel::<OutputMsg>(channel_capacity);
+
+    // Spawn producers in a separate task so we can concurrently run the consumer loop
+    let producers_tx = tx.clone();
+    let cluster_for_producers = cluster.clone();
+    let producers_handle = tokio::spawn(async move {
+        futures_util::stream::iter(streams)
+            .map(Ok)
+            .try_for_each_concurrent(concurrency, |mut stream| {
+                let tx = producers_tx.clone();
+                let cluster = cluster_for_producers.clone();
+                async move {
+                    let instance = stream.instance().to_string();
+                    let source_type = stream.source_type();
+
+                    stream
+                        .prepare()
+                        .await
+                        .context("Failed to prepare RDB stream")?;
+
+                    let mut record_stream = RecordStream::new(stream, source_type);
+                    let mut buffer: Vec<Record> = Vec::with_capacity(batch_size);
+
+                    while let Some(next) = record_stream.next().await {
+                        let record = next.with_context(|| {
+                            format!("Failed to parse record from instance {instance}")
+                        })?;
+                        buffer.push(record);
+                        if buffer.len() >= batch_size {
+                            let chunk = rdbinsight::output::types::Chunk {
+                                cluster: cluster.clone(),
+                                batch_ts,
+                                instance: instance.clone(),
+                                records: std::mem::take(&mut buffer),
+                            };
+                            tx.send(OutputMsg::Chunk(chunk))
+                                .await
+                                .map_err(|e| anyhow!("Failed to send chunk: {e}"))?;
+                        }
+                    }
+
+                    if !buffer.is_empty() {
+                        let chunk = rdbinsight::output::types::Chunk {
+                            cluster: cluster.clone(),
+                            batch_ts,
+                            instance: instance.clone(),
+                            records: std::mem::take(&mut buffer),
+                        };
+                        tx.send(OutputMsg::Chunk(chunk))
+                            .await
+                            .map_err(|e| anyhow!("Failed to send final chunk: {e}"))?;
+                    }
+
+                    tx.send(OutputMsg::InstanceDone { instance })
+                        .await
+                        .map_err(|e| anyhow!("Failed to send instance-done: {e}"))?;
+
+                    Ok::<(), anyhow::Error>(())
+                }
+            })
+            .await
+    });
+
+    drop(tx); // Drop our extra handle; producers hold their own clones
+
+    let start_time = Instant::now();
+    let mut processed_records: u64 = 0;
+    let mut completed_instances: usize = 0;
+
+    let backoff_strategy = ExponentialBackoffBuilder::new()
+        .with_initial_interval(std::time::Duration::from_secs(1))
+        .with_max_interval(std::time::Duration::from_secs(10))
+        .with_max_elapsed_time(Some(std::time::Duration::from_secs(60)))
+        .build();
+
+    // Consumer loop
+    loop {
+        tokio::select! {
+            biased;
+            msg = rx.recv() => {
+                match msg {
+                    Some(OutputMsg::Chunk(chunk)) => {
+                        let records_in_chunk = chunk.records.len() as u64;
+                        let mut retries = backoff_strategy.clone();
+                        loop {
+                            match output.write_chunk(chunk.clone()).await {
+                                Ok(_) => break,
+                                Err(e) => {
+                                    warn!(operation = "write_chunk_retry", error = %e, "Write chunk failed, will retry");
+                                    if let Some(wait) = retries.next_backoff() {
+                                        tokio::time::sleep(wait).await;
+                                        continue;
+                                    } else {
+                                        return Err(e).with_context(|| "Failed to write chunk after retries");
+                                    }
+                                }
+                            }
+                        }
+
+                        processed_records = processed_records.saturating_add(records_in_chunk);
+
+                        let elapsed = start_time.elapsed().as_secs_f64().max(0.000001);
+                        let rps = processed_records as f64 / elapsed;
+                        info!(
+                            operation = "progress_update",
+                            processed_records = processed_records,
+                            completed_instances = completed_instances,
+                            total_instances = total_instances,
+                            records_per_second = rps,
+                            "Progress update"
+                        );
+                    }
+                    Some(OutputMsg::InstanceDone { instance }) => {
+                        let mut retries = backoff_strategy.clone();
+                        loop {
+                            match output.finalize_instance(&instance).await {
+                                Ok(_) => break,
+                                Err(e) => {
+                                    warn!(operation = "finalize_instance_retry", instance = %instance, error = %e, "Finalize instance failed, will retry");
+                                    if let Some(wait) = retries.next_backoff() {
+                                        tokio::time::sleep(wait).await;
+                                        continue;
+                                    } else {
+                                        return Err(e).with_context(|| format!("Failed to finalize instance {instance} after retries"));
+                                    }
+                                }
+                            }
+                        }
+
+                        completed_instances = completed_instances.saturating_add(1);
+                        info!(
+                            operation = "instance_completed",
+                            instance = %instance,
+                            completed_instances = completed_instances,
+                            total_instances = total_instances,
+                            "Instance completed"
+                        );
+                    }
+                    None => {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Wait for producers and decide whether to finalize the batch
+    match producers_handle.await {
+        Ok(Ok(())) => {
+            // finalize_batch consumes the output, so we cannot safely retry using the generic backoff helper.
+            // Perform a single attempt and surface errors to the caller.
+            output
+                .finalize_batch()
+                .await
+                .with_context(|| "Failed to finalize batch")?;
+
+            info!(
+                operation = "batch_finalized",
+                cluster = %cluster,
+                batch = %batch_ts,
+                processed_records = processed_records,
+                total_instances = total_instances,
+                "Batch finalized successfully"
+            );
+
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            error!(operation = "producers_failed", error = %e, "One or more producers failed");
+            Err(e)
+        }
+        Err(join_err) => Err(anyhow!("Producer task join error: {join_err}")),
+    }
+}
+
+#[allow(dead_code)]
 async fn process_streams_to_clickhouse(
     streams: Vec<Pin<Box<dyn RDBStream>>>,
     clickhouse_output: ClickHouseOutput,
@@ -594,6 +768,7 @@ async fn process_streams_to_clickhouse(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn process_streams_to_parquet(
     streams: Vec<Pin<Box<dyn RDBStream>>>,
     parquet_output: ParquetOutput,
@@ -665,6 +840,7 @@ async fn process_streams_to_parquet(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn process_records_to_clickhouse(
     mut stream: Pin<Box<dyn RDBStream>>,
     clickhouse_output: ClickHouseOutput,
@@ -788,6 +964,7 @@ async fn process_records_to_clickhouse(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn process_records_to_parquet(
     mut stream: Pin<Box<dyn RDBStream>>,
     parquet_output: Arc<tokio::sync::Mutex<ParquetOutput>>,
@@ -919,6 +1096,7 @@ async fn process_records_to_parquet(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn write_batch_with_retry(
     clickhouse_output: &ClickHouseOutput,
     records: &[Record],
@@ -946,6 +1124,7 @@ async fn write_batch_with_retry(
         .with_context(|| "Failed to write batch to ClickHouse after retries")
 }
 
+#[allow(dead_code)]
 async fn write_parquet_batch_with_retry(
     parquet_output: &Arc<tokio::sync::Mutex<ParquetOutput>>,
     records: &[Record],
@@ -981,6 +1160,7 @@ async fn write_parquet_batch_with_retry(
         })
 }
 
+#[allow(dead_code)]
 async fn commit_batch_with_retry(
     clickhouse_output: &ClickHouseOutput,
     batch_info: &BatchInfo,

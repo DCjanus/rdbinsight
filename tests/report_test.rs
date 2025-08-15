@@ -59,11 +59,11 @@ async fn test_report_generate_data_with_clickhouse() {
     // 2) build clickhouse config and output (auto-create tables)
     let ch_url = Url::parse(&env.host_url).unwrap();
     let ch_config = ClickHouseConfig::new(ch_url, true, None).unwrap();
-    let output = ClickHouseOutput::new(ch_config.clone()).await.unwrap();
-
-    // 3) write some records into this batch and commit
     let cluster = "test-cluster".to_string();
     let batch_ts = OffsetDateTime::now_utc();
+    let output = ClickHouseOutput::new(ch_config.clone(), cluster.clone(), batch_ts).await.unwrap();
+
+    // 3) write some records into this batch and commit
     let batch_info = BatchInfo {
         cluster: cluster.clone(),
         batch: batch_ts,
@@ -142,11 +142,11 @@ async fn test_report_generate_data_with_empty_cluster() {
     // 2) build clickhouse config and output (auto-create tables)
     let ch_url = Url::parse(&env.host_url).unwrap();
     let ch_config = ClickHouseConfig::new(ch_url, true, None).unwrap();
-    let output = ClickHouseOutput::new(ch_config.clone()).await.unwrap();
-
-    // 3) create an empty batch and commit (no data written)
     let cluster = "empty-cluster".to_string();
     let batch_ts = OffsetDateTime::now_utc();
+    let output = ClickHouseOutput::new(ch_config.clone(), cluster.clone(), batch_ts).await.unwrap();
+
+    // 3) create an empty batch and commit (no data written)
     let batch_info = BatchInfo {
         cluster: cluster.clone(),
         batch: batch_ts,

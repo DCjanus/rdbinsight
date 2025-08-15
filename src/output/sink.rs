@@ -12,16 +12,32 @@ pub enum Output {
 
 impl Output {
     pub async fn write_chunk(&mut self, chunk: Chunk) -> AnyResult<()> {
-        let _ = chunk;
-        todo!("Implement in later phase");
+        match self {
+            Output::ClickHouse(ch_output) => ch_output.write_chunk(chunk).await,
+            Output::Parquet(parquet_output) => {
+                parquet_output.write_chunk(chunk).await?;
+                Ok(())
+            }
+        }
     }
 
     pub async fn finalize_instance(&mut self, instance: &str) -> AnyResult<()> {
-        let _ = instance;
-        todo!("Implement in later phase");
+        match self {
+            Output::ClickHouse(ch_output) => ch_output.finalize_instance(instance).await,
+            Output::Parquet(parquet_output) => {
+                parquet_output.finalize_instance(instance).await?;
+                Ok(())
+            }
+        }
     }
 
     pub async fn finalize_batch(self) -> AnyResult<()> {
-        todo!("Implement in later phase");
+        match self {
+            Output::ClickHouse(ch_output) => ch_output.finalize_batch().await,
+            Output::Parquet(parquet_output) => {
+                parquet_output.finalize_batch().await?;
+                Ok(())
+            }
+        }
     }
 }

@@ -171,6 +171,44 @@ impl ParquetOutput {
         })
     }
 
+    /// Create a new ParquetOutput instance with direct cluster and batch_ts
+    pub async fn new_with_batch_info(
+        dir: PathBuf,
+        compression: ParquetCompression,
+        cluster: String,
+        batch_ts: time::OffsetDateTime,
+    ) -> Result<Self> {
+        // Generate batch directory names
+        let batch_dir_name = format_batch_dir(batch_ts);
+        let temp_batch_dir_name = make_tmp_batch_dir(&batch_dir_name);
+
+        let temp_batch_dir = dir.join(&cluster).join(temp_batch_dir_name);
+        let final_batch_dir = dir.join(&cluster).join(batch_dir_name);
+
+        // Create the temporary batch directory
+        ensure_dir(&temp_batch_dir).await.with_context(|| {
+            format!(
+                "Failed to create temp batch directory: {}",
+                temp_batch_dir.display()
+            )
+        })?;
+
+        info!(
+            operation = "parquet_batch_dir_created",
+            cluster = %cluster,
+            temp_batch_dir = %temp_batch_dir.display(),
+            final_batch_dir = %final_batch_dir.display(),
+            "Created temporary batch directory"
+        );
+
+        Ok(Self {
+            compression,
+            writers: HashMap::new(),
+            temp_batch_dir,
+            final_batch_dir,
+        })
+    }
+
     /// Write records for a specific instance
     pub async fn write(
         &mut self,
@@ -216,6 +254,52 @@ impl ParquetOutput {
             operation = "parquet_batch_written",
             instance = %instance,
             records_count = records.len(),
+            "Batch written to Parquet"
+        );
+
+        Ok(())
+    }
+
+    /// Write records from a Chunk
+    pub async fn write_chunk(&mut self, chunk: crate::output::types::Chunk) -> Result<()> {
+        let instance = &chunk.instance;
+
+        // Get or create writer for this instance
+        if !self.writers.contains_key(instance) {
+            let sanitized_instance = sanitize_instance_filename(instance);
+            let temp_filename = format!("{sanitized_instance}.parquet.tmp");
+            let final_filename = format!("{sanitized_instance}.parquet");
+
+            let temp_path = self.temp_batch_dir.join(temp_filename);
+            let final_path = self.temp_batch_dir.join(final_filename);
+
+            let writer =
+                WriterHandle::new(instance.clone(), temp_path, final_path, self.compression)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to create Parquet writer for instance: {instance}")
+                    })?;
+
+            self.writers.insert(instance.clone(), writer);
+        }
+
+        // Convert records to Arrow RecordBatch
+        let record_batch = mapper::chunk_to_columns(&chunk).with_context(|| {
+            format!(
+                "Failed to convert {records_count} records to columns for instance: {instance}",
+                records_count = chunk.records.len()
+            )
+        })?;
+
+        // Write to the instance's writer
+        let writer = self.writers.get_mut(instance).unwrap();
+        writer.write_batch(record_batch).await
+            .with_context(|| format!("Failed to write batch of {records_count} records to Parquet for instance: {instance}", records_count = chunk.records.len()))?;
+
+        info!(
+            operation = "parquet_batch_written",
+            instance = %instance,
+            records_count = chunk.records.len(),
             "Batch written to Parquet"
         );
 

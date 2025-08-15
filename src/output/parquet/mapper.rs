@@ -127,6 +127,118 @@ pub fn record_to_columns(
     ])
 }
 
+/// Convert Records from a Chunk to an Arrow RecordBatch
+pub fn chunk_to_columns(chunk: &crate::output::types::Chunk) -> arrow::error::Result<RecordBatch> {
+    let schema = Arc::new(create_redis_record_schema());
+    let num_records = chunk.records.len();
+
+    // Prepare column data
+    let mut cluster_data = Vec::with_capacity(num_records);
+    let mut batch_data = Vec::with_capacity(num_records);
+    let mut instance_data = Vec::with_capacity(num_records);
+    let mut db_data = Vec::with_capacity(num_records);
+    let mut key_data: Vec<Vec<u8>> = Vec::with_capacity(num_records);
+    let mut type_data = Vec::with_capacity(num_records);
+    let mut member_count_data = Vec::with_capacity(num_records);
+    let mut rdb_size_data = Vec::with_capacity(num_records);
+    let mut encoding_data = Vec::with_capacity(num_records);
+    let mut expire_at_data = Vec::with_capacity(num_records);
+    let mut idle_seconds_data = Vec::with_capacity(num_records);
+    let mut freq_data = Vec::with_capacity(num_records);
+    let mut codis_slot_data = Vec::with_capacity(num_records);
+    let mut redis_slot_data = Vec::with_capacity(num_records);
+
+    // Convert batch timestamp to nanoseconds since Unix epoch
+    let batch_nanos = chunk.batch_ts.unix_timestamp_nanos() as i64;
+
+    for record in &chunk.records {
+        // Cluster (same for all records in this batch)
+        cluster_data.push(chunk.cluster.clone());
+
+        // Batch timestamp (same for all records in this batch)
+        batch_data.push(batch_nanos);
+
+        // Instance (same for all records in this batch)
+        instance_data.push(chunk.instance.clone());
+
+        // Database number - convert u64 to i64 for Arrow compatibility
+        db_data.push(record.db as i64);
+
+        // Key - convert RDBStr to binary data
+        let key_bytes = match &record.key {
+            RDBStr::Str(bytes) => bytes.to_vec(),
+            RDBStr::Int(int_val) => int_val.to_string().into_bytes(),
+        };
+        key_data.push(key_bytes);
+
+        // Type
+        type_data.push(record.type_name().to_string());
+
+        // Member count - convert Option<u64> to i64, default to 0 for None
+        member_count_data.push(record.member_count.unwrap_or(0) as i64);
+
+        // RDB size - convert u64 to i64
+        rdb_size_data.push(record.rdb_size as i64);
+
+        // Encoding
+        encoding_data.push(record.encoding_name());
+
+        // Expire time - convert milliseconds Option<u64> to Option<i64>
+        expire_at_data.push(record.expire_at_ms.map(|ms| ms as i64));
+
+        // Idle seconds - convert Option<u64> to Option<i64>
+        idle_seconds_data.push(record.idle_seconds.map(|s| s as i64));
+
+        // Frequency - convert Option<u8> to Option<i32>
+        freq_data.push(record.freq.map(|f| f as i32));
+
+        // Codis slot - convert Option<u16> to Option<i32>
+        codis_slot_data.push(record.codis_slot.map(|s| s as i32));
+
+        // Redis slot - convert Option<u16> to Option<i32>
+        redis_slot_data.push(record.redis_slot.map(|s| s as i32));
+    }
+
+    // Create Arrow arrays
+    let cluster_array = Arc::new(StringArray::from(cluster_data));
+    let batch_array = Arc::new(TimestampNanosecondArray::from(batch_data).with_timezone("UTC"));
+    let instance_array = Arc::new(StringArray::from(instance_data));
+    let db_array = Arc::new(Int64Array::from(db_data));
+
+    // Convert Vec<Vec<u8>> to Vec<&[u8]> for BinaryArray
+    let key_refs: Vec<&[u8]> = key_data.iter().map(|v| v.as_slice()).collect();
+    let key_array = Arc::new(BinaryArray::from(key_refs));
+
+    let type_array = Arc::new(StringArray::from(type_data));
+    let member_count_array = Arc::new(Int64Array::from(member_count_data));
+    let rdb_size_array = Arc::new(Int64Array::from(rdb_size_data));
+    let encoding_array = Arc::new(StringArray::from(encoding_data));
+    let expire_at_array =
+        Arc::new(TimestampMillisecondArray::from(expire_at_data).with_timezone("UTC"));
+    let idle_seconds_array = Arc::new(Int64Array::from(idle_seconds_data));
+    let freq_array = Arc::new(Int32Array::from(freq_data));
+    let codis_slot_array = Arc::new(Int32Array::from(codis_slot_data));
+    let redis_slot_array = Arc::new(Int32Array::from(redis_slot_data));
+
+    // Create RecordBatch
+    RecordBatch::try_new(schema, vec![
+        cluster_array,
+        batch_array,
+        instance_array,
+        db_array,
+        key_array,
+        type_array,
+        member_count_array,
+        rdb_size_array,
+        encoding_array,
+        expire_at_array,
+        idle_seconds_array,
+        freq_array,
+        codis_slot_array,
+        redis_slot_array,
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use arrow::array::Array;

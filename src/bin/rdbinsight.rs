@@ -582,6 +582,7 @@ async fn run_consumer(
     let mut completed_instances: usize = 0;
 
     while let Some(msg) = rx.recv().await {
+        info!("DEBUG: rx_len: {}", rx.len());
         match msg {
             OutputMsg::Chunk(chunk) => {
                 let records_in_chunk = chunk.records.len() as u64;

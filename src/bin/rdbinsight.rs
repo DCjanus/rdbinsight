@@ -488,6 +488,7 @@ async fn process_streams_with_output(
 ) -> Result<()> {
     let (tx, rx) = tokio::sync::mpsc::channel::<OutputMsg>(channel_capacity);
 
+    let consumer_task = run_consumer(rx, output, streams.len());
     let producers_task = run_producers(
         streams,
         tx,
@@ -496,7 +497,6 @@ async fn process_streams_with_output(
         concurrency,
         batch_size,
     );
-    let consumer_task = run_consumer(rx, output, streams.len());
 
     tokio::try_join!(producers_task, consumer_task)?;
 

@@ -81,13 +81,13 @@
 ## 阶段五：删除旧分支流水线与 Parquet 旧并发路径
 
 ### 实现步骤
-- [ ] 删除 `process_streams_to_clickhouse` 与 `process_streams_to_parquet` 旧函数及其调用；确保 `dump_records` 仅使用统一流水线。
-- [ ] 移除 Parquet 路径中 `Arc<Mutex<ParquetOutput>>` 的旧并发写入逻辑与相关辅助函数；统一改为单消费者持有可变引用。
-- [ ] 清理不再使用的 `use` 与死代码。
+- [x] 删除 `process_streams_to_clickhouse` 与 `process_streams_to_parquet` 旧函数及其调用；确保 `dump_records` 仅使用统一流水线。
+- [x] 移除 Parquet 路径中 `Arc<Mutex<ParquetOutput>>` 的旧并发写入逻辑与相关辅助函数；统一改为单消费者持有可变引用。
+- [x] 清理不再使用的 `use` 与死代码。
 
 ### 验证步骤
-- [ ] 运行构建：`cargo build` 应通过（确认无遗留引用）。
-- [ ] 全量测试：`just test` 应全部通过。
+- [x] 运行构建：`cargo build` 应通过（确认无遗留引用）。
+- [x] 全量测试：`just test` 应全部通过。
 
 ---
 

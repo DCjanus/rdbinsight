@@ -523,6 +523,7 @@ fn log_progress(
         operation = "progress_update",
         processed_records = processed_records,
         completed_instances = completed_instances,
+        elapsed_seconds = elapsed,
         total_instances = total_instances,
         rps = rps,
         "Progress update"

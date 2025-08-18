@@ -1,17 +1,18 @@
 use std::{path::PathBuf, pin::Pin, time::Instant};
 
 use anyhow::{Context, Result, anyhow};
-use backoff::{ExponentialBackoffBuilder, backoff::Backoff};
+use backoff::backoff::Backoff;
 use clap::{CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
     config::{DumpConfig, ParquetCompression},
+    helper::AnyResult,
     record::{Record, RecordStream},
     source::{RDBStream, RdbSourceConfig},
 };
 use time::OffsetDateTime;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
@@ -25,7 +26,8 @@ struct MainCli {
     verbose: bool,
 
     /// Global concurrency override
-    #[arg(long, default_value_t = default_concurrency(), global = true, env = "RDBINSIGHT_CONCURRENCY")]
+    #[arg(long, default_value_t = default_concurrency(), global = true, env = "RDBINSIGHT_CONCURRENCY"
+    )]
     concurrency: usize,
 }
 
@@ -467,204 +469,231 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     Ok(())
 }
 
+// Internal message type passed from producers to consumer
+#[derive(Debug)]
+enum OutputMsg {
+    Chunk(rdbinsight::output::types::Chunk),
+    InstanceDone { instance: String },
+}
+
 // Unified producer-consumer pipeline that decouples parsing and output
 async fn process_streams_with_output(
     streams: Vec<Pin<Box<dyn RDBStream>>>,
-    mut output: rdbinsight::output::sink::Output,
+    output: rdbinsight::output::sink::Output,
     cluster: String,
     batch_ts: OffsetDateTime,
     concurrency: usize,
     channel_capacity: usize,
     batch_size: usize,
 ) -> Result<()> {
-    use tokio::sync::mpsc;
+    let (tx, rx) = tokio::sync::mpsc::channel::<OutputMsg>(channel_capacity);
 
-    #[derive(Debug)]
-    enum OutputMsg {
-        Chunk(rdbinsight::output::types::Chunk),
-        InstanceDone { instance: String },
-    }
+    let producers_task = run_producers(
+        streams,
+        tx,
+        cluster.clone(),
+        batch_ts,
+        concurrency,
+        batch_size,
+    );
+    let consumer_task = run_consumer(rx, output, streams.len());
 
-    let total_instances = streams.len();
+    tokio::try_join!(producers_task, consumer_task)?;
 
-    let (tx, mut rx) = mpsc::channel::<OutputMsg>(channel_capacity);
+    Ok(())
+}
 
-    // Spawn producers in a separate task so we can concurrently run the consumer loop
-    let producers_tx = tx.clone();
-    let cluster_for_producers = cluster.clone();
-    let producers_handle = tokio::spawn(async move {
-        futures_util::stream::iter(streams)
-            .map(Ok)
-            .try_for_each_concurrent(concurrency, |mut stream| {
-                let tx = producers_tx.clone();
-                let cluster = cluster_for_producers.clone();
-                async move {
-                    let instance = stream.instance().to_string();
-                    let source_type = stream.source_type();
-
-                    stream
-                        .prepare()
-                        .await
-                        .context("Failed to prepare RDB stream")?;
-
-                    let mut record_stream = RecordStream::new(stream, source_type);
-                    let mut buffer: Vec<Record> = Vec::with_capacity(batch_size);
-
-                    while let Some(next) = record_stream.next().await {
-                        let record = next.with_context(|| {
-                            format!("Failed to parse record from instance {instance}")
-                        })?;
-                        buffer.push(record);
-                        if buffer.len() >= batch_size {
-                            let chunk = rdbinsight::output::types::Chunk {
-                                cluster: cluster.clone(),
-                                batch_ts,
-                                instance: instance.clone(),
-                                records: std::mem::take(&mut buffer),
-                            };
-                            tx.send(OutputMsg::Chunk(chunk))
-                                .await
-                                .map_err(|e| anyhow!("Failed to send chunk: {e}"))?;
-                        }
-                    }
-
-                    if !buffer.is_empty() {
-                        let chunk = rdbinsight::output::types::Chunk {
-                            cluster: cluster.clone(),
-                            batch_ts,
-                            instance: instance.clone(),
-                            records: std::mem::take(&mut buffer),
-                        };
-                        tx.send(OutputMsg::Chunk(chunk))
-                            .await
-                            .map_err(|e| anyhow!("Failed to send final chunk: {e}"))?;
-                    }
-
-                    tx.send(OutputMsg::InstanceDone { instance })
-                        .await
-                        .map_err(|e| anyhow!("Failed to send instance-done: {e}"))?;
-
-                    Ok::<(), anyhow::Error>(())
-                }
-            })
-            .await
-    });
-
-    drop(tx); // Drop our extra handle; producers hold their own clones
-
-    let start_time = Instant::now();
-    let mut processed_records: u64 = 0;
-    let mut completed_instances: usize = 0;
-
-    let backoff_strategy = ExponentialBackoffBuilder::new()
+fn create_backoff() -> backoff::ExponentialBackoff {
+    backoff::ExponentialBackoffBuilder::new()
         .with_initial_interval(std::time::Duration::from_secs(1))
         .with_max_interval(std::time::Duration::from_secs(10))
         .with_max_elapsed_time(Some(std::time::Duration::from_secs(60)))
-        .build();
+        .build()
+}
 
-    // Consumer loop
+fn log_progress(
+    start_time: Instant,
+    processed_records: u64,
+    completed_instances: usize,
+    total_instances: usize,
+) {
+    let elapsed = start_time.elapsed().as_secs_f64().max(0.000_001);
+    let rps = processed_records as f64 / elapsed;
+    info!(
+        operation = "progress_update",
+        processed_records = processed_records,
+        completed_instances = completed_instances,
+        total_instances = total_instances,
+        rps = rps,
+        "Progress update"
+    );
+}
+
+async fn write_chunk_with_retry(
+    output: &mut rdbinsight::output::sink::Output,
+    chunk: &rdbinsight::output::types::Chunk,
+    mut retries: backoff::ExponentialBackoff,
+) -> Result<()> {
     loop {
-        tokio::select! {
-            biased;
-            msg = rx.recv() => {
-                match msg {
-                    Some(OutputMsg::Chunk(chunk)) => {
-                        let records_in_chunk = chunk.records.len() as u64;
-                        let chunk_instance = chunk.instance.clone();
-                        let mut retries = backoff_strategy.clone();
-                        loop {
-                            match output.write_chunk(chunk.clone()).await {
-                                Ok(_) => break,
-                                Err(e) => {
-                                    warn!(operation = "write_chunk_retry", instance = %chunk_instance, error = %e, error_chain = %format!("{e:#}"), "Write chunk failed, will retry");
-                                    if let Some(wait) = retries.next_backoff() {
-                                        tokio::time::sleep(wait).await;
-                                        continue;
-                                    } else {
-                                        return Err(e).with_context(|| "Failed to write chunk after retries");
-                                    }
-                                }
-                            }
-                        }
-
-                        processed_records = processed_records.saturating_add(records_in_chunk);
-
-                        let elapsed = start_time.elapsed().as_secs_f64().max(0.000001);
-                        let rps = processed_records as f64 / elapsed;
-                        info!(
-                            operation = "progress_update",
-                            processed_records = processed_records,
-                            completed_instances = completed_instances,
-                            total_instances = total_instances,
-                            rps = rps,
-                            "Progress update"
-                        );
-                    }
-                    Some(OutputMsg::InstanceDone { instance }) => {
-                        let mut retries = backoff_strategy.clone();
-                        loop {
-                            match output.finalize_instance(&instance).await {
-                                Ok(_) => break,
-                                Err(e) => {
-                                    warn!(operation = "finalize_instance_retry", instance = %instance, error = %e, error_chain = %format!("{e:#}"), "Finalize instance failed, will retry");
-                                    if let Some(wait) = retries.next_backoff() {
-                                        tokio::time::sleep(wait).await;
-                                        continue;
-                                    } else {
-                                        return Err(e).with_context(|| format!("Failed to finalize instance {instance} after retries"));
-                                    }
-                                }
-                            }
-                        }
-
-                        completed_instances = completed_instances.saturating_add(1);
-                        info!(
-                            operation = "instance_completed",
-                            instance = %instance,
-                            completed_instances = completed_instances,
-                            total_instances = total_instances,
-                            "Instance completed"
-                        );
-                    }
-                    None => {
-                        break;
-                    }
+        match output.write_chunk(chunk.clone()).await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                warn!(operation = "write_chunk_retry", instance = %chunk.instance, error = %e, error_chain = %format!("{e:#}"), "Write chunk failed, will retry");
+                if let Some(wait) = retries.next_backoff() {
+                    tokio::time::sleep(wait).await;
+                } else {
+                    return Err(e).with_context(|| "Failed to write chunk after retries");
                 }
             }
         }
     }
+}
 
-    // Wait for producers and decide whether to finalize the batch
-    match producers_handle.await {
-        Ok(Ok(())) => {
-            // finalize_batch consumes the output, so we cannot safely retry using the generic backoff helper.
-            // Perform a single attempt and surface errors to the caller.
-            output
-                .finalize_batch()
-                .await
-                .with_context(|| "Failed to finalize batch")?;
-
-            info!(
-                operation = "batch_finalized",
-                cluster = %cluster,
-                batch = %batch_ts,
-                processed_records = processed_records,
-                total_instances = total_instances,
-                "Batch finalized successfully"
-            );
-
-            Ok(())
+async fn finalize_instance_with_retry(
+    output: &mut rdbinsight::output::sink::Output,
+    instance: &str,
+    mut retries: backoff::ExponentialBackoff,
+) -> Result<()> {
+    loop {
+        match output.finalize_instance(instance).await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                warn!(operation = "finalize_instance_retry", instance = %instance, error = %e, error_chain = %format!("{e:#}"), "Finalize instance failed, will retry");
+                if let Some(wait) = retries.next_backoff() {
+                    tokio::time::sleep(wait).await;
+                } else {
+                    return Err(e).with_context(|| {
+                        format!("Failed to finalize instance {instance} after retries")
+                    });
+                }
+            }
         }
-        Ok(Err(e)) => {
-            error!(operation = "producers_failed", error = %e, "One or more producers failed");
-            Err(e)
-        }
-        Err(join_err) => Err(anyhow!("Producer task join error: {join_err}")),
     }
 }
 
-// Old per-backend pipelines and helpers have been removed in favor of the
-// unified producer-consumer pipeline implemented above.
+async fn run_consumer(
+    mut rx: tokio::sync::mpsc::Receiver<OutputMsg>,
+    mut output: rdbinsight::output::sink::Output,
+    total_instances: usize,
+) -> Result<()> {
+    let start_time = Instant::now();
+    let mut processed_records: u64 = 0;
+    let mut completed_instances: usize = 0;
+
+    while let Some(msg) = rx.recv().await {
+        match msg {
+            OutputMsg::Chunk(chunk) => {
+                let records_in_chunk = chunk.records.len() as u64;
+                write_chunk_with_retry(&mut output, &chunk, create_backoff())
+                    .await
+                    .context("Failed to write chunk")?;
+
+                processed_records = processed_records.saturating_add(records_in_chunk);
+                log_progress(
+                    start_time,
+                    processed_records,
+                    completed_instances,
+                    total_instances,
+                );
+            }
+            OutputMsg::InstanceDone { instance } => {
+                finalize_instance_with_retry(&mut output, &instance, create_backoff())
+                    .await
+                    .context("Failed to finalize instance")?;
+                completed_instances = completed_instances.saturating_add(1);
+                log_progress(
+                    start_time,
+                    processed_records,
+                    completed_instances,
+                    total_instances,
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_producers(
+    streams: Vec<Pin<Box<dyn RDBStream>>>,
+    tx: tokio::sync::mpsc::Sender<OutputMsg>,
+    cluster: String,
+    batch_ts: OffsetDateTime,
+    concurrency: usize,
+    batch_size: usize,
+) -> AnyResult {
+    let concurrency = concurrency.max(1);
+
+    futures_util::stream::iter(streams)
+        .map(Ok)
+        .try_for_each_concurrent(concurrency, |s| {
+            let tx = tx.clone();
+            let cluster = cluster.clone();
+            async move {
+                tokio::spawn(produce_from_stream(s, tx, cluster, batch_ts, batch_size))
+                    .await
+                    .context("Failed to join spawned producer")?
+                    .context("Failed to produce from stream")?;
+                Ok::<(), anyhow::Error>(())
+            }
+        })
+        .await?;
+    Ok(())
+}
+
+async fn produce_from_stream(
+    mut stream: Pin<Box<dyn RDBStream>>,
+    tx: tokio::sync::mpsc::Sender<OutputMsg>,
+    cluster: String,
+    batch_ts: OffsetDateTime,
+    batch_size: usize,
+) -> Result<()> {
+    let instance = stream.instance().to_string();
+    let source_type = stream.source_type();
+
+    stream
+        .prepare()
+        .await
+        .context("Failed to prepare RDB stream")?;
+
+    let mut record_stream = RecordStream::new(stream, source_type);
+    let mut buffer: Vec<Record> = Vec::with_capacity(batch_size);
+
+    while let Some(next) = record_stream.next().await {
+        let record =
+            next.with_context(|| format!("Failed to parse record from instance {instance}"))?;
+        buffer.push(record);
+        if buffer.len() >= batch_size {
+            let chunk = rdbinsight::output::types::Chunk {
+                cluster: cluster.clone(),
+                batch_ts,
+                instance: instance.clone(),
+                records: std::mem::take(&mut buffer),
+            };
+            tx.send(OutputMsg::Chunk(chunk))
+                .await
+                .map_err(|e| anyhow!("Failed to send chunk: {e}"))?;
+        }
+    }
+
+    if !buffer.is_empty() {
+        let chunk = rdbinsight::output::types::Chunk {
+            cluster: cluster.clone(),
+            batch_ts,
+            instance: instance.clone(),
+            records: std::mem::take(&mut buffer),
+        };
+        tx.send(OutputMsg::Chunk(chunk))
+            .await
+            .map_err(|e| anyhow!("Failed to send final chunk: {e}"))?;
+    }
+
+    tx.send(OutputMsg::InstanceDone { instance })
+        .await
+        .map_err(|e| anyhow!("Failed to send instance-done: {e}"))?;
+
+    Ok(())
+}
 
 async fn run_report(args: ReportArgs) -> Result<()> {
     let clickhouse_config = rdbinsight::config::ClickHouseConfig::new(

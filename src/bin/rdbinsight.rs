@@ -6,7 +6,7 @@ use clap::{CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
-    config::ParquetCompression,
+    config::{DumpConfig, ParquetCompression},
     record::{Record, RecordStream},
     source::{RDBStream, RdbSourceConfig},
 };
@@ -377,20 +377,10 @@ fn dump_command_to_config(
 }
 
 async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
-    debug!(
-        operation = "config_parsing",
-        "Parsing CLI arguments into configuration"
-    );
+    let (mut config, batch_timestamp_arg): (DumpConfig, Option<String>) =
+        dump_command_to_config(dump_cmd, concurrency)
+            .with_context(|| "Failed to parse CLI arguments into configuration")?;
 
-    let (mut config, batch_timestamp_arg) = dump_command_to_config(dump_cmd, concurrency)
-        .with_context(|| "Failed to parse CLI arguments into configuration")?;
-
-    debug!(
-        operation = "config_parsed",
-        "Configuration parsed successfully"
-    );
-
-    // Preprocess the source configuration to handle dynamic values
     config
         .source
         .preprocess()
@@ -405,7 +395,6 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     let cluster_name = config.source.cluster_name().to_string();
     let source_config = config.source;
 
-    // Get batch timestamp from CLI, environment variable, or current time
     let batch_timestamp = if let Some(timestamp_str) = batch_timestamp_arg {
         let parsed_timestamp = OffsetDateTime::parse(
             &timestamp_str,
@@ -428,24 +417,14 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
         now
     };
 
-    debug!(
-        operation = "batch_context_created",
-        cluster = %cluster_name,
-        timestamp = %batch_timestamp,
-        "Batch context created"
-    );
-
     info!(
         operation = "cluster_dump_start",
         cluster = %cluster_name,
+        batch = %batch_timestamp,
         concurrency = %config.concurrency,
         "Starting dump for cluster"
     );
 
-    debug!(
-        operation = "rdb_streams_fetch",
-        "Getting RDB streams from source configuration"
-    );
     let streams = source_config
         .get_rdb_streams()
         .await
@@ -458,7 +437,6 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     );
     let total_streams = streams.len();
 
-    // New unified pipeline using Output factory
     let output = config
         .output
         .create_output(cluster_name.to_string(), batch_timestamp)

@@ -592,12 +592,13 @@ async fn process_streams_with_output(
                 match msg {
                     Some(OutputMsg::Chunk(chunk)) => {
                         let records_in_chunk = chunk.records.len() as u64;
+                        let chunk_instance = chunk.instance.clone();
                         let mut retries = backoff_strategy.clone();
                         loop {
                             match output.write_chunk(chunk.clone()).await {
                                 Ok(_) => break,
                                 Err(e) => {
-                                    warn!(operation = "write_chunk_retry", error = %e, "Write chunk failed, will retry");
+                                    warn!(operation = "write_chunk_retry", instance = %chunk_instance, error = %e, error_chain = %format!("{e:#}"), "Write chunk failed, will retry");
                                     if let Some(wait) = retries.next_backoff() {
                                         tokio::time::sleep(wait).await;
                                         continue;
@@ -617,7 +618,7 @@ async fn process_streams_with_output(
                             processed_records = processed_records,
                             completed_instances = completed_instances,
                             total_instances = total_instances,
-                            records_per_second = rps,
+                            rps = rps,
                             "Progress update"
                         );
                     }
@@ -627,7 +628,7 @@ async fn process_streams_with_output(
                             match output.finalize_instance(&instance).await {
                                 Ok(_) => break,
                                 Err(e) => {
-                                    warn!(operation = "finalize_instance_retry", instance = %instance, error = %e, "Finalize instance failed, will retry");
+                                    warn!(operation = "finalize_instance_retry", instance = %instance, error = %e, error_chain = %format!("{e:#}"), "Finalize instance failed, will retry");
                                     if let Some(wait) = retries.next_backoff() {
                                         tokio::time::sleep(wait).await;
                                         continue;

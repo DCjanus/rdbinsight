@@ -7,10 +7,7 @@ use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
     config::ParquetCompression,
-    output::{
-        clickhouse::{BatchInfo, ClickHouseOutput},
-        parquet::ParquetOutput,
-    },
+    output::{clickhouse::ClickHouseOutput, parquet::ParquetOutput},
     record::{Record, RecordStream},
     source::{RDBStream, RdbSourceConfig},
 };
@@ -432,16 +429,11 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
         now
     };
 
-    let batch_info = BatchInfo {
-        cluster: cluster_name.to_string(),
-        batch: batch_timestamp,
-    };
-
     debug!(
-        operation = "batch_info_created",
-        cluster = %batch_info.cluster,
-        timestamp = %batch_info.batch,
-        "Batch info created"
+        operation = "batch_context_created",
+        cluster = %cluster_name,
+        timestamp = %batch_timestamp,
+        "Batch context created"
     );
 
     info!(
@@ -697,7 +689,8 @@ async fn process_streams_with_output(
 async fn process_streams_to_clickhouse(
     streams: Vec<Pin<Box<dyn RDBStream>>>,
     clickhouse_output: ClickHouseOutput,
-    batch_info: BatchInfo,
+    cluster: String,
+    batch_ts: OffsetDateTime,
     concurrency: usize,
 ) -> Result<()> {
     let total_streams = streams.len();
@@ -706,7 +699,6 @@ async fn process_streams_to_clickhouse(
         .map(Ok)
         .try_for_each_concurrent(concurrency, |stream| {
             let clickhouse_output = clickhouse_output.clone();
-            let batch_info = batch_info.clone();
             async move {
                 let instance = stream.instance();
                 info!(
@@ -716,7 +708,7 @@ async fn process_streams_to_clickhouse(
                 );
 
                 tokio::spawn(async move {
-                    process_records_to_clickhouse(stream, clickhouse_output, batch_info)
+                    process_records_to_clickhouse(stream, clickhouse_output)
                         .await
                         .with_context(|| {
                             format!("Failed to process RDB stream from instance: {instance}")
@@ -741,8 +733,8 @@ async fn process_streams_to_clickhouse(
     // Commit the batch only after all streams have been processed successfully
     debug!(
         operation = "committing_batch",
-        cluster = %batch_info.cluster,
-        batch = %batch_info.batch,
+        cluster = %cluster,
+        batch = %batch_ts,
         total_instances = total_streams,
         "Committing batch after all instances completed"
     );
@@ -753,14 +745,14 @@ async fn process_streams_to_clickhouse(
         .with_max_elapsed_time(Some(std::time::Duration::from_secs(60)))
         .build();
 
-    commit_batch_with_retry(&clickhouse_output, &batch_info, &backoff_strategy)
+    commit_batch_with_retry(clickhouse_output.clone(), &backoff_strategy)
         .await
         .with_context(|| "Failed to commit batch after processing all streams")?;
 
     info!(
         operation = "batch_committed",
-        cluster = %batch_info.cluster,
-        batch = %batch_info.batch,
+        cluster = %cluster,
+        batch = %batch_ts,
         total_instances = total_streams,
         "Batch committed successfully for all instances"
     );
@@ -772,7 +764,8 @@ async fn process_streams_to_clickhouse(
 async fn process_streams_to_parquet(
     streams: Vec<Pin<Box<dyn RDBStream>>>,
     parquet_output: ParquetOutput,
-    batch_info: BatchInfo,
+    cluster: String,
+    batch_ts: OffsetDateTime,
     concurrency: usize,
 ) -> Result<()> {
     let total_streams = streams.len();
@@ -787,7 +780,8 @@ async fn process_streams_to_parquet(
         .map(Ok)
         .try_for_each_concurrent(concurrency, |stream| {
             let shared_parquet_output = shared_parquet_output.clone();
-            let batch_info = batch_info.clone();
+            let cluster = cluster.clone();
+
             async move {
                 let instance = stream.instance();
                 info!(
@@ -797,7 +791,7 @@ async fn process_streams_to_parquet(
                 );
 
                 tokio::spawn(async move {
-                    process_records_to_parquet(stream, shared_parquet_output, batch_info)
+                    process_records_to_parquet(stream, shared_parquet_output, cluster, batch_ts)
                         .await
                         .with_context(|| {
                             format!("Failed to process RDB stream from instance: {instance}")
@@ -831,8 +825,8 @@ async fn process_streams_to_parquet(
 
     info!(
         operation = "parquet_batch_finalized",
-        cluster = %batch_info.cluster,
-        batch = %batch_info.batch,
+        cluster = %cluster,
+        batch = %batch_ts,
         total_instances = total_streams,
         "Parquet batch finalized successfully for all instances"
     );
@@ -844,7 +838,6 @@ async fn process_streams_to_parquet(
 async fn process_records_to_clickhouse(
     mut stream: Pin<Box<dyn RDBStream>>,
     clickhouse_output: ClickHouseOutput,
-    batch_info: BatchInfo,
 ) -> Result<()> {
     // Get the instance identifier from the stream
     let instance = stream.instance();
@@ -879,7 +872,6 @@ async fn process_records_to_clickhouse(
                     write_batch_with_retry(
                         &clickhouse_output,
                         &record_buffer,
-                        &batch_info,
                         &instance,
                         &backoff_strategy,
                     )
@@ -940,7 +932,6 @@ async fn process_records_to_clickhouse(
                     write_batch_with_retry(
                         &clickhouse_output,
                         &record_buffer,
-                        &batch_info,
                         &instance,
                         &backoff_strategy,
                     )
@@ -968,7 +959,8 @@ async fn process_records_to_clickhouse(
 async fn process_records_to_parquet(
     mut stream: Pin<Box<dyn RDBStream>>,
     parquet_output: Arc<tokio::sync::Mutex<ParquetOutput>>,
-    batch_info: BatchInfo,
+    cluster: String,
+    batch_ts: OffsetDateTime,
 ) -> Result<()> {
     let instance = stream.instance();
     let source_type = stream.source_type();
@@ -1002,7 +994,8 @@ async fn process_records_to_parquet(
                     write_parquet_batch_with_retry(
                         &parquet_output,
                         &record_buffer,
-                        &batch_info,
+                        &cluster,
+                        batch_ts,
                         &instance,
                         &backoff_strategy,
                     )
@@ -1063,7 +1056,8 @@ async fn process_records_to_parquet(
                     write_parquet_batch_with_retry(
                         &parquet_output,
                         &record_buffer,
-                        &batch_info,
+                        &cluster,
+                        batch_ts,
                         &instance,
                         &backoff_strategy,
                     )
@@ -1100,13 +1094,12 @@ async fn process_records_to_parquet(
 async fn write_batch_with_retry(
     clickhouse_output: &ClickHouseOutput,
     records: &[Record],
-    batch_info: &BatchInfo,
     instance: &str,
     backoff_strategy: &ExponentialBackoff,
 ) -> Result<()> {
     let operation = || async {
         clickhouse_output
-            .write(records, batch_info, instance)
+            .write(records, instance)
             .await
             .map_err(|e| {
                 warn!(
@@ -1128,14 +1121,15 @@ async fn write_batch_with_retry(
 async fn write_parquet_batch_with_retry(
     parquet_output: &Arc<tokio::sync::Mutex<ParquetOutput>>,
     records: &[Record],
-    batch_info: &BatchInfo,
+    cluster: &str,
+    batch_ts: OffsetDateTime,
     instance: &str,
     backoff_strategy: &ExponentialBackoff,
 ) -> Result<()> {
     let operation = || async {
         let mut parquet_output = parquet_output.lock().await;
         parquet_output
-            .write(records, batch_info, instance)
+            .write(records, cluster, batch_ts, instance)
             .await
             .map_err(|e| {
                 warn!(
@@ -1162,19 +1156,17 @@ async fn write_parquet_batch_with_retry(
 
 #[allow(dead_code)]
 async fn commit_batch_with_retry(
-    clickhouse_output: &ClickHouseOutput,
-    batch_info: &BatchInfo,
+    clickhouse_output: ClickHouseOutput,
     backoff_strategy: &ExponentialBackoff,
 ) -> Result<()> {
     let operation = || async {
         clickhouse_output
-            .commit_batch(batch_info)
+            .clone()
+            .finalize_batch()
             .await
             .map_err(|e| {
                 warn!(
                     operation = "batch_commit_retry",
-                    cluster = %batch_info.cluster,
-                    batch = %batch_info.batch,
                     error = %e,
                     "Failed to commit batch to ClickHouse, will retry"
                 );

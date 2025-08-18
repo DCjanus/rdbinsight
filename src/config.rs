@@ -302,10 +302,10 @@ impl OutputConfig {
                 Ok(crate::output::sink::Output::ClickHouse(ch_output))
             }
             OutputConfig::Parquet(parquet_config) => {
-                let parquet_output = crate::output::parquet::ParquetOutput::new_with_batch_info(
+                let parquet_output = crate::output::parquet::ParquetOutput::new(
                     parquet_config.dir.clone(),
                     parquet_config.compression,
-                    cluster,
+                    &cluster,
                     batch_ts,
                 )
                 .await?;

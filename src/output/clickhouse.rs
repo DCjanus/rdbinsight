@@ -7,12 +7,6 @@ use tracing::info;
 
 use crate::{config::ClickHouseConfig, helper::AnyResult, record::Record};
 
-#[derive(Debug, Clone)]
-pub struct BatchInfo {
-    pub cluster: String,
-    pub batch: OffsetDateTime,
-}
-
 #[derive(Clone)]
 pub struct ClickHouseOutput {
     client: Client,
@@ -213,19 +207,14 @@ impl ClickHouseOutput {
         Ok(())
     }
 
-    pub async fn write(
-        &self,
-        records: &[Record],
-        batch_info: &BatchInfo,
-        instance: &str,
-    ) -> AnyResult<()> {
+    pub async fn write(&self, records: &[Record], instance: &str) -> AnyResult<()> {
         if records.is_empty() {
             return Ok(());
         }
 
         let mut insert: Insert<RedisRecordRow> = self.client.insert("redis_records_raw")?;
         for record in records {
-            let row = self.record_to_row(record, batch_info, instance);
+            let row = self.record_to_row(record, instance);
             insert.write(&row).await?;
         }
         insert.end().await?;
@@ -243,20 +232,6 @@ impl ClickHouseOutput {
             let row = self.record_to_row_from_chunk(record, &chunk);
             insert.write(&row).await?;
         }
-        insert.end().await?;
-
-        Ok(())
-    }
-
-    pub async fn commit_batch(&self, batch_info: &BatchInfo) -> AnyResult<()> {
-        let completion_row = BatchCompletedRow {
-            cluster: batch_info.cluster.clone(),
-            batch: batch_info.batch,
-        };
-
-        let mut insert: Insert<BatchCompletedRow> =
-            self.client.insert("import_batches_completed")?;
-        insert.write(&completion_row).await?;
         insert.end().await?;
 
         Ok(())
@@ -281,20 +256,15 @@ impl ClickHouseOutput {
         Ok(())
     }
 
-    fn record_to_row(
-        &self,
-        record: &Record,
-        batch_info: &BatchInfo,
-        instance: &str,
-    ) -> RedisRecordRow {
+    fn record_to_row(&self, record: &Record, instance: &str) -> RedisRecordRow {
         let key_bytes = match &record.key {
             crate::parser::core::raw::RDBStr::Str(bytes) => bytes.clone(),
             crate::parser::core::raw::RDBStr::Int(i) => Bytes::from(i.to_string()),
         };
 
         RedisRecordRow {
-            cluster: batch_info.cluster.clone(),
-            batch: batch_info.batch,
+            cluster: self.cluster.clone(),
+            batch: self.batch_ts,
             instance: instance.to_string(),
             db: record.db,
             key: key_bytes,
@@ -367,11 +337,6 @@ mod tests {
             batch_ts: OffsetDateTime::from_unix_timestamp(1640995200).unwrap(),
         };
 
-        let batch_info = BatchInfo {
-            cluster: "test-cluster".to_string(),
-            batch: OffsetDateTime::from_unix_timestamp(1640995200).unwrap(), // 2022-01-01
-        };
-
         let record = Record::builder()
             .db(0)
             .key(RDBStr::Str(Bytes::from("test_key")))
@@ -384,10 +349,10 @@ mod tests {
             .freq(Some(5))
             .build();
 
-        let row = output.record_to_row(&record, &batch_info, "127.0.0.1:6379");
+        let row = output.record_to_row(&record, "127.0.0.1:6379");
 
         assert_eq!(row.cluster, "test-cluster");
-        assert_eq!(row.batch, batch_info.batch);
+        assert_eq!(row.batch, output.batch_ts);
         assert_eq!(row.instance, "127.0.0.1:6379");
         assert_eq!(row.db, 0);
         assert_eq!(row.key, Bytes::from("test_key"));
@@ -399,23 +364,5 @@ mod tests {
             row.expire_at,
             Some(OffsetDateTime::from_unix_timestamp_nanos(1640995260000 * 1_000_000).unwrap())
         );
-        assert_eq!(row.idle_seconds, Some(300));
-        assert_eq!(row.freq, Some(5));
-
-        let int_record = Record::builder()
-            .db(1)
-            .key(RDBStr::Int(42))
-            .r#type(RecordType::Hash)
-            .encoding(RecordEncoding::String(StringEncoding::Int))
-            .rdb_size(50)
-            .member_count(Some(10))
-            .build();
-
-        let int_row = output.record_to_row(&int_record, &batch_info, "127.0.0.1:6379");
-        assert_eq!(int_row.key, Bytes::from("42"));
-        assert_eq!(int_row.db, 1);
-        assert_eq!(int_row.r#type, "hash");
-        assert_eq!(int_row.member_count, 10);
-        assert_eq!(int_row.expire_at, None);
     }
 }

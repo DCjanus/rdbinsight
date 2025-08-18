@@ -64,17 +64,17 @@
 ## 阶段四：移除 BatchInfo 并完成内部引用替换
 
 ### 实现步骤
-- [ ] 从 `src/output/clickhouse.rs` 移除 `BatchInfo` 定义与所有引用，改为内部持有 `cluster: String` 与 `batch_ts: OffsetDateTime` 字段；相应更新 `record_to_row` 参数与调用点。
-- [ ] 从 `src/output/parquet/*` 移除对 `clickhouse::BatchInfo` 的依赖；`record_to_columns`、`ParquetOutput::new` 等改用 `cluster + batch_ts`。
-- [ ] 更新相关测试：
+- [x] 从 `src/output/clickhouse.rs` 移除 `BatchInfo` 定义与所有引用，改为内部持有 `cluster: String` 与 `batch_ts: OffsetDateTime` 字段；相应更新 `record_to_row` 参数与调用点。
+- [x] 从 `src/output/parquet/*` 移除对 `clickhouse::BatchInfo` 的依赖；`record_to_columns`、`ParquetOutput::new` 等改用 `cluster + batch_ts`。
+- [x] 更新相关测试：
   - `src/output/parquet/mapper.rs` 测试：删除 `create_test_batch_info()`，改用 `cluster + OffsetDateTime`；
   - `src/output/parquet/mod.rs` 测试：`ParquetOutput::new(dir, compression, cluster, &batch_ts)` → 去掉 `&`，直接传 `OffsetDateTime`；
   - `src/output/clickhouse.rs` 测试：`record_to_row` 入参改为 `cluster + batch_ts`。
 
 ### 验证步骤
-- [ ] 运行构建：`cargo build` 应通过。
-- [ ] 运行相关单测：`cargo nextest run -p rdbinsight -- tests::parquet_output_*` 与 `cargo nextest run -p rdbinsight -- output::clickhouse::tests::test_record_to_row_conversion` 应通过。
-- [ ] 全量测试：`just test` 应全部通过。
+- [x] 运行构建：`cargo build` 应通过。
+- [x] 运行相关单测：`cargo nextest run -p rdbinsight -- tests::parquet_output_*` 与 `cargo nextest run -p rdbinsight -- output::clickhouse::tests::test_record_to_row_conversion` 应通过。
+- [x] 全量测试：`just test` 应全部通过。
 
 ---
 

@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use rdbinsight::{
     config::ClickHouseConfig,
-    output::clickhouse::{BatchInfo, ClickHouseOutput},
+    output::clickhouse::ClickHouseOutput,
     record::{Record, RecordEncoding, RecordType},
     report::{ReportGenerator, get_latest_batch_for_cluster},
 };
@@ -66,22 +66,11 @@ async fn test_report_generate_data_with_clickhouse() {
         .unwrap();
 
     // 3) write some records into this batch and commit
-    let batch_info = BatchInfo {
-        cluster: cluster.clone(),
-        batch: batch_ts,
-    };
-
     // write same records for 2 instances to exercise instance aggregates
     let records = make_records();
-    output
-        .write(&records, &batch_info, "10.0.0.1:6379")
-        .await
-        .unwrap();
-    output
-        .write(&records, &batch_info, "10.0.0.2:6379")
-        .await
-        .unwrap();
-    output.commit_batch(&batch_info).await.unwrap();
+    output.write(&records, "10.0.0.1:6379").await.unwrap();
+    output.write(&records, "10.0.0.2:6379").await.unwrap();
+    output.finalize_batch().await.unwrap();
 
     // 4) build report generator for the same batch and fetch data
     let batch_str = get_latest_batch_for_cluster(&ch_config, &cluster)
@@ -151,13 +140,8 @@ async fn test_report_generate_data_with_empty_cluster() {
         .unwrap();
 
     // 3) create an empty batch and commit (no data written)
-    let batch_info = BatchInfo {
-        cluster: cluster.clone(),
-        batch: batch_ts,
-    };
-
     // Only commit the batch without writing any records
-    output.commit_batch(&batch_info).await.unwrap();
+    output.finalize_batch().await.unwrap();
 
     // 4) build report generator for the empty batch and fetch data
     let batch_str = get_latest_batch_for_cluster(&ch_config, &cluster)

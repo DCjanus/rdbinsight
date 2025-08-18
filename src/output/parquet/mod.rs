@@ -7,7 +7,7 @@ use tokio::fs::File;
 use tracing::{info, warn};
 
 use self::{mapper::record_to_columns, path::*};
-use crate::{config::ParquetCompression, output::clickhouse::BatchInfo, record::Record};
+use crate::{config::ParquetCompression, record::Record};
 
 pub mod mapper;
 pub mod path;
@@ -138,10 +138,10 @@ impl ParquetOutput {
         dir: PathBuf,
         compression: ParquetCompression,
         cluster: &str,
-        batch_info: &BatchInfo,
+        batch_ts: time::OffsetDateTime,
     ) -> Result<Self> {
         // Generate batch directory names
-        let batch_dir_name = format_batch_dir(batch_info.batch);
+        let batch_dir_name = format_batch_dir(batch_ts);
         let temp_batch_dir_name = make_tmp_batch_dir(&batch_dir_name);
 
         let temp_batch_dir = dir.join(cluster).join(temp_batch_dir_name);
@@ -171,49 +171,12 @@ impl ParquetOutput {
         })
     }
 
-    /// Create a new ParquetOutput instance with direct cluster and batch_ts
-    pub async fn new_with_batch_info(
-        dir: PathBuf,
-        compression: ParquetCompression,
-        cluster: String,
-        batch_ts: time::OffsetDateTime,
-    ) -> Result<Self> {
-        // Generate batch directory names
-        let batch_dir_name = format_batch_dir(batch_ts);
-        let temp_batch_dir_name = make_tmp_batch_dir(&batch_dir_name);
-
-        let temp_batch_dir = dir.join(&cluster).join(temp_batch_dir_name);
-        let final_batch_dir = dir.join(&cluster).join(batch_dir_name);
-
-        // Create the temporary batch directory
-        ensure_dir(&temp_batch_dir).await.with_context(|| {
-            format!(
-                "Failed to create temp batch directory: {}",
-                temp_batch_dir.display()
-            )
-        })?;
-
-        info!(
-            operation = "parquet_batch_dir_created",
-            cluster = %cluster,
-            temp_batch_dir = %temp_batch_dir.display(),
-            final_batch_dir = %final_batch_dir.display(),
-            "Created temporary batch directory"
-        );
-
-        Ok(Self {
-            compression,
-            writers: HashMap::new(),
-            temp_batch_dir,
-            final_batch_dir,
-        })
-    }
-
     /// Write records for a specific instance
     pub async fn write(
         &mut self,
         records: &[Record],
-        batch_info: &BatchInfo,
+        cluster: &str,
+        batch_ts: time::OffsetDateTime,
         instance: &str,
     ) -> Result<()> {
         // Get or create writer for this instance
@@ -238,12 +201,13 @@ impl ParquetOutput {
         }
 
         // Convert records to Arrow RecordBatch
-        let record_batch = record_to_columns(records, batch_info, instance).with_context(|| {
-            format!(
-                "Failed to convert {records_count} records to columns for instance: {instance}",
-                records_count = records.len()
-            )
-        })?;
+        let record_batch =
+            record_to_columns(records, cluster, batch_ts, instance).with_context(|| {
+                format!(
+                    "Failed to convert {records_count} records to columns for instance: {instance}",
+                    records_count = records.len()
+                )
+            })?;
 
         // Write to the instance's writer
         let writer = self.writers.get_mut(instance).unwrap();
@@ -379,16 +343,12 @@ mod tests {
     use super::*;
     use crate::{
         config::ParquetCompression,
-        output::clickhouse::BatchInfo,
         parser::{core::raw::RDBStr, model::StringEncoding},
         record::{Record, RecordEncoding, RecordType},
     };
 
-    fn create_test_batch_info() -> BatchInfo {
-        BatchInfo {
-            cluster: "test-cluster".to_string(),
-            batch: OffsetDateTime::from_unix_timestamp_nanos(1691999696123456789).unwrap(),
-        }
+    fn test_batch_ts() -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp_nanos(1691999696123456789).unwrap()
     }
 
     fn create_test_record(db: u64, key: &str) -> Record {
@@ -410,13 +370,12 @@ mod tests {
     #[tokio::test]
     async fn test_parquet_output_write_single_instance() {
         let temp_dir = TempDir::new().unwrap();
-        let batch_info = create_test_batch_info();
 
         let mut parquet_output = ParquetOutput::new(
             temp_dir.path().to_path_buf(),
             ParquetCompression::None,
             "test-cluster",
-            &batch_info,
+            test_batch_ts(),
         )
         .await
         .unwrap();
@@ -426,7 +385,7 @@ mod tests {
 
         // Write records
         parquet_output
-            .write(&records, &batch_info, instance)
+            .write(&records, "test-cluster", test_batch_ts(), instance)
             .await
             .unwrap();
 
@@ -453,13 +412,12 @@ mod tests {
     #[tokio::test]
     async fn test_parquet_output_write_multiple_instances() {
         let temp_dir = TempDir::new().unwrap();
-        let batch_info = create_test_batch_info();
 
         let mut parquet_output = ParquetOutput::new(
             temp_dir.path().to_path_buf(),
             ParquetCompression::Zstd,
             "test-cluster",
-            &batch_info,
+            test_batch_ts(),
         )
         .await
         .unwrap();
@@ -472,11 +430,11 @@ mod tests {
 
         // Write to both instances
         parquet_output
-            .write(&records1, &batch_info, instance1)
+            .write(&records1, "test-cluster", test_batch_ts(), instance1)
             .await
             .unwrap();
         parquet_output
-            .write(&records2, &batch_info, instance2)
+            .write(&records2, "test-cluster", test_batch_ts(), instance2)
             .await
             .unwrap();
 
@@ -502,13 +460,12 @@ mod tests {
     #[tokio::test]
     async fn test_parquet_output_multiple_batches_same_instance() {
         let temp_dir = TempDir::new().unwrap();
-        let batch_info = create_test_batch_info();
 
         let mut parquet_output = ParquetOutput::new(
             temp_dir.path().to_path_buf(),
             ParquetCompression::Snappy,
             "test-cluster",
-            &batch_info,
+            test_batch_ts(),
         )
         .await
         .unwrap();
@@ -520,11 +477,11 @@ mod tests {
         let records2 = vec![create_test_record(1, "key2")];
 
         parquet_output
-            .write(&records1, &batch_info, instance)
+            .write(&records1, "test-cluster", test_batch_ts(), instance)
             .await
             .unwrap();
         parquet_output
-            .write(&records2, &batch_info, instance)
+            .write(&records2, "test-cluster", test_batch_ts(), instance)
             .await
             .unwrap();
 
@@ -545,13 +502,12 @@ mod tests {
     #[tokio::test]
     async fn test_parquet_output_finalize_nonexistent_instance() {
         let temp_dir = TempDir::new().unwrap();
-        let batch_info = create_test_batch_info();
 
         let mut parquet_output = ParquetOutput::new(
             temp_dir.path().to_path_buf(),
             ParquetCompression::None,
             "test-cluster",
-            &batch_info,
+            test_batch_ts(),
         )
         .await
         .unwrap();
@@ -567,14 +523,13 @@ mod tests {
     #[tokio::test]
     async fn test_directory_creation() {
         let temp_dir = TempDir::new().unwrap();
-        let batch_info = create_test_batch_info();
 
         // Test that nested directories are created properly
         let parquet_output = ParquetOutput::new(
             temp_dir.path().to_path_buf(),
             ParquetCompression::None,
             "test-cluster",
-            &batch_info,
+            test_batch_ts(),
         )
         .await
         .unwrap();

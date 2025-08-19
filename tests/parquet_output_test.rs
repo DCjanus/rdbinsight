@@ -4,15 +4,18 @@ use anyhow::Result;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use rdbinsight::{
     config::ParquetCompression,
-    output::{clickhouse::BatchInfo, parquet::ParquetOutput},
+    output::{
+        abstractions::{ChunkWriter, Output},
+        parquet::ParquetOutput,
+        types::Chunk,
+    },
     source::{RdbSourceConfig, SourceType, standalone::Config as StandaloneConfig},
 };
 use tempfile::TempDir;
 use time::OffsetDateTime;
-
 mod common;
 
-/// Test the Parquet output functionality end-to-end using a live Redis via testcontainers
+/// Test the Parquet output functionality end-to_end using a live Redis via testcontainers
 #[tokio::test]
 async fn test_parquet_output_end_to_end() -> Result<()> {
     // Create a temporary directory for output
@@ -52,18 +55,18 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     // Set up batch and output
     let cluster_name = "test-cluster";
     let instance = address.as_str();
-    let batch_info = BatchInfo {
-        cluster: cluster_name.to_string(),
-        batch: OffsetDateTime::now_utc(),
-    };
+    let batch_ts = OffsetDateTime::now_utc();
 
-    let mut parquet_output = ParquetOutput::new(
+    let parquet_output = ParquetOutput::new(
         output_dir.clone(),
-        rdbinsight::config::ParquetCompression::None,
-        cluster_name,
-        &batch_info,
-    )
-    .await?;
+        ParquetCompression::None,
+        cluster_name.to_string(),
+        batch_ts,
+    );
+
+    // Prepare batch and writer
+    parquet_output.prepare_batch().await?;
+    let mut writer = parquet_output.create_writer(instance).await?;
 
     // Get RDB stream and process records
     let mut streams = cfg.get_rdb_streams().await?;
@@ -85,24 +88,31 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
         record_buffer.push(record);
 
         if record_buffer.len() >= BATCH_SIZE {
-            parquet_output
-                .write(&record_buffer, &batch_info, instance)
-                .await?;
-            record_buffer.clear();
+            let chunk = Chunk {
+                cluster: cluster_name.to_string(),
+                batch_ts,
+                instance: instance.to_string(),
+                records: std::mem::take(&mut record_buffer),
+            };
+            writer.write_chunk(chunk).await?;
         }
     }
 
     if !record_buffer.is_empty() {
-        parquet_output
-            .write(&record_buffer, &batch_info, instance)
-            .await?;
+        let chunk = Chunk {
+            cluster: cluster_name.to_string(),
+            batch_ts,
+            instance: instance.to_string(),
+            records: std::mem::take(&mut record_buffer),
+        };
+        writer.write_chunk(chunk).await?;
     }
 
-    parquet_output.finalize_instance(instance).await?;
-    parquet_output.finalize_batch().await?;
+    writer.finalize_instance().await?;
+    Box::new(parquet_output).finalize_batch().await?;
 
     // Verify the output files exist
-    let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_info.batch);
+    let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_ts);
     let final_batch_dir = output_dir.join(cluster_name).join(batch_dir_name);
     assert!(
         final_batch_dir.exists(),
@@ -154,16 +164,17 @@ async fn test_parquet_compression_algorithms() -> Result<()> {
 
         let cluster_name = "test-cluster";
         let instance = "127.0.0.1:6379";
-        let batch_timestamp = OffsetDateTime::now_utc();
-
-        let batch_info = BatchInfo {
-            cluster: cluster_name.to_string(),
-            batch: batch_timestamp,
-        };
+        let batch_ts = OffsetDateTime::now_utc();
 
         // Initialize Parquet output with specific compression
-        let mut parquet_output =
-            ParquetOutput::new(output_dir.clone(), compression, cluster_name, &batch_info).await?;
+        let parquet_output = ParquetOutput::new(
+            output_dir.clone(),
+            compression,
+            cluster_name.to_string(),
+            batch_ts,
+        );
+        parquet_output.prepare_batch().await?;
+        let mut writer = parquet_output.create_writer(instance).await?;
 
         // Create a simple test record
         use bytes::Bytes;
@@ -181,18 +192,24 @@ async fn test_parquet_compression_algorithms() -> Result<()> {
             .build();
 
         // Write a single record
-        parquet_output
-            .write(&[test_record], &batch_info, instance)
-            .await?;
+        let chunk = Chunk {
+            cluster: cluster_name.to_string(),
+            batch_ts,
+            instance: instance.to_string(),
+            records: vec![test_record],
+        };
+        writer.write_chunk(chunk).await?;
 
         // Finalize
-        parquet_output.finalize_instance(instance).await?;
-        parquet_output.finalize_batch().await?;
+        writer.finalize_instance().await?;
+        Box::new(parquet_output).finalize_batch().await?;
 
         // Verify file exists
-        let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_info.batch);
-        let final_batch_dir = output_dir.join(cluster_name).join(batch_dir_name);
-        let instance_file = final_batch_dir.join("127.0.0.1-6379.parquet");
+        let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_ts);
+        let instance_file = output_dir
+            .join(cluster_name)
+            .join(batch_dir_name)
+            .join("127.0.0.1-6379.parquet");
 
         assert!(
             instance_file.exists(),
@@ -212,20 +229,16 @@ async fn test_multiple_instances_parquet() -> Result<()> {
     let output_dir = temp_dir.path().to_path_buf();
 
     let cluster_name = "test-cluster";
-    let batch_timestamp = OffsetDateTime::now_utc();
+    let batch_ts = OffsetDateTime::now_utc();
 
-    let batch_info = BatchInfo {
-        cluster: cluster_name.to_string(),
-        batch: batch_timestamp,
-    };
-
-    let mut parquet_output = ParquetOutput::new(
+    let parquet_output = ParquetOutput::new(
         output_dir.clone(),
         ParquetCompression::None,
-        cluster_name,
-        &batch_info,
-    )
-    .await?;
+        cluster_name.to_string(),
+        batch_ts,
+    );
+
+    parquet_output.prepare_batch().await?;
 
     // Create test records for different instances
     use bytes::Bytes;
@@ -245,17 +258,21 @@ async fn test_multiple_instances_parquet() -> Result<()> {
             .rdb_size(100)
             .build();
 
-        parquet_output
-            .write(&[test_record], &batch_info, instance)
-            .await?;
-
-        parquet_output.finalize_instance(instance).await?;
+        let mut writer = parquet_output.create_writer(instance).await?;
+        let chunk = Chunk {
+            cluster: cluster_name.to_string(),
+            batch_ts,
+            instance: (*instance).to_string(),
+            records: vec![test_record],
+        };
+        writer.write_chunk(chunk).await?;
+        writer.finalize_instance().await?;
     }
 
-    parquet_output.finalize_batch().await?;
+    Box::new(parquet_output).finalize_batch().await?;
 
     // Verify all instance files exist
-    let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_info.batch);
+    let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_ts);
     let final_batch_dir = output_dir.join(cluster_name).join(batch_dir_name);
 
     for instance in instances {

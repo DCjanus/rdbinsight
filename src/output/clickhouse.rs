@@ -7,18 +7,6 @@ use tracing::info;
 
 use crate::{config::ClickHouseConfig, helper::AnyResult, record::Record};
 
-#[derive(Debug, Clone)]
-pub struct BatchInfo {
-    pub cluster: String,
-    pub batch: OffsetDateTime,
-}
-
-#[derive(Clone)]
-pub struct ClickHouseOutput {
-    client: Client,
-    config: ClickHouseConfig,
-}
-
 #[derive(Debug, Clone, Row, Serialize, Deserialize)]
 pub struct RedisRecordRow {
     cluster: String,
@@ -46,51 +34,40 @@ pub struct BatchCompletedRow {
     batch: OffsetDateTime,
 }
 
+pub struct ClickHouseOutput {
+    config: ClickHouseConfig,
+    cluster: String,
+    batch_ts: OffsetDateTime,
+}
+
 impl ClickHouseOutput {
-    pub async fn new(config: ClickHouseConfig) -> AnyResult<Self> {
+    pub fn new(config: ClickHouseConfig, cluster: String, batch_ts: OffsetDateTime) -> Self {
+        Self {
+            config,
+            cluster,
+            batch_ts,
+        }
+    }
+
+    async fn ensure_tables(&self, client: &Client) -> AnyResult<()> {
         use tracing::debug;
 
         debug!(
-            operation = "clickhouse_client_init",
-            address = %config.address,
-            "Initializing ClickHouse client"
+            operation = "clickhouse_table_existence_check_start",
+            "Checking existence of required ClickHouse tables..."
         );
 
-        let client = config
-            .create_client()
-            .context("Failed to create ClickHouse client")?;
-        let output = Self {
-            client,
-            config: config.clone(),
-        };
-
-        debug!("Validating ClickHouse tables and schema...");
-        output.validate_or_create_tables().await?;
-        debug!("ClickHouse initialization completed successfully");
-
-        Ok(output)
-    }
-
-    async fn validate_or_create_tables(&self) -> AnyResult<()> {
-        use tracing::debug;
-
-        debug!("Checking existence of required ClickHouse tables...");
-
-        // Check existence of all required tables/views
-        let raw_table_exists: u64 = self
-            .client
+        let raw_table_exists: u64 = client
             .query("SELECT count() FROM system.tables WHERE name = 'redis_records_raw'")
             .fetch_one()
             .await?;
 
-        let batch_table_exists: u64 = self
-            .client
+        let batch_table_exists: u64 = client
             .query("SELECT count() FROM system.tables WHERE name = 'import_batches_completed'")
             .fetch_one()
             .await?;
 
-        let view_exists: u64 = self
-            .client
+        let view_exists: u64 = client
             .query("SELECT count() FROM system.tables WHERE name = 'redis_records_view' AND engine = 'View'")
             .fetch_one()
             .await?;
@@ -129,20 +106,15 @@ impl ClickHouseOutput {
                     operation = "clickhouse_auto_create_tables_enabled",
                     "auto_create_tables is enabled, creating tables..."
                 );
-                self.create_all_tables().await?;
+                self.create_all_tables(client).await?;
                 return Ok(());
             } else {
-                debug!(
-                    operation = "clickhouse_auto_create_tables_disabled",
-                    "auto_create_tables is disabled, failing with missing tables error"
-                );
                 return Err(anyhow::anyhow!(
                     "Required ClickHouse tables do not exist. Please run 'rdbinsight misc clickhouse-schema' to get the DDL statements and create the required tables, or set 'auto_create_tables = true' in your configuration."
                 ));
             }
         }
 
-        // Partial state - some tables exist, others don't
         let missing_tables: Vec<&str> = [
             ("redis_records_raw", raw_table_exists == 0),
             ("import_batches_completed", batch_table_exists == 0),
@@ -152,27 +124,18 @@ impl ClickHouseOutput {
         .filter_map(|(name, missing)| if *missing { Some(*name) } else { None })
         .collect();
 
-        debug!(
-            operation = "clickhouse_partial_schema_state",
-            missing_tables = %missing_tables.join(", "),
-            "Partial ClickHouse schema state detected"
-        );
-
         Err(anyhow::anyhow!(
             "Inconsistent ClickHouse schema state. Missing tables/views: {}. Please manually fix the schema by running 'rdbinsight misc clickhouse-schema' and creating the missing objects, or drop all existing tables and set 'auto_create_tables = true' to recreate everything.",
             missing_tables.join(", ")
         ))
     }
 
-    async fn create_all_tables(&self) -> AnyResult<()> {
-        use tracing::info;
-
+    async fn create_all_tables(&self, client: &Client) -> AnyResult<()> {
         info!(
             operation = "clickhouse_tables_auto_create_start",
             "Auto-creating ClickHouse tables and views..."
         );
 
-        // Execute SQL files in order
         let sql_files = [
             (
                 "redis_records_raw table",
@@ -194,7 +157,7 @@ impl ClickHouseOutput {
                 description = %description,
                 "Creating ClickHouse table/view"
             );
-            self.client.query(sql).execute().await?;
+            client.query(sql).execute().await?;
         }
 
         info!(
@@ -204,45 +167,9 @@ impl ClickHouseOutput {
         Ok(())
     }
 
-    pub async fn write(
-        &self,
-        records: &[Record],
-        batch_info: &BatchInfo,
-        instance: &str,
-    ) -> AnyResult<()> {
-        if records.is_empty() {
-            return Ok(());
-        }
-
-        let mut insert: Insert<RedisRecordRow> = self.client.insert("redis_records_raw")?;
-        for record in records {
-            let row = self.record_to_row(record, batch_info, instance);
-            insert.write(&row).await?;
-        }
-        insert.end().await?;
-
-        Ok(())
-    }
-
-    pub async fn commit_batch(&self, batch_info: &BatchInfo) -> AnyResult<()> {
-        let completion_row = BatchCompletedRow {
-            cluster: batch_info.cluster.clone(),
-            batch: batch_info.batch,
-        };
-
-        let mut insert: Insert<BatchCompletedRow> =
-            self.client.insert("import_batches_completed")?;
-        insert.write(&completion_row).await?;
-        insert.end().await?;
-
-        Ok(())
-    }
-
-    fn record_to_row(
-        &self,
+    fn record_to_row_from_chunk(
         record: &Record,
-        batch_info: &BatchInfo,
-        instance: &str,
+        chunk: &crate::output::types::Chunk,
     ) -> RedisRecordRow {
         let key_bytes = match &record.key {
             crate::parser::core::raw::RDBStr::Str(bytes) => bytes.clone(),
@@ -250,9 +177,9 @@ impl ClickHouseOutput {
         };
 
         RedisRecordRow {
-            cluster: batch_info.cluster.clone(),
-            batch: batch_info.batch,
-            instance: instance.to_string(),
+            cluster: chunk.cluster.clone(),
+            batch: chunk.batch_ts,
+            instance: chunk.instance.clone(),
             db: record.db,
             key: key_bytes,
             r#type: record.type_name().to_string(),
@@ -270,74 +197,78 @@ impl ClickHouseOutput {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use bytes::Bytes;
-    use url::Url;
+#[async_trait::async_trait]
+impl crate::output::abstractions::Output for ClickHouseOutput {
+    async fn prepare_batch(&self) -> AnyResult<()> {
+        use tracing::debug;
+        debug!(
+            operation = "clickhouse_prepare_batch",
+            cluster = %self.cluster,
+            "Preparing ClickHouse batch (idempotent)"
+        );
+        let client = self
+            .config
+            .create_client()
+            .context("Failed to create ClickHouse client")?;
+        self.ensure_tables(&client).await
+    }
 
-    use super::*;
-    use crate::{
-        parser::{core::raw::RDBStr, model::StringEncoding},
-        record::{RecordEncoding, RecordType},
-    };
+    async fn create_writer(
+        &self,
+        _instance: &str,
+    ) -> AnyResult<crate::output::abstractions::ChunkWriterEnum> {
+        let client = self
+            .config
+            .create_client()
+            .context("Failed to create ClickHouse client for writer")?;
+        Ok(crate::output::abstractions::ChunkWriterEnum::ClickHouse(
+            Box::new(ClickHouseChunkWriter { client }),
+        ))
+    }
 
-    #[test]
-    fn test_record_to_row_conversion() {
-        let client = Client::default();
-        let config =
-            ClickHouseConfig::new(Url::parse("http://localhost:8123").unwrap(), false, None)
-                .unwrap();
-        let output = ClickHouseOutput { client, config };
+    async fn finalize_batch(self: Box<Self>) -> AnyResult<()> {
+        use tracing::info;
+        let client = self
+            .config
+            .create_client()
+            .context("Failed to create ClickHouse client for finalize_batch")?;
 
-        let batch_info = BatchInfo {
-            cluster: "test-cluster".to_string(),
-            batch: OffsetDateTime::from_unix_timestamp(1640995200).unwrap(), // 2022-01-01
+        let completion_row = BatchCompletedRow {
+            cluster: self.cluster,
+            batch: self.batch_ts,
         };
 
-        let record = Record::builder()
-            .db(0)
-            .key(RDBStr::Str(Bytes::from("test_key")))
-            .r#type(RecordType::String)
-            .encoding(RecordEncoding::String(StringEncoding::Raw))
-            .rdb_size(100)
-            .member_count(Some(1))
-            .expire_at_ms(Some(1640995260000))
-            .idle_seconds(Some(300))
-            .freq(Some(5))
-            .build();
-
-        let row = output.record_to_row(&record, &batch_info, "127.0.0.1:6379");
-
-        assert_eq!(row.cluster, "test-cluster");
-        assert_eq!(row.batch, batch_info.batch);
-        assert_eq!(row.instance, "127.0.0.1:6379");
-        assert_eq!(row.db, 0);
-        assert_eq!(row.key, Bytes::from("test_key"));
-        assert_eq!(row.r#type, "string");
-        assert_eq!(row.member_count, 1);
-        assert_eq!(row.rdb_size, 100);
-        assert_eq!(row.encoding, "raw");
-        assert_eq!(
-            row.expire_at,
-            Some(OffsetDateTime::from_unix_timestamp_nanos(1640995260000 * 1_000_000).unwrap())
+        info!(
+            operation = "clickhouse_finalize_batch",
+            "Writing batch completion row"
         );
-        assert_eq!(row.idle_seconds, Some(300));
-        assert_eq!(row.freq, Some(5));
+        let mut insert: Insert<BatchCompletedRow> = client.insert("import_batches_completed")?;
+        insert.write(&completion_row).await?;
+        insert.end().await?;
+        Ok(())
+    }
+}
 
-        let int_record = Record::builder()
-            .db(1)
-            .key(RDBStr::Int(42))
-            .r#type(RecordType::Hash)
-            .encoding(RecordEncoding::String(StringEncoding::Int))
-            .rdb_size(50)
-            .member_count(Some(10))
-            .build();
+pub struct ClickHouseChunkWriter {
+    client: Client,
+}
 
-        let int_row = output.record_to_row(&int_record, &batch_info, "127.0.0.1:6379");
-        assert_eq!(int_row.key, Bytes::from("42"));
-        assert_eq!(int_row.db, 1);
-        assert_eq!(int_row.r#type, "hash");
-        assert_eq!(int_row.member_count, 10);
-        assert_eq!(int_row.expire_at, None);
+#[async_trait::async_trait]
+impl crate::output::abstractions::ChunkWriter for ClickHouseChunkWriter {
+    async fn write_chunk(&mut self, chunk: crate::output::types::Chunk) -> AnyResult<()> {
+        if chunk.records.is_empty() {
+            return Ok(());
+        }
+        let mut insert: Insert<RedisRecordRow> = self.client.insert("redis_records_raw")?;
+        for record in &chunk.records {
+            let row = ClickHouseOutput::record_to_row_from_chunk(record, &chunk);
+            insert.write(&row).await?;
+        }
+        insert.end().await?;
+        Ok(())
+    }
+
+    async fn finalize_instance(&mut self) -> AnyResult<()> {
+        Ok(())
     }
 }

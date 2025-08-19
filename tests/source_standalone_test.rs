@@ -468,7 +468,7 @@ async fn seed_lots_of_strings(redis: &RedisInstance) -> AnyResult<()> {
     }
 
     // Execute remaining operations
-    if !pipe.cmd_iter().next().is_none() {
+    if pipe.cmd_iter().next().is_some() {
         pipe.query_async::<()>(&mut conn).await?;
     }
 
@@ -576,7 +576,7 @@ async fn run_lots_of_strings_feed_more_test(config: FeedMoreTestConfig) -> AnyRe
                         if let Ok(logs) = redis.get_logs().await {
                             eprintln!("🔍 Redis container logs:\n{}", logs);
                         }
-                        return Err(e.into());
+                        return Err(e);
                     }
                 }
             }

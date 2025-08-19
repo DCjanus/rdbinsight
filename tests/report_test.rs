@@ -1,12 +1,13 @@
 use bytes::Bytes;
 use rdbinsight::{
     config::ClickHouseConfig,
-    output::clickhouse::{BatchInfo, ClickHouseOutput},
+    output::{abstractions::Output, clickhouse::ClickHouseOutput, types::Chunk},
     record::{Record, RecordEncoding, RecordType},
     report::{ReportGenerator, get_latest_batch_for_cluster},
 };
 mod common;
 use common::clickhouse::start_clickhouse;
+use rdbinsight::output::abstractions::ChunkWriter;
 use time::OffsetDateTime;
 use tracing::info;
 use url::Url;
@@ -59,27 +60,38 @@ async fn test_report_generate_data_with_clickhouse() {
     // 2) build clickhouse config and output (auto-create tables)
     let ch_url = Url::parse(&env.host_url).unwrap();
     let ch_config = ClickHouseConfig::new(ch_url, true, None).unwrap();
-    let output = ClickHouseOutput::new(ch_config.clone()).await.unwrap();
-
-    // 3) write some records into this batch and commit
     let cluster = "test-cluster".to_string();
     let batch_ts = OffsetDateTime::now_utc();
-    let batch_info = BatchInfo {
-        cluster: cluster.clone(),
-        batch: batch_ts,
-    };
+    let output = ClickHouseOutput::new(ch_config.clone(), cluster.clone(), batch_ts);
+    output.prepare_batch().await.unwrap();
 
+    // 3) write some records into this batch and commit
     // write same records for 2 instances to exercise instance aggregates
     let records = make_records();
-    output
-        .write(&records, &batch_info, "10.0.0.1:6379")
+    let mut writer1 = output.create_writer("10.0.0.1:6379").await.unwrap();
+    writer1
+        .write_chunk(Chunk {
+            cluster: cluster.clone(),
+            batch_ts,
+            instance: "10.0.0.1:6379".to_string(),
+            records: records.clone(),
+        })
         .await
         .unwrap();
-    output
-        .write(&records, &batch_info, "10.0.0.2:6379")
+    writer1.finalize_instance().await.unwrap();
+
+    let mut writer2 = output.create_writer("10.0.0.2:6379").await.unwrap();
+    writer2
+        .write_chunk(Chunk {
+            cluster: cluster.clone(),
+            batch_ts,
+            instance: "10.0.0.2:6379".to_string(),
+            records: records.clone(),
+        })
         .await
         .unwrap();
-    output.commit_batch(&batch_info).await.unwrap();
+    writer2.finalize_instance().await.unwrap();
+    Box::new(output).finalize_batch().await.unwrap();
 
     // 4) build report generator for the same batch and fetch data
     let batch_str = get_latest_batch_for_cluster(&ch_config, &cluster)
@@ -142,18 +154,14 @@ async fn test_report_generate_data_with_empty_cluster() {
     // 2) build clickhouse config and output (auto-create tables)
     let ch_url = Url::parse(&env.host_url).unwrap();
     let ch_config = ClickHouseConfig::new(ch_url, true, None).unwrap();
-    let output = ClickHouseOutput::new(ch_config.clone()).await.unwrap();
-
-    // 3) create an empty batch and commit (no data written)
     let cluster = "empty-cluster".to_string();
     let batch_ts = OffsetDateTime::now_utc();
-    let batch_info = BatchInfo {
-        cluster: cluster.clone(),
-        batch: batch_ts,
-    };
+    let output = ClickHouseOutput::new(ch_config.clone(), cluster.clone(), batch_ts);
+    output.prepare_batch().await.unwrap();
 
+    // 3) create an empty batch and commit (no data written)
     // Only commit the batch without writing any records
-    output.commit_batch(&batch_info).await.unwrap();
+    Box::new(output).finalize_batch().await.unwrap();
 
     // 4) build report generator for the empty batch and fetch data
     let batch_str = get_latest_batch_for_cluster(&ch_config, &cluster)

@@ -1,21 +1,19 @@
-use std::{path::PathBuf, pin::Pin, sync::Arc, time::Instant};
+use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc, time::Instant};
 
 use anyhow::{Context, Result, anyhow};
-use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
+use backoff::backoff::Backoff;
 use clap::{CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
-    config::{OutputConfig, ParquetCompression},
-    output::{
-        clickhouse::{BatchInfo, ClickHouseOutput},
-        parquet::ParquetOutput,
-    },
+    config::{DumpConfig, ParquetCompression},
+    output::abstractions::{ChunkWriter, Output},
     record::{Record, RecordStream},
     source::{RDBStream, RdbSourceConfig},
 };
 use time::OffsetDateTime;
-use tracing::{debug, error, info, warn};
+use tokio::sync::Mutex;
+use tracing::{debug, info, warn};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
@@ -29,13 +27,14 @@ struct MainCli {
     verbose: bool,
 
     /// Global concurrency override
-    #[arg(long, default_value_t = default_concurrency(), global = true, env = "RDBINSIGHT_CONCURRENCY")]
+    #[arg(long, default_value_t = default_concurrency(), global = true, env = "RDBINSIGHT_CONCURRENCY"
+    )]
     concurrency: usize,
 }
 
 fn default_concurrency() -> usize {
     // Conservative default that works well for both single instances and small clusters
-    (num_cpus::get() / 2).clamp(1, 16)
+    (num_cpus::get() / 2).clamp(1, 8)
 }
 
 #[derive(Subcommand)]
@@ -381,20 +380,10 @@ fn dump_command_to_config(
 }
 
 async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
-    debug!(
-        operation = "config_parsing",
-        "Parsing CLI arguments into configuration"
-    );
+    let (mut config, batch_timestamp_arg): (DumpConfig, Option<String>) =
+        dump_command_to_config(dump_cmd, concurrency)
+            .with_context(|| "Failed to parse CLI arguments into configuration")?;
 
-    let (mut config, batch_timestamp_arg) = dump_command_to_config(dump_cmd, concurrency)
-        .with_context(|| "Failed to parse CLI arguments into configuration")?;
-
-    debug!(
-        operation = "config_parsed",
-        "Configuration parsed successfully"
-    );
-
-    // Preprocess the source configuration to handle dynamic values
     config
         .source
         .preprocess()
@@ -409,7 +398,6 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     let cluster_name = config.source.cluster_name().to_string();
     let source_config = config.source;
 
-    // Get batch timestamp from CLI, environment variable, or current time
     let batch_timestamp = if let Some(timestamp_str) = batch_timestamp_arg {
         let parsed_timestamp = OffsetDateTime::parse(
             &timestamp_str,
@@ -432,29 +420,14 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
         now
     };
 
-    let batch_info = BatchInfo {
-        cluster: cluster_name.to_string(),
-        batch: batch_timestamp,
-    };
-
-    debug!(
-        operation = "batch_info_created",
-        cluster = %batch_info.cluster,
-        timestamp = %batch_info.batch,
-        "Batch info created"
-    );
-
     info!(
         operation = "cluster_dump_start",
         cluster = %cluster_name,
+        batch = %batch_timestamp,
         concurrency = %config.concurrency,
         "Starting dump for cluster"
     );
 
-    debug!(
-        operation = "rdb_streams_fetch",
-        "Getting RDB streams from source configuration"
-    );
     let streams = source_config
         .get_rdb_streams()
         .await
@@ -467,45 +440,18 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     );
     let total_streams = streams.len();
 
-    // Process based on output type
-    match &config.output {
-        OutputConfig::Clickhouse(clickhouse_config) => {
-            debug!(
-                operation = "clickhouse_output_init",
-                config = ?clickhouse_config,
-                "Initializing ClickHouse output"
-            );
-            let clickhouse_output = ClickHouseOutput::new(clickhouse_config.clone())
-                .await
-                .with_context(|| "Failed to initialize ClickHouse output")?;
+    // Use defaults from existing code: batch_size = 1_000_000
+    const BATCH_SIZE: usize = 1_000_000;
 
-            process_streams_to_clickhouse(
-                streams,
-                clickhouse_output,
-                batch_info,
-                config.concurrency,
-            )
-            .await?;
-        }
-        OutputConfig::Parquet(parquet_config) => {
-            debug!(
-                operation = "parquet_output_init",
-                config = ?parquet_config,
-                "Initializing Parquet output"
-            );
-            let parquet_output = ParquetOutput::new(
-                parquet_config.dir.clone(),
-                parquet_config.compression,
-                &cluster_name,
-                &batch_info,
-            )
-            .await
-            .with_context(|| "Failed to initialize Parquet output")?;
-
-            process_streams_to_parquet(streams, parquet_output, batch_info, config.concurrency)
-                .await?;
-        }
-    }
+    process_streams_with_direct_writers(
+        streams,
+        config.output,
+        cluster_name.to_string(),
+        batch_timestamp,
+        config.concurrency,
+        BATCH_SIZE,
+    )
+    .await?;
 
     info!(
         operation = "dump_completed",
@@ -516,491 +462,261 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     Ok(())
 }
 
-async fn process_streams_to_clickhouse(
-    streams: Vec<Pin<Box<dyn RDBStream>>>,
-    clickhouse_output: ClickHouseOutput,
-    batch_info: BatchInfo,
-    concurrency: usize,
-) -> Result<()> {
-    let total_streams = streams.len();
-
-    futures_util::stream::iter(streams)
-        .map(Ok)
-        .try_for_each_concurrent(concurrency, |stream| {
-            let clickhouse_output = clickhouse_output.clone();
-            let batch_info = batch_info.clone();
-            async move {
-                let instance = stream.instance();
-                info!(
-                    operation = "instance_processing_start",
-                    instance = %instance,
-                    "Starting processing"
-                );
-
-                tokio::spawn(async move {
-                    process_records_to_clickhouse(stream, clickhouse_output, batch_info)
-                        .await
-                        .with_context(|| {
-                            format!("Failed to process RDB stream from instance: {instance}")
-                        })
-                })
-                .await??;
-
-                Ok::<(), anyhow::Error>(())
-            }
-        })
-        .await
-        .with_context(|| {
-            format!("Failed to process RDB streams ({total_streams} total instances)")
-        })?;
-
-    debug!(
-        operation = "all_streams_processed",
-        total_instances = total_streams,
-        "All RDB streams processed successfully"
-    );
-
-    // Commit the batch only after all streams have been processed successfully
-    debug!(
-        operation = "committing_batch",
-        cluster = %batch_info.cluster,
-        batch = %batch_info.batch,
-        total_instances = total_streams,
-        "Committing batch after all instances completed"
-    );
-
-    let backoff_strategy = ExponentialBackoffBuilder::new()
+fn create_backoff() -> backoff::ExponentialBackoff {
+    backoff::ExponentialBackoffBuilder::new()
         .with_initial_interval(std::time::Duration::from_secs(1))
         .with_max_interval(std::time::Duration::from_secs(10))
         .with_max_elapsed_time(Some(std::time::Duration::from_secs(60)))
-        .build();
+        .build()
+}
 
-    commit_batch_with_retry(&clickhouse_output, &batch_info, &backoff_strategy)
-        .await
-        .with_context(|| "Failed to commit batch after processing all streams")?;
-
+fn log_progress_chunk(
+    start_time: Instant,
+    processed_records: u64,
+    completed_instances: usize,
+    total_instances: usize,
+    instance: &str,
+    instance_processed_records: u64,
+) {
+    let elapsed = start_time.elapsed().as_secs_f64().max(0.000_001);
+    let rps = processed_records as f64 / elapsed;
     info!(
-        operation = "batch_committed",
-        cluster = %batch_info.cluster,
-        batch = %batch_info.batch,
-        total_instances = total_streams,
-        "Batch committed successfully for all instances"
+        operation = "progress_update",
+        instance = %instance,
+        processed_records = processed_records,
+        instance_processed_records = instance_processed_records,
+        completed_instances = completed_instances,
+        total_instances = total_instances,
+        rps = rps,
+        "Progress update"
     );
+}
+
+async fn write_chunk_with_retry(
+    writer: &mut dyn rdbinsight::output::abstractions::ChunkWriter,
+    chunk: rdbinsight::output::types::Chunk,
+    mut retries: backoff::ExponentialBackoff,
+) -> Result<()> {
+    loop {
+        match writer.write_chunk(chunk.clone()).await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                warn!(operation = "write_chunk_retry", instance = %chunk.instance, error = %e, error_chain = %format!("{e:#}"), "Write chunk failed, will retry");
+                if let Some(wait) = retries.next_backoff() {
+                    tokio::time::sleep(wait).await;
+                } else {
+                    return Err(e).with_context(|| "Failed to write chunk after retries");
+                }
+            }
+        }
+    }
+}
+
+async fn finalize_instance_with_retry(
+    writer: &mut dyn rdbinsight::output::abstractions::ChunkWriter,
+    instance: &str,
+    mut retries: backoff::ExponentialBackoff,
+) -> Result<()> {
+    loop {
+        match writer.finalize_instance().await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                warn!(operation = "finalize_instance_retry", instance = %instance, error = %e, error_chain = %format!("{e:#}"), "Finalize instance failed, will retry");
+                if let Some(wait) = retries.next_backoff() {
+                    tokio::time::sleep(wait).await;
+                } else {
+                    return Err(e).with_context(|| {
+                        format!("Failed to finalize instance {instance} after retries")
+                    });
+                }
+            }
+        }
+    }
+}
+
+struct ProgressState {
+    processed_records: u64,
+    completed_instances: usize,
+    start_time: Instant,
+    last_log: Instant,
+    total_instances: usize,
+    per_instance_records: HashMap<String, u64>,
+}
+
+type SharedProgress = Arc<Mutex<ProgressState>>;
+
+fn init_progress(total_instances: usize) -> SharedProgress {
+    Arc::new(Mutex::new(ProgressState {
+        processed_records: 0,
+        completed_instances: 0,
+        start_time: Instant::now(),
+        last_log: Instant::now(),
+        total_instances,
+        per_instance_records: HashMap::new(),
+    }))
+}
+
+async fn update_progress_after_write(
+    progress: &SharedProgress,
+    added_records: u64,
+    instance: &str,
+) {
+    let mut state = progress.lock().await;
+    state.processed_records = state.processed_records.saturating_add(added_records);
+    let entry = state
+        .per_instance_records
+        .entry(instance.to_string())
+        .or_insert(0);
+    *entry = entry.saturating_add(added_records);
+
+    let instance_processed_records = *state.per_instance_records.get(instance).unwrap_or(&0);
+    log_progress_chunk(
+        state.start_time,
+        state.processed_records,
+        state.completed_instances,
+        state.total_instances,
+        instance,
+        instance_processed_records,
+    );
+    state.last_log = Instant::now();
+}
+
+async fn mark_instance_completed(progress: &SharedProgress, instance: &str) {
+    let mut state = progress.lock().await;
+    state.completed_instances = state.completed_instances.saturating_add(1);
+    let instance_processed_records = *state.per_instance_records.get(instance).unwrap_or(&0);
+    log_progress_chunk(
+        state.start_time,
+        state.processed_records,
+        state.completed_instances,
+        state.total_instances,
+        instance,
+        instance_processed_records,
+    );
+    state.last_log = Instant::now();
+}
+
+async fn handle_stream_with_prepared_writer(
+    mut stream: Pin<Box<dyn RDBStream>>,
+    instance: String,
+    mut writer: rdbinsight::output::abstractions::ChunkWriterEnum,
+    cluster: String,
+    batch_ts: OffsetDateTime,
+    batch_size: usize,
+    progress: SharedProgress,
+) -> Result<()> {
+    let source_type = stream.source_type();
+
+    stream
+        .prepare()
+        .await
+        .with_context(|| anyhow!("Failed to prepare RDB stream for instance {instance}"))?;
+
+    writer
+        .prepare_instance()
+        .await
+        .with_context(|| anyhow!("Failed to prepare writer for instance {instance}"))?;
+
+    let mut record_stream = RecordStream::new(stream, source_type);
+    let mut buffer: Vec<Record> = Vec::with_capacity(batch_size);
+
+    while let Some(next) = record_stream.next().await {
+        let record =
+            next.with_context(|| anyhow!("Failed to parse record from instance {instance}"))?;
+        buffer.push(record);
+        if buffer.len() >= batch_size {
+            let chunk = rdbinsight::output::types::Chunk {
+                cluster: cluster.clone(),
+                batch_ts,
+                instance: instance.clone(),
+                records: std::mem::replace(&mut buffer, Vec::with_capacity(batch_size)),
+            };
+
+            let records_in_chunk = chunk.records.len() as u64;
+            write_chunk_with_retry(&mut writer, chunk, create_backoff())
+                .await
+                .context("Failed to write chunk")?;
+
+            update_progress_after_write(&progress, records_in_chunk, &instance).await;
+        }
+    }
+
+    if !buffer.is_empty() {
+        let chunk = rdbinsight::output::types::Chunk {
+            cluster: cluster.clone(),
+            batch_ts,
+            instance: instance.clone(),
+            records: buffer,
+        };
+
+        let records_in_chunk = chunk.records.len() as u64;
+        write_chunk_with_retry(&mut writer, chunk, create_backoff())
+            .await
+            .context("Failed to write final chunk")?;
+
+        update_progress_after_write(&progress, records_in_chunk, &instance).await;
+    }
+
+    finalize_instance_with_retry(&mut writer, &instance, create_backoff())
+        .await
+        .context("Failed to finalize instance")?;
+
+    mark_instance_completed(&progress, &instance).await;
 
     Ok(())
 }
 
-async fn process_streams_to_parquet(
+async fn process_streams_with_direct_writers(
     streams: Vec<Pin<Box<dyn RDBStream>>>,
-    parquet_output: ParquetOutput,
-    batch_info: BatchInfo,
+    output_config: rdbinsight::config::OutputConfig,
+    cluster: String,
+    batch_ts: OffsetDateTime,
     concurrency: usize,
+    batch_size: usize,
 ) -> Result<()> {
-    let total_streams = streams.len();
+    let output = output_config
+        .create_output(cluster.clone(), batch_ts)
+        .with_context(|| "Failed to create output from configuration")?;
 
-    // We need to share the parquet_output across tasks, so we'll use Arc<Mutex<>>
-    use std::sync::Arc;
+    output
+        .prepare_batch()
+        .await
+        .with_context(|| "Failed to prepare batch for output")?;
 
-    use tokio::sync::Mutex;
-    let shared_parquet_output = Arc::new(Mutex::new(parquet_output));
+    let mut tasks = Vec::with_capacity(streams.len());
+    for stream in streams {
+        let instance = stream.instance().to_string();
+        let writer = output
+            .create_writer(&instance)
+            .await
+            .with_context(|| anyhow!("Failed to create writer for instance {instance}"))?;
+        tasks.push((stream, instance, writer));
+    }
 
-    futures_util::stream::iter(streams)
+    let progress = init_progress(tasks.len());
+
+    futures_util::stream::iter(tasks)
         .map(Ok)
-        .try_for_each_concurrent(concurrency, |stream| {
-            let shared_parquet_output = shared_parquet_output.clone();
-            let batch_info = batch_info.clone();
+        .try_for_each_concurrent(concurrency.max(1), |(stream, instance, writer)| {
+            let cluster = cluster.clone();
+            let progress = progress.clone();
             async move {
-                let instance = stream.instance();
-                info!(
-                    operation = "instance_processing_start",
-                    instance = %instance,
-                    "Starting processing"
-                );
-
-                tokio::spawn(async move {
-                    process_records_to_parquet(stream, shared_parquet_output, batch_info)
-                        .await
-                        .with_context(|| {
-                            format!("Failed to process RDB stream from instance: {instance}")
-                        })
-                })
-                .await??;
-
+                tokio::spawn(handle_stream_with_prepared_writer(
+                    stream, instance, writer, cluster, batch_ts, batch_size, progress,
+                ))
+                .await
+                .with_context(|| "Failed to join spawned direct-writer task")??;
                 Ok::<(), anyhow::Error>(())
             }
         })
-        .await
-        .with_context(|| {
-            format!("Failed to process RDB streams ({total_streams} total instances)")
-        })?;
+        .await?;
 
-    debug!(
-        operation = "all_streams_processed",
-        total_instances = total_streams,
-        "All RDB streams processed successfully"
-    );
-
-    // Finalize the batch directory after all instances are complete
-    let parquet_output = Arc::try_unwrap(shared_parquet_output)
-        .map_err(|_| anyhow::anyhow!("Failed to take ownership of parquet output"))?
-        .into_inner();
-
-    parquet_output
+    Box::new(output)
         .finalize_batch()
         .await
-        .with_context(|| "Failed to finalize parquet batch")?;
-
-    info!(
-        operation = "parquet_batch_finalized",
-        cluster = %batch_info.cluster,
-        batch = %batch_info.batch,
-        total_instances = total_streams,
-        "Parquet batch finalized successfully for all instances"
-    );
+        .with_context(|| "Failed to finalize batch for output")?;
 
     Ok(())
-}
-
-async fn process_records_to_clickhouse(
-    mut stream: Pin<Box<dyn RDBStream>>,
-    clickhouse_output: ClickHouseOutput,
-    batch_info: BatchInfo,
-) -> Result<()> {
-    // Get the instance identifier from the stream
-    let instance = stream.instance();
-    let source_type = stream.source_type();
-
-    stream
-        .prepare()
-        .await
-        .context("Failed to prepare RDB stream")?;
-
-    const BATCH_SIZE: usize = 1_000_000;
-
-    let start_time = Instant::now();
-    let mut total_records = 0u64;
-    let mut record_buffer: Vec<Record> = Vec::with_capacity(BATCH_SIZE);
-
-    let mut record_stream = RecordStream::new(stream, source_type);
-
-    let backoff_strategy = ExponentialBackoffBuilder::new()
-        .with_initial_interval(std::time::Duration::from_secs(1))
-        .with_max_interval(std::time::Duration::from_secs(10))
-        .with_max_elapsed_time(Some(std::time::Duration::from_secs(60)))
-        .build();
-
-    loop {
-        match record_stream.next().await {
-            Some(Ok(record)) => {
-                total_records += 1;
-                record_buffer.push(record);
-
-                if record_buffer.len() >= BATCH_SIZE {
-                    write_batch_with_retry(
-                        &clickhouse_output,
-                        &record_buffer,
-                        &batch_info,
-                        &instance,
-                        &backoff_strategy,
-                    )
-                    .await?;
-                    info!(
-                        operation = "batch_written",
-                        instance = %instance,
-                        batch_size = record_buffer.len(),
-                        total_records = total_records,
-                        "Wrote batch of records"
-                    );
-                    record_buffer.clear();
-                }
-
-                if total_records.is_multiple_of(100_000) {
-                    debug!(
-                        operation = "progress_update",
-                        instance = %instance,
-                        processed_records = total_records,
-                        "Processing progress"
-                    );
-                }
-            }
-            Some(Err(e)) => {
-                let elapsed = start_time.elapsed();
-                error!(
-                    operation = "parser_error",
-                    instance = %instance,
-                    processed_records = total_records,
-                    elapsed_seconds = elapsed.as_secs(),
-                    error = %e,
-                    "Parser error during processing"
-                );
-
-                // Add root cause chain information
-                let mut cause_chain = Vec::new();
-                let mut current_error: &dyn std::error::Error = e.as_ref();
-                while let Some(cause) = current_error.source() {
-                    cause_chain.push(format!("{cause}"));
-                    current_error = cause;
-                }
-
-                if !cause_chain.is_empty() {
-                    error!(
-                        operation = "error_chain",
-                        instance = %instance,
-                        error_chain = %cause_chain.join(" -> "),
-                        "Error chain details"
-                    );
-                }
-
-                return Err(e.context(format!(
-                    "Failed to process RDB stream from instance {instance} after {total_records} records in {elapsed:?}"
-                )));
-            }
-            None => {
-                if !record_buffer.is_empty() {
-                    write_batch_with_retry(
-                        &clickhouse_output,
-                        &record_buffer,
-                        &batch_info,
-                        &instance,
-                        &backoff_strategy,
-                    )
-                    .await?;
-                }
-                break;
-            }
-        }
-    }
-
-    let duration = start_time.elapsed();
-    info!(
-        operation = "instance_processing_completed",
-        instance = %instance,
-        total_records = total_records,
-        duration_seconds = duration.as_secs_f64(),
-        records_per_second = total_records as f64 / duration.as_secs_f64(),
-        "Instance processing completed"
-    );
-
-    Ok(())
-}
-
-async fn process_records_to_parquet(
-    mut stream: Pin<Box<dyn RDBStream>>,
-    parquet_output: Arc<tokio::sync::Mutex<ParquetOutput>>,
-    batch_info: BatchInfo,
-) -> Result<()> {
-    let instance = stream.instance();
-    let source_type = stream.source_type();
-
-    stream
-        .prepare()
-        .await
-        .context("Failed to prepare RDB stream")?;
-
-    const BATCH_SIZE: usize = 1_000_000;
-
-    let start_time = Instant::now();
-    let mut total_records = 0u64;
-    let mut record_buffer: Vec<Record> = Vec::with_capacity(BATCH_SIZE);
-
-    let mut record_stream = RecordStream::new(stream, source_type);
-
-    let backoff_strategy = ExponentialBackoffBuilder::new()
-        .with_initial_interval(std::time::Duration::from_secs(1))
-        .with_max_interval(std::time::Duration::from_secs(10))
-        .with_max_elapsed_time(Some(std::time::Duration::from_secs(60)))
-        .build();
-
-    loop {
-        match record_stream.next().await {
-            Some(Ok(record)) => {
-                total_records += 1;
-                record_buffer.push(record);
-
-                if record_buffer.len() >= BATCH_SIZE {
-                    write_parquet_batch_with_retry(
-                        &parquet_output,
-                        &record_buffer,
-                        &batch_info,
-                        &instance,
-                        &backoff_strategy,
-                    )
-                    .await?;
-                    info!(
-                        operation = "batch_written",
-                        instance = %instance,
-                        batch_size = record_buffer.len(),
-                        total_records = total_records,
-                        "Wrote batch of records"
-                    );
-                    record_buffer.clear();
-                }
-
-                if total_records.is_multiple_of(100_000) {
-                    debug!(
-                        operation = "progress_update",
-                        instance = %instance,
-                        processed_records = total_records,
-                        "Processing progress"
-                    );
-                }
-            }
-            Some(Err(e)) => {
-                let elapsed = start_time.elapsed();
-                error!(
-                    operation = "parser_error",
-                    instance = %instance,
-                    processed_records = total_records,
-                    elapsed_seconds = elapsed.as_secs(),
-                    error = %e,
-                    "Parser error during processing"
-                );
-
-                // Add root cause chain information
-                let mut cause_chain = Vec::new();
-                let mut current_error: &dyn std::error::Error = e.as_ref();
-                while let Some(cause) = current_error.source() {
-                    cause_chain.push(format!("{cause}"));
-                    current_error = cause;
-                }
-
-                if !cause_chain.is_empty() {
-                    error!(
-                        operation = "error_chain",
-                        instance = %instance,
-                        error_chain = %cause_chain.join(" -> "),
-                        "Error chain details"
-                    );
-                }
-
-                return Err(e.context(format!(
-                    "Failed to process RDB stream from instance {instance} after {total_records} records in {elapsed:?}"
-                )));
-            }
-            None => {
-                if !record_buffer.is_empty() {
-                    write_parquet_batch_with_retry(
-                        &parquet_output,
-                        &record_buffer,
-                        &batch_info,
-                        &instance,
-                        &backoff_strategy,
-                    )
-                    .await?;
-                }
-                break;
-            }
-        }
-    }
-
-    // Finalize this instance
-    {
-        let mut parquet_output = parquet_output.lock().await;
-        parquet_output
-            .finalize_instance(&instance)
-            .await
-            .with_context(|| format!("Failed to finalize Parquet instance: {instance}"))?;
-    }
-
-    let duration = start_time.elapsed();
-    info!(
-        operation = "instance_processing_completed",
-        instance = %instance,
-        total_records = total_records,
-        duration_seconds = duration.as_secs_f64(),
-        records_per_second = total_records as f64 / duration.as_secs_f64(),
-        "Instance processing completed"
-    );
-
-    Ok(())
-}
-
-async fn write_batch_with_retry(
-    clickhouse_output: &ClickHouseOutput,
-    records: &[Record],
-    batch_info: &BatchInfo,
-    instance: &str,
-    backoff_strategy: &ExponentialBackoff,
-) -> Result<()> {
-    let operation = || async {
-        clickhouse_output
-            .write(records, batch_info, instance)
-            .await
-            .map_err(|e| {
-                warn!(
-                    operation = "batch_write_retry",
-                    instance = %instance,
-                    error = %e,
-                    "Failed to write batch to ClickHouse, will retry"
-                );
-                backoff::Error::transient(e)
-            })
-    };
-
-    backoff::future::retry(backoff_strategy.clone(), operation)
-        .await
-        .with_context(|| "Failed to write batch to ClickHouse after retries")
-}
-
-async fn write_parquet_batch_with_retry(
-    parquet_output: &Arc<tokio::sync::Mutex<ParquetOutput>>,
-    records: &[Record],
-    batch_info: &BatchInfo,
-    instance: &str,
-    backoff_strategy: &ExponentialBackoff,
-) -> Result<()> {
-    let operation = || async {
-        let mut parquet_output = parquet_output.lock().await;
-        parquet_output
-            .write(records, batch_info, instance)
-            .await
-            .map_err(|e| {
-                warn!(
-                    operation = "parquet_batch_write_retry",
-                    instance = %instance,
-                    records_count = records.len(),
-                    error = %e,
-                    "Failed to write batch to Parquet, will retry"
-                );
-                backoff::Error::transient(e)
-            })
-    };
-
-    backoff::future::retry(backoff_strategy.clone(), operation)
-        .await
-        .with_context(|| {
-            format!(
-                "Failed to write batch of {} records to Parquet for instance {} after retries",
-                records.len(),
-                instance
-            )
-        })
-}
-
-async fn commit_batch_with_retry(
-    clickhouse_output: &ClickHouseOutput,
-    batch_info: &BatchInfo,
-    backoff_strategy: &ExponentialBackoff,
-) -> Result<()> {
-    let operation = || async {
-        clickhouse_output
-            .commit_batch(batch_info)
-            .await
-            .map_err(|e| {
-                warn!(
-                    operation = "batch_commit_retry",
-                    cluster = %batch_info.cluster,
-                    batch = %batch_info.batch,
-                    error = %e,
-                    "Failed to commit batch to ClickHouse, will retry"
-                );
-                backoff::Error::transient(e)
-            })
-    };
-
-    backoff::future::retry(backoff_strategy.clone(), operation)
-        .await
-        .with_context(|| "Failed to commit batch to ClickHouse after retries")
 }
 
 async fn run_report(args: ReportArgs) -> Result<()> {

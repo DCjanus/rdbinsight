@@ -1481,7 +1481,7 @@ async fn slot_info_opcode_test() -> AnyResult<()> {
                     let mut cmd = redis::cmd("CLUSTER");
                     cmd.arg("ADDSLOTS");
                     for s in slot..upper {
-                        cmd.arg(s as usize);
+                        cmd.arg(s);
                     }
                     cmd.query_async::<()>(&mut *conn).await?;
                     slot = upper;

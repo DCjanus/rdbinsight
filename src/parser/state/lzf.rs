@@ -109,7 +109,7 @@ mod tests {
         // Feed all compressed data into input buffer
         i_buf.extend(&compressed).expect("buffer extend failed");
         // Decode until input buffer is empty
-        while i_buf.len() > 0 {
+        while !i_buf.is_empty() {
             decoder
                 .feed(&mut i_buf, &mut o_buf)
                 .expect("decoding failed");
@@ -138,7 +138,7 @@ mod tests {
             .extend(&compressed[split..])
             .expect("buffer extend failed");
         // Continue decoding until complete
-        while i_buf.len() > 0 {
+        while !i_buf.is_empty() {
             decoder
                 .feed(&mut i_buf, &mut o_buf)
                 .expect("decoding failed");
@@ -167,7 +167,7 @@ mod tests {
             .extend(&compressed[split..])
             .expect("buffer extend failed");
         // Continue decoding until complete
-        while i_buf.len() > 0 {
+        while !i_buf.is_empty() {
             decoder
                 .feed(&mut i_buf, &mut o_buf)
                 .expect("decoding failed");

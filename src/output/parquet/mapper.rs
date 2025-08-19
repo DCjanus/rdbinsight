@@ -9,16 +9,12 @@ use arrow::{
 };
 
 use super::schema::create_redis_record_schema;
-use crate::{output::clickhouse::BatchInfo, parser::core::raw::RDBStr, record::Record};
+use crate::parser::core::raw::RDBStr;
 
-/// Convert a slice of Records to an Arrow RecordBatch
-pub fn record_to_columns(
-    records: &[Record],
-    batch_info: &BatchInfo,
-    instance: &str,
-) -> arrow::error::Result<RecordBatch> {
+/// Convert Records from a Chunk to an Arrow RecordBatch
+pub fn chunk_to_columns(chunk: &crate::output::types::Chunk) -> arrow::error::Result<RecordBatch> {
     let schema = Arc::new(create_redis_record_schema());
-    let num_records = records.len();
+    let num_records = chunk.records.len();
 
     // Prepare column data
     let mut cluster_data = Vec::with_capacity(num_records);
@@ -37,17 +33,17 @@ pub fn record_to_columns(
     let mut redis_slot_data = Vec::with_capacity(num_records);
 
     // Convert batch timestamp to nanoseconds since Unix epoch
-    let batch_nanos = batch_info.batch.unix_timestamp_nanos() as i64;
+    let batch_nanos = chunk.batch_ts.unix_timestamp_nanos() as i64;
 
-    for record in records {
+    for record in &chunk.records {
         // Cluster (same for all records in this batch)
-        cluster_data.push(batch_info.cluster.clone());
+        cluster_data.push(chunk.cluster.clone());
 
         // Batch timestamp (same for all records in this batch)
         batch_data.push(batch_nanos);
 
         // Instance (same for all records in this batch)
-        instance_data.push(instance.to_string());
+        instance_data.push(chunk.instance.clone());
 
         // Database number - convert u64 to i64 for Arrow compatibility
         db_data.push(record.db as i64);
@@ -136,14 +132,15 @@ mod tests {
     use super::*;
     use crate::{
         parser::model::StringEncoding,
-        record::{RecordEncoding, RecordType},
+        record::{Record, RecordEncoding, RecordType},
     };
 
-    fn create_test_batch_info() -> BatchInfo {
-        BatchInfo {
-            cluster: "test-cluster".to_string(),
-            batch: OffsetDateTime::from_unix_timestamp_nanos(1691999696123456789).unwrap(),
-        }
+    fn test_cluster() -> &'static str {
+        "test-cluster"
+    }
+
+    fn test_batch_ts() -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp_nanos(1691999696123456789).unwrap()
     }
 
     fn create_test_record() -> Record {
@@ -163,12 +160,17 @@ mod tests {
     }
 
     #[test]
-    fn test_records_to_record_batch_basic() {
-        let batch_info = create_test_batch_info();
+    fn test_chunk_to_record_batch_basic() {
         let record = create_test_record();
         let records = vec![record];
+        let chunk = crate::output::types::Chunk {
+            cluster: test_cluster().to_string(),
+            instance: "127.0.0.1:6379".to_string(),
+            batch_ts: test_batch_ts(),
+            records,
+        };
 
-        let result = record_to_columns(&records, &batch_info, "127.0.0.1:6379");
+        let result = chunk_to_columns(&chunk);
         assert!(result.is_ok());
 
         let record_batch = result.unwrap();
@@ -178,11 +180,16 @@ mod tests {
 
     #[test]
     fn test_key_as_binary() {
-        let batch_info = create_test_batch_info();
         let record = create_test_record();
         let records = vec![record];
+        let chunk = crate::output::types::Chunk {
+            cluster: test_cluster().to_string(),
+            instance: "127.0.0.1:6379".to_string(),
+            batch_ts: test_batch_ts(),
+            records,
+        };
 
-        let record_batch = record_to_columns(&records, &batch_info, "127.0.0.1:6379").unwrap();
+        let record_batch = chunk_to_columns(&chunk).unwrap();
 
         // Get key column (index 4)
         let key_array = record_batch
@@ -197,11 +204,16 @@ mod tests {
 
     #[test]
     fn test_batch_timestamp_nanoseconds() {
-        let batch_info = create_test_batch_info();
         let record = create_test_record();
         let records = vec![record];
+        let chunk = crate::output::types::Chunk {
+            cluster: test_cluster().to_string(),
+            instance: "127.0.0.1:6379".to_string(),
+            batch_ts: test_batch_ts(),
+            records,
+        };
 
-        let record_batch = record_to_columns(&records, &batch_info, "127.0.0.1:6379").unwrap();
+        let record_batch = chunk_to_columns(&chunk).unwrap();
 
         // Get batch column (index 1)
         let batch_array = record_batch
@@ -216,11 +228,16 @@ mod tests {
 
     #[test]
     fn test_expire_at_milliseconds() {
-        let batch_info = create_test_batch_info();
         let record = create_test_record();
         let records = vec![record];
+        let chunk = crate::output::types::Chunk {
+            cluster: test_cluster().to_string(),
+            instance: "127.0.0.1:6379".to_string(),
+            batch_ts: test_batch_ts(),
+            records,
+        };
 
-        let record_batch = record_to_columns(&records, &batch_info, "127.0.0.1:6379").unwrap();
+        let record_batch = chunk_to_columns(&chunk).unwrap();
 
         // Get expire_at column (index 9)
         let expire_at_array = record_batch
@@ -235,7 +252,6 @@ mod tests {
 
     #[test]
     fn test_nullable_fields_with_none_values() {
-        let batch_info = create_test_batch_info();
         let record = Record::builder()
             .db(0)
             .key(RDBStr::Str(Bytes::from("test_key")))
@@ -251,8 +267,14 @@ mod tests {
             .redis_slot(None)
             .build();
         let records = vec![record];
+        let chunk = crate::output::types::Chunk {
+            cluster: test_cluster().to_string(),
+            instance: "127.0.0.1:6379".to_string(),
+            batch_ts: test_batch_ts(),
+            records,
+        };
 
-        let record_batch = record_to_columns(&records, &batch_info, "127.0.0.1:6379").unwrap();
+        let record_batch = chunk_to_columns(&chunk).unwrap();
 
         // Test expire_at is null
         let expire_at_array = record_batch
@@ -297,7 +319,6 @@ mod tests {
 
     #[test]
     fn test_integer_key_conversion() {
-        let batch_info = create_test_batch_info();
         let record = Record::builder()
             .db(0)
             .key(RDBStr::Int(42))
@@ -307,8 +328,14 @@ mod tests {
             .member_count(Some(1))
             .build();
         let records = vec![record];
+        let chunk = crate::output::types::Chunk {
+            cluster: test_cluster().to_string(),
+            instance: "127.0.0.1:6379".to_string(),
+            batch_ts: test_batch_ts(),
+            records,
+        };
 
-        let record_batch = record_to_columns(&records, &batch_info, "127.0.0.1:6379").unwrap();
+        let record_batch = chunk_to_columns(&chunk).unwrap();
 
         // Get key column (index 4)
         let key_array = record_batch
@@ -323,15 +350,20 @@ mod tests {
 
     #[test]
     fn test_multiple_records() {
-        let batch_info = create_test_batch_info();
         let record1 = create_test_record();
         let mut record2 = create_test_record();
         record2.db = 1;
         record2.key = RDBStr::Str(Bytes::from("another_key"));
 
         let records = vec![record1, record2];
+        let chunk = crate::output::types::Chunk {
+            cluster: test_cluster().to_string(),
+            instance: "127.0.0.1:6379".to_string(),
+            batch_ts: test_batch_ts(),
+            records,
+        };
 
-        let record_batch = record_to_columns(&records, &batch_info, "127.0.0.1:6379").unwrap();
+        let record_batch = chunk_to_columns(&chunk).unwrap();
         assert_eq!(record_batch.num_rows(), 2);
 
         // Check db values

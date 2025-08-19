@@ -4,10 +4,12 @@ use anyhow::{Context, anyhow, ensure};
 use async_trait::async_trait;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use url::Url;
 
 use crate::{
     helper::AnyResult,
+    output::abstractions::OutputEnum,
     source::{RDBStream, RdbSourceConfig},
 };
 
@@ -284,6 +286,34 @@ pub enum OutputConfig {
     Parquet(ParquetConfig),
 }
 
+impl OutputConfig {
+    pub fn create_output(
+        &self,
+        cluster: String,
+        batch_ts: OffsetDateTime,
+    ) -> AnyResult<OutputEnum> {
+        match self {
+            OutputConfig::Clickhouse(clickhouse_config) => {
+                let output = crate::output::clickhouse::ClickHouseOutput::new(
+                    clickhouse_config.clone(),
+                    cluster,
+                    batch_ts,
+                );
+                Ok(OutputEnum::ClickHouse(output))
+            }
+            OutputConfig::Parquet(parquet_config) => {
+                let output = crate::output::parquet::output::ParquetOutput::new(
+                    parquet_config.dir.clone(),
+                    parquet_config.compression,
+                    cluster,
+                    batch_ts,
+                );
+                Ok(OutputEnum::Parquet(output))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ParquetConfig {
     pub dir: PathBuf,
@@ -415,19 +445,8 @@ impl ClickHouseConfig {
 
         use clickhouse::Client;
         use hyper_util::{client::legacy::Client as LegacyClient, rt::TokioExecutor};
-        use tracing::info;
 
-        use crate::helper::{proxy_connector::ProxyConnector, sanitize_url};
-
-        if let Some(proxy_url) = self.proxy_url.as_ref() {
-            let safe_url = sanitize_url(proxy_url);
-            info!(operation = "create_clickhouse_client", proxy_host = %safe_url, "Creating ClickHouse client with proxy");
-        } else {
-            info!(
-                operation = "create_clickhouse_client",
-                "Creating ClickHouse client without proxy"
-            );
-        }
+        use crate::helper::proxy_connector::ProxyConnector;
 
         let proxy_connector = ProxyConnector::new(self.proxy_url.as_deref())
             .map_err(|e| anyhow::anyhow!("Failed to create proxy connector: {e}"))?;

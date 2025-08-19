@@ -123,5 +123,4 @@ The query-based workflow removes the need for Redis-side commands, and similar t
 
 ### Performance
 
-- [ ] Separate RDB parsing and ClickHouse insertion into independent tasks connected by bounded channels to improve throughput.
 - [ ] Evaluate the performance gains of replacing the default allocator with mimalloc, especially for large files.

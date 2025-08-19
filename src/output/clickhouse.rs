@@ -1,6 +1,6 @@
 use anyhow::Context;
 use bytes::Bytes;
-use clickhouse::{Client, Row, insert::Insert, inserter::Inserter};
+use clickhouse::{Client, Row, insert::Insert};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::info;
@@ -189,15 +189,13 @@ impl crate::output::Output for ClickHouseOutput {
             .config
             .create_client()
             .context("Failed to create ClickHouse client for writer")?;
-        let inserter = client
-            .inserter::<RedisRecordRow>("redis_records_raw")?
-            .with_max_rows(10_000_000u64);
+        let insert: Insert<RedisRecordRow> = client.insert("redis_records_raw")?;
         Ok(ChunkWriterEnum::ClickHouse(Box::new(
             ClickHouseChunkWriter {
                 cluster: self.cluster.clone(),
                 batch_ts: self.batch_ts,
                 instance: instance.to_string(),
-                inserter,
+                insert,
             },
         )))
     }
@@ -235,7 +233,7 @@ pub struct ClickHouseChunkWriter {
     cluster: String,
     batch_ts: OffsetDateTime,
     instance: String,
-    inserter: Inserter<RedisRecordRow>,
+    insert: Insert<RedisRecordRow>,
 }
 
 #[async_trait::async_trait]
@@ -267,23 +265,16 @@ impl crate::output::ChunkWriter for ClickHouseChunkWriter {
             codis_slot: record.codis_slot,
             redis_slot: record.redis_slot,
         };
-        self.inserter
+        self.insert
             .write(&row)
-            .context("Failed to write record")?;
-        
-        // check if we should end the underlying INSERT statement
-        self.inserter
-            .commit()
             .await
-            .context("Failed to check if we should end the underlying INSERT statement")?;
+            .context("Failed to write record")?;
+        // FIXME: end insert statement
         Ok(())
     }
 
-    async fn finalize_instance(self) -> AnyResult<()> {
-        self.inserter
-            .end()
-            .await
-            .context("Failed to end instance")?;
+    async fn finalize_instance(mut self) -> AnyResult<()> {
+        self.insert.end().await.context("Failed to end instance")?;
         Ok(())
     }
 }

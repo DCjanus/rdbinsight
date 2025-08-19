@@ -267,7 +267,15 @@ impl crate::output::ChunkWriter for ClickHouseChunkWriter {
             codis_slot: record.codis_slot,
             redis_slot: record.redis_slot,
         };
-        self.inserter.write(&row)?;
+        self.inserter
+            .write(&row)
+            .context("Failed to write record")?;
+        
+        // check if we should end the underlying INSERT statement
+        self.inserter
+            .commit()
+            .await
+            .context("Failed to check if we should end the underlying INSERT statement")?;
         Ok(())
     }
 

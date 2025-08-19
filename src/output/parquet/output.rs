@@ -214,16 +214,19 @@ impl ParquetChunkWriter {
             return Ok(());
         }
         let records_count = self.buffered_records.len();
-        let chunk = crate::output::types::Chunk {
-            cluster: self.cluster.clone(),
-            batch_ts: self.batch_ts,
-            instance: self.instance.clone(),
-            records: std::mem::take(&mut self.buffered_records),
-        };
-        let instance = &chunk.instance;
-        let record_batch = mapper::chunk_to_columns(&chunk).with_context(|| {
-            anyhow!("Failed to convert {records_count} buffered records to columns for instance: {instance}")
+        let instance = self.instance.clone();
+        let record_batch = mapper::records_to_columns(
+            &self.cluster,
+            self.batch_ts,
+            &self.instance,
+            &self.buffered_records,
+        )
+        .with_context(|| {
+            anyhow!(
+                "Failed to convert {records_count} buffered records to columns for instance: {instance}"
+            )
         })?;
+        self.buffered_records.clear();
         self.write_batch(record_batch).await?;
         Ok(())
     }
@@ -231,22 +234,6 @@ impl ParquetChunkWriter {
 
 #[async_trait::async_trait]
 impl ChunkWriter for ParquetChunkWriter {
-    async fn write_chunk(&mut self, chunk: crate::output::types::Chunk) -> AnyResult<()> {
-        let records_count = chunk.records.len();
-        let instance = &chunk.instance;
-        let record_batch = mapper::chunk_to_columns(&chunk).with_context(|| {
-            anyhow!("Failed to convert {records_count} records to columns for instance: {instance}")
-        })?;
-        self.write_batch(record_batch).await?;
-        info!(
-            operation = "parquet_batch_written",
-            instance = %chunk.instance,
-            records_count = chunk.records.len(),
-            "Batch written to Parquet"
-        );
-        Ok(())
-    }
-
     async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()> {
         self.buffered_records.push(record);
         if self.buffered_records.len() >= MICRO_BATCH_ROWS {
@@ -261,14 +248,6 @@ impl ChunkWriter for ParquetChunkWriter {
         if !this.buffered_records.is_empty() {
             this.flush_buffer().await?;
         }
-
-        info!(
-            operation = "parquet_writer_closing",
-            instance = %this.instance,
-            temp_path = %this.temp_path.display(),
-            final_path = %this.final_path.display(),
-            "Closing Parquet writer"
-        );
 
         if let Some(writer) = this.writer {
             writer.close().await.with_context(|| {
@@ -290,14 +269,6 @@ impl ChunkWriter for ParquetChunkWriter {
                     this.instance
                 )
             })?;
-
-        info!(
-            operation = "parquet_writer_closed",
-            instance = %this.instance,
-            temp_path = %this.temp_path.display(),
-            final_path = %this.final_path.display(),
-            "Parquet writer closed and file finalized"
-        );
         Ok(())
     }
 }

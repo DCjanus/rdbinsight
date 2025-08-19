@@ -4,7 +4,7 @@ use anyhow::Result;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use rdbinsight::{
     config::ParquetCompression,
-    output::{ChunkWriter, Output, parquet::ParquetOutput, types::Chunk},
+    output::{ChunkWriter, Output, parquet::ParquetOutput},
     source::{RdbSourceConfig, SourceType, standalone::Config as StandaloneConfig},
 };
 use tempfile::TempDir;
@@ -71,8 +71,6 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     stream.as_mut().prepare().await?;
 
     let mut total_records = 0usize;
-    let mut record_buffer = Vec::new();
-    const BATCH_SIZE: usize = 100;
 
     use futures_util::StreamExt;
     use rdbinsight::record::RecordStream;
@@ -81,27 +79,7 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     while let Some(record_result) = record_stream.next().await {
         let record = record_result?;
         total_records += 1;
-        record_buffer.push(record);
-
-        if record_buffer.len() >= BATCH_SIZE {
-            let chunk = Chunk {
-                cluster: cluster_name.to_string(),
-                batch_ts,
-                instance: instance.to_string(),
-                records: std::mem::take(&mut record_buffer),
-            };
-            writer.write_chunk(chunk).await?;
-        }
-    }
-
-    if !record_buffer.is_empty() {
-        let chunk = Chunk {
-            cluster: cluster_name.to_string(),
-            batch_ts,
-            instance: instance.to_string(),
-            records: std::mem::take(&mut record_buffer),
-        };
-        writer.write_chunk(chunk).await?;
+        writer.write_record(record).await?;
     }
 
     writer.finalize_instance().await?;
@@ -188,13 +166,7 @@ async fn test_parquet_compression_algorithms() -> Result<()> {
             .build();
 
         // Write a single record
-        let chunk = Chunk {
-            cluster: cluster_name.to_string(),
-            batch_ts,
-            instance: instance.to_string(),
-            records: vec![test_record],
-        };
-        writer.write_chunk(chunk).await?;
+        writer.write_record(test_record).await?;
 
         // Finalize
         writer.finalize_instance().await?;
@@ -248,20 +220,14 @@ async fn test_multiple_instances_parquet() -> Result<()> {
     for (i, instance) in instances.iter().enumerate() {
         let test_record = Record::builder()
             .db(i as u64)
-            .key(RDBStr::Str(Bytes::from(format!("key_{i}"))))
+            .key(RDBStr::Str(Bytes::from(format!("key_{}", i))))
             .r#type(RecordType::String)
             .encoding(RecordEncoding::String(StringEncoding::Raw))
             .rdb_size(100)
             .build();
 
         let mut writer = parquet_output.create_writer(instance).await?;
-        let chunk = Chunk {
-            cluster: cluster_name.to_string(),
-            batch_ts,
-            instance: (*instance).to_string(),
-            records: vec![test_record],
-        };
-        writer.write_chunk(chunk).await?;
+        writer.write_record(test_record).await?;
         writer.finalize_instance().await?;
     }
 

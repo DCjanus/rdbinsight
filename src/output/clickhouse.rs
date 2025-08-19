@@ -238,16 +238,6 @@ impl crate::output::ChunkWriter for ClickHouseChunkWriter {
         Ok(())
     }
 
-    async fn write_chunk(&mut self, chunk: crate::output::types::Chunk) -> AnyResult<()> {
-        if chunk.records.is_empty() {
-            return Ok(());
-        }
-        for record in chunk.records {
-            self.write_record(record).await?;
-        }
-        Ok(())
-    }
-
     async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()> {
         let row = RedisRecordRow {
             cluster: self.cluster.clone(),

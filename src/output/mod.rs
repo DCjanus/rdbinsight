@@ -1,17 +1,16 @@
 pub mod clickhouse;
 pub mod parquet;
-pub mod types;
 
 use async_trait::async_trait;
 
-use crate::{helper::AnyResult, output::types::Chunk};
+use crate::helper::AnyResult;
 
 /// Batch-scoped output for the direct-writer pipeline.
 ///
 /// Lifecycle:
 /// - Per batch: `prepare_batch()` once → `create_writer(instance)` many → `finalize_batch()` once.
 /// - `create_writer()` may be called upfront for many instances; keep it lightweight.
-///   Defer heavy per-instance setup to `ChunkWriter::prepare_instance()` or the first `write_chunk()`.
+///   Defer heavy per-instance setup to `ChunkWriter::prepare_instance()`.
 /// - `prepare_batch()`/`finalize_batch()` should be idempotent and safe under retries.
 #[async_trait]
 pub trait Output: Send + Sync {
@@ -29,16 +28,13 @@ pub trait Output: Send + Sync {
 /// Per-instance writer used by a single async task.
 ///
 /// Lifecycle:
-/// - Per instance: optional `prepare_instance()` → `write_chunk()` many → `finalize_instance()` once.
+/// - Per instance: optional `prepare_instance()` → `write_record()` many → `finalize_instance()` once.
 #[async_trait]
 pub trait ChunkWriter: Send {
     /// Optional per-instance initialization (default: no-op).
     async fn prepare_instance(&mut self) -> AnyResult<()> {
         Ok(())
     }
-
-    /// Write a chunk of records (caller may add retries).
-    async fn write_chunk(&mut self, chunk: Chunk) -> AnyResult<()>;
 
     /// New per-record write API. Implementations should prefer this for streaming.
     async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()>;
@@ -87,13 +83,6 @@ impl ChunkWriter for ChunkWriterEnum {
         match self {
             ChunkWriterEnum::ClickHouse(writer) => writer.prepare_instance().await,
             ChunkWriterEnum::Parquet(writer) => writer.prepare_instance().await,
-        }
-    }
-
-    async fn write_chunk(&mut self, chunk: Chunk) -> AnyResult<()> {
-        match self {
-            ChunkWriterEnum::ClickHouse(writer) => writer.write_chunk(chunk).await,
-            ChunkWriterEnum::Parquet(writer) => writer.write_chunk(chunk).await,
         }
     }
 

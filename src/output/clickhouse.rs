@@ -259,9 +259,7 @@ impl crate::output::abstractions::ChunkWriter for ClickHouseChunkWriter {
         }
         let mut insert: Insert<RedisRecordRow> = self
             .client
-            .insert("redis_records_raw")?
-            .with_option("async_insert", "1")
-            .with_option("wait_for_async_insert", "1");
+            .insert("redis_records_raw")?;
         for record in &chunk.records {
             let row = ClickHouseOutput::record_to_row_from_chunk(record, &chunk);
             insert.write(&row).await?;

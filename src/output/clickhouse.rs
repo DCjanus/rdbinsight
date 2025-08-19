@@ -259,7 +259,8 @@ impl crate::output::ChunkWriter for ClickHouseChunkWriter {
             rdb_size: record.rdb_size,
             encoding: record.encoding_name(),
             expire_at: record.expire_at_ms.map(|ms| {
-                OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000).unwrap()
+                OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000)
+                    .expect("Failed to convert milliseconds to nanoseconds")
             }),
             idle_seconds: record.idle_seconds,
             freq: record.freq,

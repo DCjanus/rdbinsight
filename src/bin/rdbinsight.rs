@@ -512,28 +512,6 @@ async fn write_chunk_with_retry(
     }
 }
 
-async fn finalize_instance_with_retry(
-    writer: &mut ChunkWriterEnum,
-    instance: &str,
-    mut retries: backoff::ExponentialBackoff,
-) -> Result<()> {
-    loop {
-        match writer.finalize_instance().await {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                warn!(operation = "finalize_instance_retry", instance = %instance, error = %e, error_chain = %format!("{e:#}"), "Finalize instance failed, will retry");
-                if let Some(wait) = retries.next_backoff() {
-                    tokio::time::sleep(wait).await;
-                } else {
-                    return Err(e).with_context(|| {
-                        format!("Failed to finalize instance {instance} after retries")
-                    });
-                }
-            }
-        }
-    }
-}
-
 struct ProgressState {
     processed_records: u64,
     completed_instances: usize,
@@ -657,9 +635,10 @@ async fn handle_stream_with_prepared_writer(
         update_progress_after_write(&progress, records_in_chunk, &instance).await;
     }
 
-    finalize_instance_with_retry(&mut writer, &instance, create_backoff())
+    writer
+        .finalize_instance()
         .await
-        .context("Failed to finalize instance")?;
+        .with_context(|| anyhow!("Failed to finalize writer for instance {instance}"))?;
 
     mark_instance_completed(&progress, &instance).await;
 

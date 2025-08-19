@@ -28,19 +28,19 @@
 目标：`ClickHouseChunkWriter` 使用长生命周期 `Inserter`（`with_max_rows(10_000_000)`），实现 `write_record`；`finalize_instance` 调用 `end()`；不做重试。
 
 ### 实现步骤
-- [ ] 在 `Cargo.toml` 启用 `clickhouse` crate 的 `inserter` feature。
-- [ ] 在 `src/output/clickhouse.rs` 中：
-  - [ ] 为 `ClickHouseChunkWriter` 增加 `Inserter<RedisRecordRow>` 成员（必要时使用 `Option` 管理生命周期）。
-  - [ ] 在 `prepare_instance()` 中通过 `client.inserter("redis_records_raw").with_max_rows(10_000_000)` 创建 `Inserter`。
-  - [ ] 实现 `write_record(record, ctx)`：将 `Record` 映射为 `RedisRecordRow` 并 `inserter.write(&row).await`。
-  - [ ] 在 `finalize_instance()` 调用 `inserter.end().await` 并清理资源。
-  - [ ] 保留现有 `write_chunk`（如果 trait 仍要求），利用默认实现桥接到 `write_record` 或标注弃用。
-- [ ] 运行 `cargo check` 和必要的最小修复。
+- [x] 在 `Cargo.toml` 启用 `clickhouse` crate 的 `inserter` feature。
+- [x] 在 `src/output/clickhouse.rs` 中：
+  - [x] 为 `ClickHouseChunkWriter` 增加 `Inserter<RedisRecordRow>` 成员（必要时使用 `Option` 管理生命周期）。
+  - [x] 在 `prepare_instance()` 中通过 `client.inserter("redis_records_raw").with_max_rows(10_000_000)` 创建 `Inserter`。
+  - [x] 实现 `write_record(record, ctx)`：将 `Record` 映射为 `RedisRecordRow` 并 `inserter.write(&row).await`。
+  - [x] 在 `finalize_instance()` 调用 `inserter.end().await` 并清理资源。
+  - [x] 保留现有 `write_chunk`（如果 trait 仍要求），利用默认实现桥接到 `write_record` 或标注弃用。
+- [x] 运行 `cargo check` 和必要的最小修复。
 
 ### 验证步骤
-- [ ] 人类：检查 `Client::inserter` + `with_max_rows(10_000_000)` 的使用是否正确；参考文档确认 API 行为一致（`Inserter` 自动分片到 socket，`end()` 统一完成）
+- [x] 人类：检查 `Client::inserter` + `with_max_rows(10_000_000)` 的使用是否正确；参考文档确认 API 行为一致（`Inserter` 自动分片到 socket，`end()` 统一完成）
   - 参考：`[Client::inserter](https://docs.rs/clickhouse/latest/clickhouse/struct.Client.html#method.inserter)`、`[Inserter](https://docs.rs/clickhouse/latest/clickhouse/inserter/struct.Inserter.html)`。
-- [ ] 人类：本阶段先不改调用方，运行 `cargo test -q` 确认编译与现有测试通过。
+- [x] 人类：本阶段先不改调用方，运行 `cargo test -q` 确认编译与现有测试通过。
 
 ---
 

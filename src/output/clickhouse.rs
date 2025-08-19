@@ -1,11 +1,11 @@
 use anyhow::Context;
 use bytes::Bytes;
-use clickhouse::{Client, Row, insert::Insert};
+use clickhouse::{Client, Row, insert::Insert, inserter::Inserter};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::info;
 
-use crate::{config::ClickHouseConfig, helper::AnyResult, output::ChunkWriterEnum, record::Record};
+use crate::{config::ClickHouseConfig, helper::AnyResult, output::ChunkWriterEnum};
 
 #[derive(Debug, Clone, Row, Serialize, Deserialize)]
 pub struct RedisRecordRow {
@@ -166,35 +166,6 @@ impl ClickHouseOutput {
         );
         Ok(())
     }
-
-    fn record_to_row_from_chunk(
-        record: &Record,
-        chunk: &crate::output::types::Chunk,
-    ) -> RedisRecordRow {
-        let key_bytes = match &record.key {
-            crate::parser::core::raw::RDBStr::Str(bytes) => bytes.clone(),
-            crate::parser::core::raw::RDBStr::Int(i) => Bytes::from(i.to_string()),
-        };
-
-        RedisRecordRow {
-            cluster: chunk.cluster.clone(),
-            batch: chunk.batch_ts,
-            instance: chunk.instance.clone(),
-            db: record.db,
-            key: key_bytes,
-            r#type: record.type_name().to_string(),
-            member_count: record.member_count.unwrap_or(0),
-            rdb_size: record.rdb_size,
-            encoding: record.encoding_name(),
-            expire_at: record.expire_at_ms.map(|ms| {
-                OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000).unwrap()
-            }),
-            idle_seconds: record.idle_seconds,
-            freq: record.freq,
-            codis_slot: record.codis_slot,
-            redis_slot: record.redis_slot,
-        }
-    }
 }
 
 #[async_trait::async_trait]
@@ -218,12 +189,15 @@ impl crate::output::Output for ClickHouseOutput {
             .config
             .create_client()
             .context("Failed to create ClickHouse client for writer")?;
+        let inserter = client
+            .inserter::<RedisRecordRow>("redis_records_raw")?
+            .with_max_rows(10_000_000u64);
         Ok(ChunkWriterEnum::ClickHouse(Box::new(
             ClickHouseChunkWriter {
-                client,
                 cluster: self.cluster.clone(),
                 batch_ts: self.batch_ts,
                 instance: instance.to_string(),
+                inserter,
             },
         )))
     }
@@ -252,38 +226,61 @@ impl crate::output::Output for ClickHouseOutput {
 }
 
 pub struct ClickHouseChunkWriter {
-    client: Client,
     cluster: String,
     batch_ts: OffsetDateTime,
     instance: String,
+    inserter: Inserter<RedisRecordRow>,
 }
 
 #[async_trait::async_trait]
 impl crate::output::ChunkWriter for ClickHouseChunkWriter {
+    async fn prepare_instance(&mut self) -> AnyResult<()> {
+        Ok(())
+    }
+
     async fn write_chunk(&mut self, chunk: crate::output::types::Chunk) -> AnyResult<()> {
         if chunk.records.is_empty() {
             return Ok(());
         }
-        let mut insert: Insert<RedisRecordRow> = self.client.insert("redis_records_raw")?;
-        for record in &chunk.records {
-            let row = ClickHouseOutput::record_to_row_from_chunk(record, &chunk);
-            insert.write(&row).await?;
+        for record in chunk.records {
+            self.write_record(record).await?;
         }
-        insert.end().await?;
         Ok(())
     }
 
     async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()> {
-        let chunk = crate::output::types::Chunk {
+        let row = RedisRecordRow {
             cluster: self.cluster.clone(),
-            batch_ts: self.batch_ts,
+            batch: self.batch_ts,
             instance: self.instance.clone(),
-            records: vec![record],
+            db: record.db,
+            key: match &record.key {
+                crate::parser::core::raw::RDBStr::Str(bytes) => bytes.clone(),
+                crate::parser::core::raw::RDBStr::Int(i) => Bytes::from(i.to_string()),
+            },
+            r#type: record.type_name().to_string(),
+            member_count: record.member_count.unwrap_or(0),
+            rdb_size: record.rdb_size,
+            encoding: record.encoding_name(),
+            expire_at: record.expire_at_ms.map(|ms| {
+                OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000).unwrap()
+            }),
+            idle_seconds: record.idle_seconds,
+            freq: record.freq,
+            codis_slot: record.codis_slot,
+            redis_slot: record.redis_slot,
         };
-        self.write_chunk(chunk).await
+        self.inserter.write(&row)?;
+        Ok(())
     }
 
-    async fn finalize_instance(&mut self) -> AnyResult<()> {
+    async fn finalize_instance(self) -> AnyResult<()> {
+        info!(
+            operation = "clickhouse_inserter_end",
+            instance = %self.instance,
+            "Finalizing ClickHouse inserter for redis_records_raw"
+        );
+        self.inserter.end().await?;
         Ok(())
     }
 }

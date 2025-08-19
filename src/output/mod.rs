@@ -43,8 +43,8 @@ pub trait ChunkWriter: Send {
     /// New per-record write API. Implementations should prefer this for streaming.
     async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()>;
 
-    /// Finalize this instance writer (no-op for some backends).
-    async fn finalize_instance(&mut self) -> AnyResult<()>;
+    /// Finalize this instance writer (consumes the writer).
+    async fn finalize_instance(self) -> AnyResult<()>;
 }
 
 pub enum OutputEnum {
@@ -104,7 +104,7 @@ impl ChunkWriter for ChunkWriterEnum {
         }
     }
 
-    async fn finalize_instance(&mut self) -> AnyResult<()> {
+    async fn finalize_instance(self) -> AnyResult<()> {
         match self {
             ChunkWriterEnum::ClickHouse(writer) => writer.finalize_instance().await,
             ChunkWriterEnum::Parquet(writer) => writer.finalize_instance().await,

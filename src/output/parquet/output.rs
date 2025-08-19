@@ -234,7 +234,7 @@ impl ChunkWriter for ParquetChunkWriter {
         self.write_chunk(chunk).await
     }
 
-    async fn finalize_instance(&mut self) -> AnyResult<()> {
+    async fn finalize_instance(self) -> AnyResult<()> {
         info!(
             operation = "parquet_writer_closing",
             instance = %self.instance,
@@ -243,7 +243,7 @@ impl ChunkWriter for ParquetChunkWriter {
             "Closing Parquet writer"
         );
 
-        if let Some(writer) = self.writer.take() {
+        if let Some(writer) = self.writer {
             writer.close().await.with_context(|| {
                 format!(
                     "Failed to close parquet writer for file {temp_path} for instance: {instance}",

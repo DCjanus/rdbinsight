@@ -67,18 +67,18 @@
 目标：修改 `handle_stream_with_prepared_writer` 去除大缓冲，逐条调用 `write_record`；按实例每 1,000,000 行节流更新进度；取消 writer 层重试调用链。
 
 ### 实现步骤
-- [ ] 在 `src/bin/rdbinsight.rs`：
-  - [ ] 移除以 `batch_size` 为阈值的 `Vec<Record>` 缓冲逻辑，改为每条从 `RecordStream` 读取后立即调用 `writer.write_record(record, ctx)`；
-  - [ ] 引入 `REPORT_INTERVAL = 1_000_000` 常量；维护本实例的 `processed_since_report` 计数；达到阈值时调用一次 `update_progress_after_write`，并清零计数；
-  - [ ] 末尾补记剩余进度（不足阈值的部分）；
-  - [ ] 删除 `write_chunk_with_retry`、`finalize_instance_with_retry` 的调用，改为直接调用 `writer.write_record` 与 `writer.finalize_instance`；
-  - [ ] 清理未使用的 `batch_size` 参数与相关日志描述（如仍保留 CLI 参数，暂时忽略但不使用，或在后续阶段处理）。
-- [ ] 运行 `cargo check` 并修复编译问题。
+- [x] 在 `src/bin/rdbinsight.rs`：
+  - [x] 移除以 `batch_size` 为阈值的 `Vec<Record>` 缓冲逻辑，改为每条从 `RecordStream` 读取后立即调用 `writer.write_record(record, ctx)`；
+  - [x] 引入 `REPORT_INTERVAL = 1_000_000` 常量；维护本实例的 `processed_since_report` 计数；达到阈值时调用一次 `update_progress_after_write`，并清零计数；
+  - [x] 末尾补记剩余进度（不足阈值的部分）；
+  - [x] 删除 `write_chunk_with_retry`、`finalize_instance_with_retry` 的调用，改为直接调用 `writer.write_record` 与 `writer.finalize_instance`；
+  - [x] 清理未使用的 `batch_size` 参数与相关日志描述（如仍保留 CLI 参数，暂时忽略但不使用，或在后续阶段处理）。
+- [x] 运行 `cargo check` 并修复编译问题。
 
 ### 验证步骤
-- [ ] 人类：运行一次小规模任务，观察进度打印是否按约每 1,000,000 行更新；
-- [ ] 人类：确认内存峰值显著降低（无大 `Vec<Record>` 堆积），ClickHouse SDK 未出现双份峰值；
-- [ ] 人类：确认失败时错误直接冒泡，任务终止，无重试逻辑。
+- [x] 人类：运行一次小规模任务，观察进度打印是否按约每 1,000,000 行更新；
+- [x] 人类：确认内存峰值显著降低（无大 `Vec<Record>` 堆积），ClickHouse SDK 未出现双份峰值；
+- [x] 人类：确认失败时错误直接冒泡，任务终止，无重试逻辑。
 
 ---
 

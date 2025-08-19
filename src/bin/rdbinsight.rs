@@ -1,19 +1,18 @@
 use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc, time::Instant};
 
 use anyhow::{Context, Result, anyhow};
-use backoff::backoff::Backoff;
 use clap::{CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
     config::{DumpConfig, ParquetCompression},
     output::{ChunkWriter, ChunkWriterEnum, Output},
-    record::{Record, RecordStream},
+    record::RecordStream,
     source::{RDBStream, RdbSourceConfig},
 };
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
@@ -462,14 +461,6 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     Ok(())
 }
 
-fn create_backoff() -> backoff::ExponentialBackoff {
-    backoff::ExponentialBackoffBuilder::new()
-        .with_initial_interval(std::time::Duration::from_secs(1))
-        .with_max_interval(std::time::Duration::from_secs(10))
-        .with_max_elapsed_time(Some(std::time::Duration::from_secs(60)))
-        .build()
-}
-
 fn log_progress_chunk(
     start_time: Instant,
     processed_records: u64,
@@ -490,26 +481,6 @@ fn log_progress_chunk(
         rps = rps,
         "Progress update"
     );
-}
-
-async fn write_chunk_with_retry(
-    writer: &mut ChunkWriterEnum,
-    chunk: rdbinsight::output::types::Chunk,
-    mut retries: backoff::ExponentialBackoff,
-) -> Result<()> {
-    loop {
-        match writer.write_chunk(chunk.clone()).await {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                warn!(operation = "write_chunk_retry", instance = %chunk.instance, error = %e, error_chain = %format!("{e:#}"), "Write chunk failed, will retry");
-                if let Some(wait) = retries.next_backoff() {
-                    tokio::time::sleep(wait).await;
-                } else {
-                    return Err(e).with_context(|| "Failed to write chunk after retries");
-                }
-            }
-        }
-    }
 }
 
 struct ProgressState {
@@ -578,9 +549,9 @@ async fn handle_stream_with_prepared_writer(
     mut stream: Pin<Box<dyn RDBStream>>,
     instance: String,
     mut writer: ChunkWriterEnum,
-    cluster: String,
-    batch_ts: OffsetDateTime,
-    batch_size: usize,
+    _cluster: String,
+    _batch_ts: OffsetDateTime,
+    _batch_size: usize,
     progress: SharedProgress,
 ) -> Result<()> {
     let source_type = stream.source_type();
@@ -595,44 +566,29 @@ async fn handle_stream_with_prepared_writer(
         .await
         .with_context(|| anyhow!("Failed to prepare writer for instance {instance}"))?;
 
+    const REPORT_INTERVAL: u64 = 1_000_000;
+
     let mut record_stream = RecordStream::new(stream, source_type);
-    let mut buffer: Vec<Record> = Vec::with_capacity(batch_size);
+    let mut processed_since_report: u64 = 0;
 
     while let Some(next) = record_stream.next().await {
         let record =
             next.with_context(|| anyhow!("Failed to parse record from instance {instance}"))?;
-        buffer.push(record);
-        if buffer.len() >= batch_size {
-            let chunk = rdbinsight::output::types::Chunk {
-                cluster: cluster.clone(),
-                batch_ts,
-                instance: instance.clone(),
-                records: std::mem::replace(&mut buffer, Vec::with_capacity(batch_size)),
-            };
 
-            let records_in_chunk = chunk.records.len() as u64;
-            write_chunk_with_retry(&mut writer, chunk, create_backoff())
-                .await
-                .context("Failed to write chunk")?;
+        writer
+            .write_record(record)
+            .await
+            .context("Failed to write record")?;
 
-            update_progress_after_write(&progress, records_in_chunk, &instance).await;
+        processed_since_report = processed_since_report.saturating_add(1);
+        if processed_since_report >= REPORT_INTERVAL {
+            update_progress_after_write(&progress, processed_since_report, &instance).await;
+            processed_since_report = 0;
         }
     }
 
-    if !buffer.is_empty() {
-        let chunk = rdbinsight::output::types::Chunk {
-            cluster: cluster.clone(),
-            batch_ts,
-            instance: instance.clone(),
-            records: buffer,
-        };
-
-        let records_in_chunk = chunk.records.len() as u64;
-        write_chunk_with_retry(&mut writer, chunk, create_backoff())
-            .await
-            .context("Failed to write final chunk")?;
-
-        update_progress_after_write(&progress, records_in_chunk, &instance).await;
+    if processed_since_report > 0 {
+        update_progress_after_write(&progress, processed_since_report, &instance).await;
     }
 
     writer

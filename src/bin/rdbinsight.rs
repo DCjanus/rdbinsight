@@ -493,7 +493,7 @@ fn log_progress_chunk(
 }
 
 async fn write_chunk_with_retry(
-    writer: &mut dyn ChunkWriter,
+    writer: &mut ChunkWriterEnum,
     chunk: rdbinsight::output::types::Chunk,
     mut retries: backoff::ExponentialBackoff,
 ) -> Result<()> {
@@ -513,7 +513,7 @@ async fn write_chunk_with_retry(
 }
 
 async fn finalize_instance_with_retry(
-    writer: &mut dyn ChunkWriter,
+    writer: &mut ChunkWriterEnum,
     instance: &str,
     mut retries: backoff::ExponentialBackoff,
 ) -> Result<()> {

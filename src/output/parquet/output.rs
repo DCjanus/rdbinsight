@@ -96,13 +96,6 @@ impl Output for ParquetOutput {
         let temp_batch_dir = self.temp_batch_dir();
         let final_batch_dir = self.final_batch_dir();
 
-        info!(
-            operation = "parquet_batch_dir_renaming",
-            temp_batch_dir = %temp_batch_dir.display(),
-            final_batch_dir = %final_batch_dir.display(),
-            "Renaming temporary batch directory to final"
-        );
-
         tokio::fs::rename(&temp_batch_dir, &final_batch_dir)
 			.await
 			.with_context(|| {
@@ -112,18 +105,11 @@ impl Output for ParquetOutput {
 					final_batch_dir.display()
 				)
 			})?;
-
-        info!(
-            operation = "parquet_batch_finalized",
-            temp_batch_dir = %temp_batch_dir.display(),
-            final_batch_dir = %final_batch_dir.display(),
-            "Batch finalized and directory renamed"
-        );
         Ok(())
     }
 }
 
-const MICRO_BATCH_ROWS: usize = 10_000;
+const MICRO_BATCH_ROWS: usize = 8192;
 
 pub struct ParquetChunkWriter {
     writer: Option<AsyncArrowWriter<File>>,
@@ -170,15 +156,6 @@ impl ParquetChunkWriter {
         let writer = AsyncArrowWriter::try_new(file, schema, Some(props))
             .map_err(|e| anyhow!("Failed to create async arrow writer: {e}"))?;
 
-        info!(
-            operation = "parquet_writer_open",
-            instance = %instance,
-            temp_path = %temp_path.display(),
-            final_path = %final_path.display(),
-            compression = ?compression,
-            "Opened Parquet writer"
-        );
-
         Ok(Self {
             writer: Some(writer),
             instance,
@@ -191,22 +168,19 @@ impl ParquetChunkWriter {
     }
 
     async fn write_batch(&mut self, batch: RecordBatch) -> AnyResult<()> {
-        match self.writer.as_mut() {
-            Some(writer) => {
-                writer.write(&batch).await.with_context(|| {
-					anyhow!(
-						"Failed to write batch to parquet file {temp_path} for instance: {instance}",
-						temp_path = self.temp_path.display(),
-						instance = self.instance
-					)
-				})?;
-                Ok(())
-            }
-            None => Err(anyhow!(
-                "Attempted to write after writer was closed for instance: {}",
-                self.instance
-            )),
-        }
+        self.writer
+            .as_mut()
+            .expect("unexpected error: writer not initialized")
+            .write(&batch)
+            .await
+            .with_context(|| {
+                anyhow!(
+                    "Failed to write batch to parquet file {temp_path} for instance: {instance}",
+                    temp_path = self.temp_path.display(),
+                    instance = self.instance
+                )
+            })?;
+        Ok(())
     }
 
     async fn flush_buffer(&mut self) -> AnyResult<()> {

@@ -10,11 +10,11 @@
 ## 阶段一：引入新抽象（Output/ChunkWriter）与准备接口
 
 ### 实现步骤
-- [ ] 在 `output/` 新增模块（建议：`output/abstractions.rs`），定义 trait：
+- [x] 在 `output/` 新增模块（建议：`output/abstractions.rs`），定义 trait：
   - `trait Output { async fn prepare_batch(&self) -> AnyResult<()>; async fn create_writer(&self, instance: &str) -> AnyResult<Box<dyn ChunkWriter + Send>>; async fn finalize_batch(self: Box<Self>) -> AnyResult<()>; }`
   - `trait ChunkWriter { async fn write_chunk(&mut self, chunk: Chunk) -> AnyResult<()>; async fn finalize_instance(&mut self) -> AnyResult<()>; }`
-- [ ] 暂不接入现有调用链，确保新增模块可编译（添加必要的 `use`）。
-- [ ] 保持现有 `output::sink::Output` 枚举与旧调用路径不变，确保编译通过。
+- [x] 暂不接入现有调用链，确保新增模块可编译（添加必要的 `use`）。
+- [x] 保持现有 `output::sink::Output` 枚举与旧调用路径不变，确保编译通过。
 
 ### 验证步骤
 - [ ] 运行 `just test`，确认无编译错误、现有测试均通过。

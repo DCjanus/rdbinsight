@@ -63,13 +63,13 @@
 ## 阶段四：配置层对接（返回 trait object）
 
 ### 实现步骤
-- [ ] 在 `config.rs` 中为 `OutputConfig` 新增方法 `create_output_v2(cluster, batch_ts) -> AnyResult<Box<dyn Output + Send + Sync>>`：
-  - [ ] ClickHouse 分支：返回 `ClickHouseOutputV2`。
-  - [ ] Parquet 分支：返回 `ParquetOutputV2`。
-- [ ] 暂不替换旧的 `create_output`，避免影响现有流程。
+- [x] 在 `config.rs` 中为 `OutputConfig` 新增方法 `create_output_v2(cluster, batch_ts) -> AnyResult<Box<dyn Output + Send + Sync>>`：
+  - [x] ClickHouse 分支：返回 `ClickHouseOutputV2`。
+  - [x] Parquet 分支：返回 `ParquetOutputV2`。
+- [x] 暂不替换旧的 `create_output`，避免影响现有流程。
 
 ### 验证步骤
-- [ ] 运行 `cargo check` 确保可编译；`just test` 确认测试不受影响。
+- [x] 运行 `cargo check` 确保可编译；`just test` 确认测试不受影响。
 
 ---
 

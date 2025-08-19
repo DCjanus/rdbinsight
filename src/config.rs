@@ -313,6 +313,32 @@ impl OutputConfig {
             }
         }
     }
+
+    pub fn create_output_v2(
+        &self,
+        cluster: String,
+        batch_ts: OffsetDateTime,
+    ) -> AnyResult<Box<dyn crate::output::abstractions::Output + Send + Sync>> {
+        match self {
+            OutputConfig::Clickhouse(clickhouse_config) => {
+                let output = crate::output::clickhouse::ClickHouseOutputV2::new(
+                    clickhouse_config.clone(),
+                    cluster,
+                    batch_ts,
+                );
+                Ok(Box::new(output))
+            }
+            OutputConfig::Parquet(parquet_config) => {
+                let output = crate::output::parquet::v2::ParquetOutputV2::new(
+                    parquet_config.dir.clone(),
+                    parquet_config.compression,
+                    cluster,
+                    batch_ts,
+                );
+                Ok(Box::new(output))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

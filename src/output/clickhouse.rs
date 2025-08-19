@@ -49,28 +49,6 @@ impl ClickHouseOutput {
         }
     }
 
-    pub async fn new(
-        config: ClickHouseConfig,
-        cluster: String,
-        batch_ts: OffsetDateTime,
-    ) -> AnyResult<Self> {
-        use tracing::debug;
-        debug!(
-            operation = "clickhouse_client_init",
-            address = %config.address,
-            cluster = %cluster,
-            "Initializing ClickHouse client with batch info"
-        );
-        let output = Self::new_sync(config, cluster, batch_ts);
-        let client = output
-            .config
-            .create_client()
-            .context("Failed to create ClickHouse client")?;
-        output.ensure_tables(&client).await?;
-        debug!("ClickHouse initialization completed successfully");
-        Ok(output)
-    }
-
     async fn ensure_tables(&self, client: &Client) -> AnyResult<()> {
         use tracing::debug;
 
@@ -216,40 +194,6 @@ impl ClickHouseOutput {
             codis_slot: record.codis_slot,
             redis_slot: record.redis_slot,
         }
-    }
-
-    // Compatibility helpers for tests that previously used old struct API
-    pub async fn write(&self, records: &[Record], instance: &str) -> AnyResult<()> {
-        if records.is_empty() {
-            return Ok(());
-        }
-        let mut insert: Insert<RedisRecordRow> =
-            self.config.create_client()?.insert("redis_records_raw")?;
-        for record in records {
-            let chunk = crate::output::types::Chunk {
-                cluster: self.cluster.clone(),
-                batch_ts: self.batch_ts,
-                instance: instance.to_string(),
-                records: vec![record.clone()],
-            };
-            let row = Self::record_to_row_from_chunk(record, &chunk);
-            insert.write(&row).await?;
-        }
-        insert.end().await?;
-        Ok(())
-    }
-
-    pub async fn finalize_batch(self) -> AnyResult<()> {
-        let completion_row = BatchCompletedRow {
-            cluster: self.cluster,
-            batch: self.batch_ts,
-        };
-
-        let client = self.config.create_client()?;
-        let mut insert: Insert<BatchCompletedRow> = client.insert("import_batches_completed")?;
-        insert.write(&completion_row).await?;
-        insert.end().await?;
-        Ok(())
     }
 }
 

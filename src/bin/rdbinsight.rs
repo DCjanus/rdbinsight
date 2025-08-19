@@ -457,7 +457,7 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     Ok(())
 }
 
-fn log_progress_chunk(
+fn log_progress(
     start_time: Instant,
     processed_records: u64,
     completed_instances: usize,
@@ -515,7 +515,7 @@ async fn update_progress_after_write(
     *entry = entry.saturating_add(added_records);
 
     let instance_processed_records = *state.per_instance_records.get(instance).unwrap_or(&0);
-    log_progress_chunk(
+    log_progress(
         state.start_time,
         state.processed_records,
         state.completed_instances,
@@ -530,7 +530,7 @@ async fn mark_instance_completed(progress: &SharedProgress, instance: &str) {
     let mut state = progress.lock().await;
     state.completed_instances = state.completed_instances.saturating_add(1);
     let instance_processed_records = *state.per_instance_records.get(instance).unwrap_or(&0);
-    log_progress_chunk(
+    log_progress(
         state.start_time,
         state.processed_records,
         state.completed_instances,

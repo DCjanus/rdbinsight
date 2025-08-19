@@ -1,4 +1,4 @@
-jjpub mod abstractions {
+pub mod abstractions {
     use async_trait::async_trait;
 
     use crate::{helper::AnyResult, output::types::Chunk};

@@ -76,23 +76,23 @@
 ## 阶段五：新增并发写入流程（不替换旧流程）
 
 ### 实现步骤
-- [ ] 在 `src/bin/rdbinsight.rs` 中新增独立函数（建议：`process_streams_with_direct_writers`）：
-  - [ ] 基于 `OutputConfig::create_output_v2` 获得 `output`。
-  - [ ] 调用 `output.prepare_batch()`。
-  - [ ] 为每个 `RDBStream` 启动解析协程：
-    - [ ] 协程内 `output.create_writer(instance)` 获取 `ChunkWriter`。
-    - [ ] 按现有逻辑解析、分批组装 `Chunk` 并直接 `write_chunk_with_retry`。
-    - [ ] 完成后 `finalize_instance_with_retry`。
-  - [ ] 全部完成后，调用 `output.finalize_batch()`。
-- [ ] 引入进度统计（互斥锁保护）：
-  - [ ] 定义 `ProgressState { processed_records: u64, completed_instances: usize, start_time: Instant }`，用 `Arc<tokio::sync::Mutex<_>>` 共享。
-  - [ ] 在 `write_chunk()` 成功后、`finalize_instance()` 成功后进入锁临界区更新计数并输出日志（临界区快照策略，尽量缩小范围；日志遵循规范）。
-  - [ ] 可选节流：在临界区内按时间阈值（≥200ms）控制输出频率。
-- [ ] 复用现有 `write_chunk_with_retry`、`finalize_instance_with_retry`（如需，抽象为通用工具）。
+- [x] 在 `src/bin/rdbinsight.rs` 中新增独立函数（建议：`process_streams_with_direct_writers`）：
+  - [x] 基于 `OutputConfig::create_output_v2` 获得 `output`。
+  - [x] 调用 `output.prepare_batch()`。
+  - [x] 为每个 `RDBStream` 启动解析协程：
+    - [x] 协程内 `output.create_writer(instance)` 获取 `ChunkWriter`。
+    - [x] 按现有逻辑解析、分批组装 `Chunk` 并直接 `write_chunk_with_retry`。
+    - [x] 完成后 `finalize_instance_with_retry`。
+  - [x] 全部完成后，调用 `output.finalize_batch()`。
+- [x] 引入进度统计（互斥锁保护）：
+  - [x] 定义 `ProgressState { processed_records: u64, completed_instances: usize, start_time: Instant }`，用 `Arc<tokio::sync::Mutex<_>>` 共享。
+  - [x] 在 `write_chunk()` 成功后、`finalize_instance()` 成功后进入锁临界区更新计数并输出日志（临界区快照策略，尽量缩小范围；日志遵循规范）。
+  - [x] 可选节流：在临界区内按时间阈值（≥200ms）控制输出频率。
+- [x] 复用现有 `write_chunk_with_retry`、`finalize_instance_with_retry`（如需，抽象为通用工具）。
 
 ### 验证步骤
-- [ ] 使用小规模输入（本地 RDB 或 fixtures）进行试跑，观察日志是否单调、无交错困惑。
-- [ ] 运行 `just test`，确保新增函数未破坏既有测试。
+- [x] 使用小规模输入（本地 RDB 或 fixtures）进行试跑，观察日志是否单调、无交错困惑。
+- [x] 运行 `just test`，确保新增函数未破坏既有测试。
 
 ---
 

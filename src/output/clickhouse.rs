@@ -191,8 +191,7 @@ impl crate::output::Output for ClickHouseOutput {
             .config
             .create_client()
             .context("Failed to create ClickHouse client for writer")?;
-        let insert: Insert<RedisRecordRow> = create_redis_record_insert(&client)
-            .context("Failed to create RedisRecordRow insert")?;
+        let insert: Insert<RedisRecordRow> = create_redis_record_insert(&client);
         Ok(ChunkWriterEnum::ClickHouse(Box::new(
             ClickHouseChunkWriter {
                 client,
@@ -234,10 +233,11 @@ impl crate::output::Output for ClickHouseOutput {
     }
 }
 
-fn create_redis_record_insert(client: &Client) -> AnyResult<Insert<RedisRecordRow>> {
-    Ok(client
-        .insert("redis_records_raw")?
-        .with_timeouts(Some(Duration::from_secs(10)), None))
+fn create_redis_record_insert(client: &Client) -> Insert<RedisRecordRow> {
+    client
+        .insert("redis_records_raw")
+        .expect("unexpected error: failed to create RedisRecordRow insert")
+        .with_timeouts(Some(Duration::from_secs(10)), None)
 }
 
 pub struct ClickHouseChunkWriter {
@@ -284,8 +284,7 @@ impl crate::output::ChunkWriter for ClickHouseChunkWriter {
             .context("Failed to write record")?;
         self.pending_rows += 1;
         if self.pending_rows >= 1000 * 1000 {
-            let insert = create_redis_record_insert(&self.client)
-                .context("Failed to create RedisRecordRow insert")?;
+            let insert = create_redis_record_insert(&self.client);
             let insert = std::mem::replace(&mut self.insert, insert);
             insert.end().await.context("Failed to end instance")?;
             self.pending_rows = 0;

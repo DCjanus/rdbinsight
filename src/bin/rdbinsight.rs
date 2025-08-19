@@ -1,4 +1,4 @@
-use std::{path::PathBuf, pin::Pin, sync::Arc, time::Instant};
+use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc, time::Instant};
 
 use anyhow::{Context, Result, anyhow};
 use backoff::backoff::Backoff;
@@ -470,19 +470,22 @@ fn create_backoff() -> backoff::ExponentialBackoff {
         .build()
 }
 
-fn log_progress(
+fn log_progress_chunk(
     start_time: Instant,
     processed_records: u64,
     completed_instances: usize,
     total_instances: usize,
+    instance: &str,
+    instance_processed_records: u64,
 ) {
     let elapsed = start_time.elapsed().as_secs_f64().max(0.000_001);
     let rps = processed_records as f64 / elapsed;
     info!(
         operation = "progress_update",
+        instance = %instance,
         processed_records = processed_records,
+        instance_processed_records = instance_processed_records,
         completed_instances = completed_instances,
-        elapsed_seconds = elapsed,
         total_instances = total_instances,
         rps = rps,
         "Progress update"
@@ -531,14 +534,13 @@ async fn finalize_instance_with_retry(
     }
 }
 
-const PROGRESS_LOG_THROTTLE: std::time::Duration = std::time::Duration::from_millis(200);
-
 struct ProgressState {
     processed_records: u64,
     completed_instances: usize,
     start_time: Instant,
     last_log: Instant,
     total_instances: usize,
+    per_instance_records: HashMap<String, u64>,
 }
 
 type SharedProgress = Arc<Mutex<ProgressState>>;
@@ -550,31 +552,46 @@ fn init_progress(total_instances: usize) -> SharedProgress {
         start_time: Instant::now(),
         last_log: Instant::now(),
         total_instances,
+        per_instance_records: HashMap::new(),
     }))
 }
 
-async fn update_progress_after_write(progress: &SharedProgress, added_records: u64) {
+async fn update_progress_after_write(
+    progress: &SharedProgress,
+    added_records: u64,
+    instance: &str,
+) {
     let mut state = progress.lock().await;
     state.processed_records = state.processed_records.saturating_add(added_records);
-    if state.last_log.elapsed() >= PROGRESS_LOG_THROTTLE {
-        log_progress(
-            state.start_time,
-            state.processed_records,
-            state.completed_instances,
-            state.total_instances,
-        );
-        state.last_log = Instant::now();
-    }
-}
+    let entry = state
+        .per_instance_records
+        .entry(instance.to_string())
+        .or_insert(0);
+    *entry = entry.saturating_add(added_records);
 
-async fn mark_instance_completed(progress: &SharedProgress) {
-    let mut state = progress.lock().await;
-    state.completed_instances = state.completed_instances.saturating_add(1);
-    log_progress(
+    let instance_processed_records = *state.per_instance_records.get(instance).unwrap_or(&0);
+    log_progress_chunk(
         state.start_time,
         state.processed_records,
         state.completed_instances,
         state.total_instances,
+        instance,
+        instance_processed_records,
+    );
+    state.last_log = Instant::now();
+}
+
+async fn mark_instance_completed(progress: &SharedProgress, instance: &str) {
+    let mut state = progress.lock().await;
+    state.completed_instances = state.completed_instances.saturating_add(1);
+    let instance_processed_records = *state.per_instance_records.get(instance).unwrap_or(&0);
+    log_progress_chunk(
+        state.start_time,
+        state.processed_records,
+        state.completed_instances,
+        state.total_instances,
+        instance,
+        instance_processed_records,
     );
     state.last_log = Instant::now();
 }
@@ -620,7 +637,7 @@ async fn handle_stream_with_prepared_writer(
                 .await
                 .context("Failed to write chunk")?;
 
-            update_progress_after_write(&progress, records_in_chunk).await;
+            update_progress_after_write(&progress, records_in_chunk, &instance).await;
         }
     }
 
@@ -637,14 +654,14 @@ async fn handle_stream_with_prepared_writer(
             .await
             .context("Failed to write final chunk")?;
 
-        update_progress_after_write(&progress, records_in_chunk).await;
+        update_progress_after_write(&progress, records_in_chunk, &instance).await;
     }
 
     finalize_instance_with_retry(writer.as_mut(), &instance, create_backoff())
         .await
         .context("Failed to finalize instance")?;
 
-    mark_instance_completed(&progress).await;
+    mark_instance_completed(&progress, &instance).await;
 
     Ok(())
 }

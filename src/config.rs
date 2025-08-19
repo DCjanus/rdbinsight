@@ -9,6 +9,7 @@ use url::Url;
 
 use crate::{
     helper::AnyResult,
+    output::abstractions::OutputEnum,
     source::{RDBStream, RdbSourceConfig},
 };
 
@@ -290,7 +291,7 @@ impl OutputConfig {
         &self,
         cluster: String,
         batch_ts: OffsetDateTime,
-    ) -> AnyResult<Box<dyn crate::output::abstractions::Output + Send + Sync>> {
+    ) -> AnyResult<OutputEnum> {
         match self {
             OutputConfig::Clickhouse(clickhouse_config) => {
                 let output = crate::output::clickhouse::ClickHouseOutput::new(
@@ -298,7 +299,7 @@ impl OutputConfig {
                     cluster,
                     batch_ts,
                 );
-                Ok(Box::new(output))
+                Ok(OutputEnum::ClickHouse(output))
             }
             OutputConfig::Parquet(parquet_config) => {
                 let output = crate::output::parquet::output::ParquetOutput::new(
@@ -307,7 +308,7 @@ impl OutputConfig {
                     cluster,
                     batch_ts,
                 );
-                Ok(Box::new(output))
+                Ok(OutputEnum::Parquet(output))
             }
         }
     }

@@ -4,12 +4,15 @@ use anyhow::Result;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use rdbinsight::{
     config::ParquetCompression,
-    output::{abstractions::Output, parquet::ParquetOutput, types::Chunk},
+    output::{
+        abstractions::{ChunkWriter, Output},
+        parquet::ParquetOutput,
+        types::Chunk,
+    },
     source::{RdbSourceConfig, SourceType, standalone::Config as StandaloneConfig},
 };
 use tempfile::TempDir;
 use time::OffsetDateTime;
-
 mod common;
 
 /// Test the Parquet output functionality end-to_end using a live Redis via testcontainers

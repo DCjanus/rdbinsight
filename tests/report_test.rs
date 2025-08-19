@@ -7,6 +7,7 @@ use rdbinsight::{
 };
 mod common;
 use common::clickhouse::start_clickhouse;
+use rdbinsight::output::abstractions::ChunkWriter;
 use time::OffsetDateTime;
 use tracing::info;
 use url::Url;

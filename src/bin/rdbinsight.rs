@@ -7,7 +7,7 @@ use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
     config::{DumpConfig, ParquetCompression},
-    output::abstractions::Output,
+    output::abstractions::{ChunkWriter, Output},
     record::{Record, RecordStream},
     source::{RDBStream, RdbSourceConfig},
 };
@@ -599,7 +599,7 @@ async fn mark_instance_completed(progress: &SharedProgress, instance: &str) {
 async fn handle_stream_with_prepared_writer(
     mut stream: Pin<Box<dyn RDBStream>>,
     instance: String,
-    mut writer: Box<dyn rdbinsight::output::abstractions::ChunkWriter + Send>,
+    mut writer: rdbinsight::output::abstractions::ChunkWriterEnum,
     cluster: String,
     batch_ts: OffsetDateTime,
     batch_size: usize,
@@ -633,7 +633,7 @@ async fn handle_stream_with_prepared_writer(
             };
 
             let records_in_chunk = chunk.records.len() as u64;
-            write_chunk_with_retry(writer.as_mut(), chunk, create_backoff())
+            write_chunk_with_retry(&mut writer, chunk, create_backoff())
                 .await
                 .context("Failed to write chunk")?;
 
@@ -650,14 +650,14 @@ async fn handle_stream_with_prepared_writer(
         };
 
         let records_in_chunk = chunk.records.len() as u64;
-        write_chunk_with_retry(writer.as_mut(), chunk, create_backoff())
+        write_chunk_with_retry(&mut writer, chunk, create_backoff())
             .await
             .context("Failed to write final chunk")?;
 
         update_progress_after_write(&progress, records_in_chunk, &instance).await;
     }
 
-    finalize_instance_with_retry(writer.as_mut(), &instance, create_backoff())
+    finalize_instance_with_retry(&mut writer, &instance, create_backoff())
         .await
         .context("Failed to finalize instance")?;
 
@@ -674,7 +674,7 @@ async fn process_streams_with_direct_writers(
     concurrency: usize,
     batch_size: usize,
 ) -> Result<()> {
-    let output: Box<dyn Output> = output_config
+    let output = output_config
         .create_output(cluster.clone(), batch_ts)
         .with_context(|| "Failed to create output from configuration")?;
 
@@ -711,7 +711,7 @@ async fn process_streams_with_direct_writers(
         })
         .await?;
 
-    output
+    Box::new(output)
         .finalize_batch()
         .await
         .with_context(|| "Failed to finalize batch for output")?;

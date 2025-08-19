@@ -71,7 +71,10 @@ impl Output for ParquetOutput {
         Ok(())
     }
 
-    async fn create_writer(&self, instance: &str) -> AnyResult<Box<dyn ChunkWriter + Send>> {
+    async fn create_writer(
+        &self,
+        instance: &str,
+    ) -> AnyResult<crate::output::abstractions::ChunkWriterEnum> {
         let sanitized_instance = path::sanitize_instance_filename(instance);
         let temp_filename = format!("{sanitized_instance}.parquet.tmp");
         let final_filename = format!("{sanitized_instance}.parquet");
@@ -88,7 +91,9 @@ impl Output for ParquetOutput {
         .await
         .with_context(|| format!("Failed to create Parquet writer for instance: {instance}"))?;
 
-        Ok(Box::new(writer))
+        Ok(crate::output::abstractions::ChunkWriterEnum::Parquet(
+            Box::new(writer),
+        ))
     }
 
     async fn finalize_batch(self: Box<Self>) -> AnyResult<()> {

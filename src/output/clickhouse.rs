@@ -216,12 +216,14 @@ impl crate::output::abstractions::Output for ClickHouseOutput {
     async fn create_writer(
         &self,
         _instance: &str,
-    ) -> AnyResult<Box<dyn crate::output::abstractions::ChunkWriter + Send>> {
+    ) -> AnyResult<crate::output::abstractions::ChunkWriterEnum> {
         let client = self
             .config
             .create_client()
             .context("Failed to create ClickHouse client for writer")?;
-        Ok(Box::new(ClickHouseChunkWriter { client }))
+        Ok(crate::output::abstractions::ChunkWriterEnum::ClickHouse(
+            Box::new(ClickHouseChunkWriter { client }),
+        ))
     }
 
     async fn finalize_batch(self: Box<Self>) -> AnyResult<()> {

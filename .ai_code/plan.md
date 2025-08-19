@@ -99,16 +99,16 @@
 ## 阶段六：切换主流程到新架构并移除旧实现
 
 ### 实现步骤
-- [ ] 在 `dump_records()` 中将调用从 `process_streams_with_output` 切换为 `process_streams_with_direct_writers`。
-- [ ] 移除旧的生产者-消费者通道与 `run_consumer/run_producers` 等关联代码。
-- [ ] 删除旧的 `output::sink::Output` 枚举及其方法，移除不再使用的路径。
-- [ ] 清理 ClickHouse/Parquet 旧实现中仅供旧路径使用的 API，保留/重命名 `V2` 类型为最终名称（`ClickHouseOutput`、`ParquetOutput`）。
-- [ ] 统一命名与导出路径，确保公开 API 与设计文档一致。
+- [x] 在 `dump_records()` 中将调用从 `process_streams_with_output` 切换为 `process_streams_with_direct_writers`。
+- [x] 移除旧的生产者-消费者通道与 `run_consumer/run_producers` 等关联代码。
+- [x] 删除旧的 `output::sink::Output` 枚举及其方法，移除不再使用的路径。
+- [x] 清理 ClickHouse/Parquet 旧实现中仅供旧路径使用的 API，保留/重命名 `V2` 类型为最终名称（`ClickHouseOutput`、`ParquetOutput`）。
+- [x] 统一命名与导出路径，确保公开 API 与设计文档一致。
 
 ### 验证步骤
-- [ ] 运行 `just test` 全量测试。
-- [ ] 对 Parquet 路径执行现有测试（目录与文件重命名语义应保持一致）。
-- [ ] 如有 ClickHouse 集成测试环境，执行相关测试（或以 mock 方式验证 `finalize_batch` 被调用一次）。
+- [x] 运行 `just test` 全量测试。
+- [x] 对 Parquet 路径执行现有测试（目录与文件重命名语义应保持一致）。
+- [x] 如有 ClickHouse 集成测试环境，执行相关测试（或以 mock 方式验证 `finalize_batch` 被调用一次）。
 
 ---
 

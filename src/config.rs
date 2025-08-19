@@ -286,42 +286,14 @@ pub enum OutputConfig {
 }
 
 impl OutputConfig {
-    pub async fn create_output(
-        &self,
-        cluster: String,
-        batch_ts: OffsetDateTime,
-    ) -> AnyResult<crate::output::sink::Output> {
-        match self {
-            OutputConfig::Clickhouse(clickhouse_config) => {
-                let ch_output = crate::output::clickhouse::ClickHouseOutput::new(
-                    clickhouse_config.clone(),
-                    cluster,
-                    batch_ts,
-                )
-                .await?;
-                Ok(crate::output::sink::Output::ClickHouse(ch_output))
-            }
-            OutputConfig::Parquet(parquet_config) => {
-                let parquet_output = crate::output::parquet::ParquetOutput::new(
-                    parquet_config.dir.clone(),
-                    parquet_config.compression,
-                    &cluster,
-                    batch_ts,
-                )
-                .await?;
-                Ok(crate::output::sink::Output::Parquet(parquet_output))
-            }
-        }
-    }
-
-    pub fn create_output_v2(
+    pub fn create_output(
         &self,
         cluster: String,
         batch_ts: OffsetDateTime,
     ) -> AnyResult<Box<dyn crate::output::abstractions::Output + Send + Sync>> {
         match self {
             OutputConfig::Clickhouse(clickhouse_config) => {
-                let output = crate::output::clickhouse::ClickHouseOutputV2::new(
+                let output = crate::output::clickhouse::ClickHouseOutput::new_sync(
                     clickhouse_config.clone(),
                     cluster,
                     batch_ts,
@@ -329,7 +301,7 @@ impl OutputConfig {
                 Ok(Box::new(output))
             }
             OutputConfig::Parquet(parquet_config) => {
-                let output = crate::output::parquet::v2::ParquetOutputV2::new(
+                let output = crate::output::parquet::output::ParquetOutput::new(
                     parquet_config.dir.clone(),
                     parquet_config.compression,
                     cluster,

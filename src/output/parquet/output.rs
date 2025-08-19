@@ -16,14 +16,14 @@ use crate::{
 };
 
 #[allow(dead_code)]
-pub struct ParquetOutputV2 {
+pub struct ParquetOutput {
     base_dir: PathBuf,
     compression: ParquetCompression,
     cluster: String,
     batch_ts: time::OffsetDateTime,
 }
 
-impl ParquetOutputV2 {
+impl ParquetOutput {
     pub fn new(
         base_dir: PathBuf,
         compression: ParquetCompression,
@@ -51,7 +51,7 @@ impl ParquetOutputV2 {
 }
 
 #[async_trait::async_trait]
-impl Output for ParquetOutputV2 {
+impl Output for ParquetOutput {
     async fn prepare_batch(&self) -> AnyResult<()> {
         let temp_batch_dir = self.temp_batch_dir();
         path::ensure_dir(&temp_batch_dir).await.with_context(|| {

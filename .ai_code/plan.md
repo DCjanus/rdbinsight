@@ -49,16 +49,16 @@
 目标：`ParquetChunkWriter` 实现 `write_record`，内部以固定 10,000 行聚合构建 `RecordBatch` 写入；收尾 flush；无重试。
 
 ### 实现步骤
-- [ ] 在 `src/output/parquet/output.rs` 中：
-  - [ ] 为 `ParquetChunkWriter` 增加内部行缓冲（例如 `Vec<Record>` 或列式 builder 结构）与计数器；常量 `MICRO_BATCH_ROWS = 10_000`。
-  - [ ] 在 `write_record(record, ctx)` 中：追加记录，达到 10,000 行时构建 `RecordBatch` 并 `writer.write(batch).await`；清空缓冲。
-  - [ ] 在 `finalize_instance()` 中，若缓冲非空则构建一次 `RecordBatch` 写入；随后 `close()` 并 `rename`。
-  - [ ] 保持现有 schema、文件命名、目录逻辑不变。
-- [ ] 运行 `cargo check` 修复编译问题。
+- [x] 在 `src/output/parquet/output.rs` 中：
+  - [x] 为 `ParquetChunkWriter` 增加内部行缓冲（例如 `Vec<Record>` 或列式 builder 结构）与计数器；常量 `MICRO_BATCH_ROWS = 10_000`。
+  - [x] 在 `write_record(record, ctx)` 中：追加记录，达到 10,000 行时构建 `RecordBatch` 并 `writer.write(batch).await`；清空缓冲。
+  - [x] 在 `finalize_instance()` 中，若缓冲非空则构建一次 `RecordBatch` 写入；随后 `close()` 并 `rename`。
+  - [x] 保持现有 schema、文件命名、目录逻辑不变。
+- [x] 运行 `cargo check` 修复编译问题。
 
 ### 验证步骤
-- [ ] 人类：使用少量数据跑一次 Parquet 输出路径，确认生成文件可被 Arrow/Parquet 读取，行数与输入一致。
-- [ ] 人类：检查日志中出现 10k flush 相关的 info/debug（或通过断点/打印确认触发）。
+- [x] 人类：使用少量数据跑一次 Parquet 输出路径，确认生成文件可被 Arrow/Parquet 读取，行数与输入一致。
+- [x] 人类：检查日志中出现 10k flush 相关的 info/debug（或通过断点/打印确认触发）。
 
 ---
 

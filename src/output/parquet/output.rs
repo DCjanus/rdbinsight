@@ -123,6 +123,8 @@ impl Output for ParquetOutput {
     }
 }
 
+const MICRO_BATCH_ROWS: usize = 10_000;
+
 pub struct ParquetChunkWriter {
     writer: Option<AsyncArrowWriter<File>>,
     instance: String,
@@ -130,6 +132,7 @@ pub struct ParquetChunkWriter {
     batch_ts: time::OffsetDateTime,
     temp_path: PathBuf,
     final_path: PathBuf,
+    buffered_records: Vec<crate::record::Record>,
 }
 
 impl ParquetChunkWriter {
@@ -183,6 +186,7 @@ impl ParquetChunkWriter {
             batch_ts,
             temp_path,
             final_path,
+            buffered_records: Vec::with_capacity(MICRO_BATCH_ROWS),
         })
     }
 
@@ -203,6 +207,25 @@ impl ParquetChunkWriter {
                 self.instance
             )),
         }
+    }
+
+    async fn flush_buffer(&mut self) -> AnyResult<()> {
+        if self.buffered_records.is_empty() {
+            return Ok(());
+        }
+        let records_count = self.buffered_records.len();
+        let chunk = crate::output::types::Chunk {
+            cluster: self.cluster.clone(),
+            batch_ts: self.batch_ts,
+            instance: self.instance.clone(),
+            records: std::mem::take(&mut self.buffered_records),
+        };
+        let instance = &chunk.instance;
+        let record_batch = mapper::chunk_to_columns(&chunk).with_context(|| {
+            anyhow!("Failed to convert {records_count} buffered records to columns for instance: {instance}")
+        })?;
+        self.write_batch(record_batch).await?;
+        Ok(())
     }
 }
 
@@ -225,50 +248,54 @@ impl ChunkWriter for ParquetChunkWriter {
     }
 
     async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()> {
-        let chunk = crate::output::types::Chunk {
-            cluster: self.cluster.clone(),
-            batch_ts: self.batch_ts,
-            instance: self.instance.clone(),
-            records: vec![record],
-        };
-        self.write_chunk(chunk).await
+        self.buffered_records.push(record);
+        if self.buffered_records.len() >= MICRO_BATCH_ROWS {
+            self.flush_buffer().await?;
+        }
+        Ok(())
     }
 
     async fn finalize_instance(self) -> AnyResult<()> {
+        let mut this = self;
+
+        if !this.buffered_records.is_empty() {
+            this.flush_buffer().await?;
+        }
+
         info!(
             operation = "parquet_writer_closing",
-            instance = %self.instance,
-            temp_path = %self.temp_path.display(),
-            final_path = %self.final_path.display(),
+            instance = %this.instance,
+            temp_path = %this.temp_path.display(),
+            final_path = %this.final_path.display(),
             "Closing Parquet writer"
         );
 
-        if let Some(writer) = self.writer {
+        if let Some(writer) = this.writer {
             writer.close().await.with_context(|| {
                 format!(
                     "Failed to close parquet writer for file {temp_path} for instance: {instance}",
-                    temp_path = self.temp_path.display(),
-                    instance = self.instance
+                    temp_path = this.temp_path.display(),
+                    instance = this.instance
                 )
             })?;
         }
 
-        tokio::fs::rename(&self.temp_path, &self.final_path)
+        tokio::fs::rename(&this.temp_path, &this.final_path)
             .await
             .with_context(|| {
                 format!(
                     "Failed to rename parquet file from {} to {} for instance: {}",
-                    self.temp_path.display(),
-                    self.final_path.display(),
-                    self.instance
+                    this.temp_path.display(),
+                    this.final_path.display(),
+                    this.instance
                 )
             })?;
 
         info!(
             operation = "parquet_writer_closed",
-            instance = %self.instance,
-            temp_path = %self.temp_path.display(),
-            final_path = %self.final_path.display(),
+            instance = %this.instance,
+            temp_path = %this.temp_path.display(),
+            final_path = %this.final_path.display(),
             "Parquet writer closed and file finalized"
         );
         Ok(())

@@ -275,11 +275,6 @@ impl crate::output::ChunkWriter for ClickHouseChunkWriter {
     }
 
     async fn finalize_instance(self) -> AnyResult<()> {
-        info!(
-            operation = "clickhouse_inserter_end",
-            instance = %self.instance,
-            "Finalizing ClickHouse inserter for redis_records_raw"
-        );
         self.inserter.end().await?;
         Ok(())
     }

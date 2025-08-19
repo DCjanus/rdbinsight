@@ -439,16 +439,12 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     );
     let total_streams = streams.len();
 
-    // Use defaults from existing code: batch_size = 1_000_000
-    const BATCH_SIZE: usize = 1_000_000;
-
     process_streams_with_direct_writers(
         streams,
         config.output,
         cluster_name.to_string(),
         batch_timestamp,
         config.concurrency,
-        BATCH_SIZE,
     )
     .await?;
 
@@ -549,9 +545,6 @@ async fn handle_stream_with_prepared_writer(
     mut stream: Pin<Box<dyn RDBStream>>,
     instance: String,
     mut writer: ChunkWriterEnum,
-    _cluster: String,
-    _batch_ts: OffsetDateTime,
-    _batch_size: usize,
     progress: SharedProgress,
 ) -> Result<()> {
     let source_type = stream.source_type();
@@ -607,7 +600,6 @@ async fn process_streams_with_direct_writers(
     cluster: String,
     batch_ts: OffsetDateTime,
     concurrency: usize,
-    batch_size: usize,
 ) -> Result<()> {
     let output = output_config
         .create_output(cluster.clone(), batch_ts)
@@ -633,11 +625,10 @@ async fn process_streams_with_direct_writers(
     futures_util::stream::iter(tasks)
         .map(Ok)
         .try_for_each_concurrent(concurrency.max(1), |(stream, instance, writer)| {
-            let cluster = cluster.clone();
             let progress = progress.clone();
             async move {
                 tokio::spawn(handle_stream_with_prepared_writer(
-                    stream, instance, writer, cluster, batch_ts, batch_size, progress,
+                    stream, instance, writer, progress,
                 ))
                 .await
                 .with_context(|| "Failed to join spawned direct-writer task")??;

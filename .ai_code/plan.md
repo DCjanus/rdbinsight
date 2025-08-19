@@ -25,19 +25,19 @@
 ## 阶段二：ClickHouse 新实现（并行友好）
 
 ### 实现步骤
-- [ ] 在 `output/clickhouse.rs` 内新增基于新接口的实现（避免命名冲突，暂用 `ClickHouseOutputV2` 与 `ClickHouseChunkWriter`）。
-  - [ ] `ClickHouseOutputV2`：持有 `Client` 构造器上下文、`cluster`、`batch_ts`、`ClickHouseConfig`；实现 `Output`：
+- [x] 在 `output/clickhouse.rs` 内新增基于新接口的实现（避免命名冲突，暂用 `ClickHouseOutputV2` 与 `ClickHouseChunkWriter`）。
+  - [x] `ClickHouseOutputV2`：持有 `Client` 构造器上下文、`cluster`、`batch_ts`、`ClickHouseConfig`；实现 `Output`：
     - `prepare_batch()`：校验/建表（幂等）。
     - `create_writer(instance)`：创建独立 `Client` 的 `ClickHouseChunkWriter`。
     - `finalize_batch()`：写入 `import_batches_completed` 完成标记。
-  - [ ] `ClickHouseChunkWriter`：实现 `ChunkWriter`：
+  - [x] `ClickHouseChunkWriter`：实现 `ChunkWriter`：
     - `write_chunk()`：按现有行转换逻辑写入 `redis_records_raw`（沿用 `record_to_row_from_chunk`）。
     - `finalize_instance()`：no-op。
-- [ ] 不改动旧 `output::sink::Output` 调用路径。
+- [x] 不改动旧 `output::sink::Output` 调用路径。
 
 ### 验证步骤
-- [ ] 运行 `just test`，确认编译通过、测试不回退。
-- [ ] 代码检查：日志调用字段顺序符合规范（`operation` 首位）。
+- [x] 运行 `just test`，确认编译通过、测试不回退。
+- [x] 代码检查：日志调用字段顺序符合规范（`operation` 首位）。
 
 ---
 

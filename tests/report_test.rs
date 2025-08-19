@@ -61,7 +61,7 @@ async fn test_report_generate_data_with_clickhouse() {
     let ch_config = ClickHouseConfig::new(ch_url, true, None).unwrap();
     let cluster = "test-cluster".to_string();
     let batch_ts = OffsetDateTime::now_utc();
-    let output = ClickHouseOutput::new_sync(ch_config.clone(), cluster.clone(), batch_ts);
+    let output = ClickHouseOutput::new(ch_config.clone(), cluster.clone(), batch_ts);
     output.prepare_batch().await.unwrap();
 
     // 3) write some records into this batch and commit
@@ -155,7 +155,7 @@ async fn test_report_generate_data_with_empty_cluster() {
     let ch_config = ClickHouseConfig::new(ch_url, true, None).unwrap();
     let cluster = "empty-cluster".to_string();
     let batch_ts = OffsetDateTime::now_utc();
-    let output = ClickHouseOutput::new_sync(ch_config.clone(), cluster.clone(), batch_ts);
+    let output = ClickHouseOutput::new(ch_config.clone(), cluster.clone(), batch_ts);
     output.prepare_batch().await.unwrap();
 
     // 3) create an empty batch and commit (no data written)

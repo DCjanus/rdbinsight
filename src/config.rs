@@ -293,7 +293,7 @@ impl OutputConfig {
     ) -> AnyResult<Box<dyn crate::output::abstractions::Output + Send + Sync>> {
         match self {
             OutputConfig::Clickhouse(clickhouse_config) => {
-                let output = crate::output::clickhouse::ClickHouseOutput::new_sync(
+                let output = crate::output::clickhouse::ClickHouseOutput::new(
                     clickhouse_config.clone(),
                     cluster,
                     batch_ts,

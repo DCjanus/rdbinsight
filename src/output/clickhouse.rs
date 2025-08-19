@@ -41,7 +41,7 @@ pub struct ClickHouseOutput {
 }
 
 impl ClickHouseOutput {
-    pub fn new_sync(config: ClickHouseConfig, cluster: String, batch_ts: OffsetDateTime) -> Self {
+    pub fn new(config: ClickHouseConfig, cluster: String, batch_ts: OffsetDateTime) -> Self {
         Self {
             config,
             cluster,

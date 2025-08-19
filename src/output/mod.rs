@@ -40,6 +40,9 @@ pub trait ChunkWriter: Send {
     /// Write a chunk of records (caller may add retries).
     async fn write_chunk(&mut self, chunk: Chunk) -> AnyResult<()>;
 
+    /// New per-record write API. Implementations should prefer this for streaming.
+    async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()>;
+
     /// Finalize this instance writer (no-op for some backends).
     async fn finalize_instance(&mut self) -> AnyResult<()>;
 }
@@ -91,6 +94,13 @@ impl ChunkWriter for ChunkWriterEnum {
         match self {
             ChunkWriterEnum::ClickHouse(writer) => writer.write_chunk(chunk).await,
             ChunkWriterEnum::Parquet(writer) => writer.write_chunk(chunk).await,
+        }
+    }
+
+    async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()> {
+        match self {
+            ChunkWriterEnum::ClickHouse(writer) => writer.write_record(record).await,
+            ChunkWriterEnum::Parquet(writer) => writer.write_record(record).await,
         }
     }
 

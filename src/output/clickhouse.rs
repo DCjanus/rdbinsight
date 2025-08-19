@@ -213,13 +213,18 @@ impl crate::output::Output for ClickHouseOutput {
         self.ensure_tables(&client).await
     }
 
-    async fn create_writer(&self, _instance: &str) -> AnyResult<ChunkWriterEnum> {
+    async fn create_writer(&self, instance: &str) -> AnyResult<ChunkWriterEnum> {
         let client = self
             .config
             .create_client()
             .context("Failed to create ClickHouse client for writer")?;
         Ok(ChunkWriterEnum::ClickHouse(Box::new(
-            ClickHouseChunkWriter { client },
+            ClickHouseChunkWriter {
+                client,
+                cluster: self.cluster.clone(),
+                batch_ts: self.batch_ts,
+                instance: instance.to_string(),
+            },
         )))
     }
 
@@ -248,6 +253,9 @@ impl crate::output::Output for ClickHouseOutput {
 
 pub struct ClickHouseChunkWriter {
     client: Client,
+    cluster: String,
+    batch_ts: OffsetDateTime,
+    instance: String,
 }
 
 #[async_trait::async_trait]
@@ -263,6 +271,16 @@ impl crate::output::ChunkWriter for ClickHouseChunkWriter {
         }
         insert.end().await?;
         Ok(())
+    }
+
+    async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()> {
+        let chunk = crate::output::types::Chunk {
+            cluster: self.cluster.clone(),
+            batch_ts: self.batch_ts,
+            instance: self.instance.clone(),
+            records: vec![record],
+        };
+        self.write_chunk(chunk).await
     }
 
     async fn finalize_instance(&mut self) -> AnyResult<()> {

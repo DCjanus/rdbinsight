@@ -12,14 +12,14 @@
 目标：在不破坏现有编译与行为的前提下，为 `ChunkWriter` 增加 `write_record` 能力，并保留现有 `write_chunk`（作为临时桥接）。
 
 ### 实现步骤
-- [ ] 在 `src/output/mod.rs` 的 `ChunkWriter` trait 中新增 `write_record(record: Record, ctx: {cluster, batch_ts, instance})` 方法（带默认实现：构造单条 `Chunk` 调用现有 `write_chunk`）。
-- [ ] 在 `ChunkWriterEnum` 的实现中转发新的 `write_record` 方法到各具体 writer。
-- [ ] 保持所有现有实现（ClickHouse、Parquet）无需改动即可编译（因为有默认实现）。
-- [ ] 运行 `cargo check` 和 `cargo clippy`，确保无编译错误并处理新 API 的基础告警（仅必要的最小改动）。
+- [x] 在 `src/output/mod.rs` 的 `ChunkWriter` trait 中新增 `write_record(&mut self, record: Record)` 方法，并在 `ChunkWriterEnum` 中转发该方法。
+- [x] 为具体 writer（ClickHouse、Parquet）内持有 `cluster/batch_ts/instance` 上下文，使 `write_record` 无需每次传入 `ctx`。
+- [x] 保持所有现有实现可编译。
+- [x] 运行 `cargo check` 并通过。
 
 ### 验证步骤
-- [ ] 人类：确认新增方法签名与 `.ai_code/design.md` 一致，参数命名与类型符合项目风格。
-- [ ] 人类：确认引入 `write_record` 后，现有功能和测试仍可通过 `cargo test`（不修改任何业务逻辑的前提下）。
+- [x] 人类：确认新增方法签名与 `.ai_code/design.md` 一致，参数命名与类型符合项目风格。
+- [x] 人类：确认引入 `write_record` 后，现有功能和测试仍可通过 `cargo test`（不修改任何业务逻辑的前提下）。
 
 ---
 

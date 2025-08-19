@@ -80,6 +80,8 @@ impl Output for ParquetOutput {
 
         let writer = ParquetChunkWriter::new(
             instance.to_string(),
+            self.cluster.clone(),
+            self.batch_ts,
             temp_path,
             final_path,
             self.compression,
@@ -124,6 +126,8 @@ impl Output for ParquetOutput {
 pub struct ParquetChunkWriter {
     writer: Option<AsyncArrowWriter<File>>,
     instance: String,
+    cluster: String,
+    batch_ts: time::OffsetDateTime,
     temp_path: PathBuf,
     final_path: PathBuf,
 }
@@ -131,6 +135,8 @@ pub struct ParquetChunkWriter {
 impl ParquetChunkWriter {
     async fn new(
         instance: String,
+        cluster: String,
+        batch_ts: time::OffsetDateTime,
         temp_path: PathBuf,
         final_path: PathBuf,
         compression: ParquetCompression,
@@ -173,6 +179,8 @@ impl ParquetChunkWriter {
         Ok(Self {
             writer: Some(writer),
             instance,
+            cluster,
+            batch_ts,
             temp_path,
             final_path,
         })
@@ -214,6 +222,16 @@ impl ChunkWriter for ParquetChunkWriter {
             "Batch written to Parquet"
         );
         Ok(())
+    }
+
+    async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()> {
+        let chunk = crate::output::types::Chunk {
+            cluster: self.cluster.clone(),
+            batch_ts: self.batch_ts,
+            instance: self.instance.clone(),
+            records: vec![record],
+        };
+        self.write_chunk(chunk).await
     }
 
     async fn finalize_instance(&mut self) -> AnyResult<()> {

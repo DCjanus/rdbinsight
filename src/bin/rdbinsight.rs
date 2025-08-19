@@ -427,19 +427,13 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
         "Starting dump for cluster"
     );
 
-    let streams = source_config
+    let streams: Vec<Pin<Box<dyn RDBStream>>> = source_config
         .get_rdb_streams()
         .await
         .with_context(|| "Failed to get RDB streams")?;
-
-    debug!(
-        operation = "concurrent_processing_start",
-        stream_count = %streams.len(),
-        "Starting concurrent processing of RDB streams"
-    );
     let total_streams = streams.len();
 
-    process_streams_with_direct_writers(
+    process_rdb_streams(
         streams,
         config.output,
         cluster_name.to_string(),
@@ -541,7 +535,7 @@ async fn mark_instance_completed(progress: &SharedProgress, instance: &str) {
     state.last_log = Instant::now();
 }
 
-async fn handle_stream_with_prepared_writer(
+async fn handle_rdb_stream(
     mut stream: Pin<Box<dyn RDBStream>>,
     instance: String,
     mut writer: ChunkWriterEnum,
@@ -594,7 +588,7 @@ async fn handle_stream_with_prepared_writer(
     Ok(())
 }
 
-async fn process_streams_with_direct_writers(
+async fn process_rdb_streams(
     streams: Vec<Pin<Box<dyn RDBStream>>>,
     output_config: rdbinsight::config::OutputConfig,
     cluster: String,
@@ -627,11 +621,9 @@ async fn process_streams_with_direct_writers(
         .try_for_each_concurrent(concurrency.max(1), |(stream, instance, writer)| {
             let progress = progress.clone();
             async move {
-                tokio::spawn(handle_stream_with_prepared_writer(
-                    stream, instance, writer, progress,
-                ))
-                .await
-                .with_context(|| "Failed to join spawned direct-writer task")??;
+                tokio::spawn(handle_rdb_stream(stream, instance, writer, progress))
+                    .await
+                    .with_context(|| "Failed to join spawned direct-writer task")??;
                 Ok::<(), anyhow::Error>(())
             }
         })

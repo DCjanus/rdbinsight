@@ -219,8 +219,14 @@ impl crate::output::Output for ClickHouseOutput {
             "Writing batch completion row"
         );
         let mut insert: Insert<BatchCompletedRow> = client.insert("import_batches_completed")?;
-        insert.write(&completion_row).await?;
-        insert.end().await?;
+        insert
+            .write(&completion_row)
+            .await
+            .context("Failed to write batch completion row")?;
+        insert
+            .end()
+            .await
+            .context("Failed to end batch completion row")?;
         Ok(())
     }
 }
@@ -265,7 +271,10 @@ impl crate::output::ChunkWriter for ClickHouseChunkWriter {
     }
 
     async fn finalize_instance(self) -> AnyResult<()> {
-        self.inserter.end().await?;
+        self.inserter
+            .end()
+            .await
+            .context("Failed to end instance")?;
         Ok(())
     }
 }

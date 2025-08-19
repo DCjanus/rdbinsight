@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::info;
 
-use crate::{config::ClickHouseConfig, helper::AnyResult, record::Record};
+use crate::{config::ClickHouseConfig, helper::AnyResult, output::ChunkWriterEnum, record::Record};
 
 #[derive(Debug, Clone, Row, Serialize, Deserialize)]
 pub struct RedisRecordRow {
@@ -198,7 +198,7 @@ impl ClickHouseOutput {
 }
 
 #[async_trait::async_trait]
-impl crate::output::abstractions::Output for ClickHouseOutput {
+impl crate::output::Output for ClickHouseOutput {
     async fn prepare_batch(&self) -> AnyResult<()> {
         use tracing::debug;
         debug!(
@@ -213,17 +213,14 @@ impl crate::output::abstractions::Output for ClickHouseOutput {
         self.ensure_tables(&client).await
     }
 
-    async fn create_writer(
-        &self,
-        _instance: &str,
-    ) -> AnyResult<crate::output::abstractions::ChunkWriterEnum> {
+    async fn create_writer(&self, _instance: &str) -> AnyResult<ChunkWriterEnum> {
         let client = self
             .config
             .create_client()
             .context("Failed to create ClickHouse client for writer")?;
-        Ok(crate::output::abstractions::ChunkWriterEnum::ClickHouse(
-            Box::new(ClickHouseChunkWriter { client }),
-        ))
+        Ok(ChunkWriterEnum::ClickHouse(Box::new(
+            ClickHouseChunkWriter { client },
+        )))
     }
 
     async fn finalize_batch(self: Box<Self>) -> AnyResult<()> {
@@ -254,7 +251,7 @@ pub struct ClickHouseChunkWriter {
 }
 
 #[async_trait::async_trait]
-impl crate::output::abstractions::ChunkWriter for ClickHouseChunkWriter {
+impl crate::output::ChunkWriter for ClickHouseChunkWriter {
     async fn write_chunk(&mut self, chunk: crate::output::types::Chunk) -> AnyResult<()> {
         if chunk.records.is_empty() {
             return Ok(());

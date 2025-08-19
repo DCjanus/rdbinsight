@@ -4,11 +4,7 @@ use anyhow::Result;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use rdbinsight::{
     config::ParquetCompression,
-    output::{
-        abstractions::{ChunkWriter, Output},
-        parquet::ParquetOutput,
-        types::Chunk,
-    },
+    output::{ChunkWriter, Output, parquet::ParquetOutput, types::Chunk},
     source::{RdbSourceConfig, SourceType, standalone::Config as StandaloneConfig},
 };
 use tempfile::TempDir;

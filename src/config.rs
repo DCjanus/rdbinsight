@@ -9,7 +9,7 @@ use url::Url;
 
 use crate::{
     helper::AnyResult,
-    output::abstractions::OutputEnum,
+    output::OutputEnum,
     source::{RDBStream, RdbSourceConfig},
 };
 

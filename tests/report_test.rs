@@ -1,18 +1,18 @@
 use bytes::Bytes;
+use common::clickhouse::start_clickhouse;
 use rdbinsight::{
     config::ClickHouseConfig,
-    output::{abstractions::Output, clickhouse::ClickHouseOutput, types::Chunk},
+    output::{ChunkWriter, Output, clickhouse::ClickHouseOutput, types::Chunk},
     record::{Record, RecordEncoding, RecordType},
     report::{ReportGenerator, get_latest_batch_for_cluster},
 };
-mod common;
-use common::clickhouse::start_clickhouse;
-use rdbinsight::output::abstractions::ChunkWriter;
 use time::OffsetDateTime;
 use tracing::info;
 use url::Url;
 
 use crate::common::init_log_for_debug;
+
+mod common;
 
 fn make_records() -> Vec<Record> {
     use rdbinsight::parser::{core::raw::RDBStr, model::StringEncoding};

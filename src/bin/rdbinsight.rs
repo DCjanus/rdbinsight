@@ -7,7 +7,7 @@ use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
     config::{DumpConfig, ParquetCompression},
-    output::abstractions::{ChunkWriter, Output},
+    output::{ChunkWriter, ChunkWriterEnum, Output},
     record::{Record, RecordStream},
     source::{RDBStream, RdbSourceConfig},
 };
@@ -493,7 +493,7 @@ fn log_progress_chunk(
 }
 
 async fn write_chunk_with_retry(
-    writer: &mut dyn rdbinsight::output::abstractions::ChunkWriter,
+    writer: &mut dyn ChunkWriter,
     chunk: rdbinsight::output::types::Chunk,
     mut retries: backoff::ExponentialBackoff,
 ) -> Result<()> {
@@ -513,7 +513,7 @@ async fn write_chunk_with_retry(
 }
 
 async fn finalize_instance_with_retry(
-    writer: &mut dyn rdbinsight::output::abstractions::ChunkWriter,
+    writer: &mut dyn ChunkWriter,
     instance: &str,
     mut retries: backoff::ExponentialBackoff,
 ) -> Result<()> {
@@ -599,7 +599,7 @@ async fn mark_instance_completed(progress: &SharedProgress, instance: &str) {
 async fn handle_stream_with_prepared_writer(
     mut stream: Pin<Box<dyn RDBStream>>,
     instance: String,
-    mut writer: rdbinsight::output::abstractions::ChunkWriterEnum,
+    mut writer: ChunkWriterEnum,
     cluster: String,
     batch_ts: OffsetDateTime,
     batch_size: usize,

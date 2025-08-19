@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Context;
 use bytes::Bytes;
 use clickhouse::{Client, Row, insert::Insert};
@@ -189,13 +191,16 @@ impl crate::output::Output for ClickHouseOutput {
             .config
             .create_client()
             .context("Failed to create ClickHouse client for writer")?;
-        let insert: Insert<RedisRecordRow> = client.insert("redis_records_raw")?;
+        let insert: Insert<RedisRecordRow> = create_redis_record_insert(&client)
+            .context("Failed to create RedisRecordRow insert")?;
         Ok(ChunkWriterEnum::ClickHouse(Box::new(
             ClickHouseChunkWriter {
+                client,
                 cluster: self.cluster.clone(),
                 batch_ts: self.batch_ts,
                 instance: instance.to_string(),
                 insert,
+                pending_rows: 0,
             },
         )))
     }
@@ -229,11 +234,19 @@ impl crate::output::Output for ClickHouseOutput {
     }
 }
 
+fn create_redis_record_insert(client: &Client) -> AnyResult<Insert<RedisRecordRow>> {
+    Ok(client
+        .insert("redis_records_raw")?
+        .with_timeouts(Some(Duration::from_secs(10)), None))
+}
+
 pub struct ClickHouseChunkWriter {
+    client: Client,
     cluster: String,
     batch_ts: OffsetDateTime,
     instance: String,
     insert: Insert<RedisRecordRow>,
+    pending_rows: u64,
 }
 
 #[async_trait::async_trait]
@@ -269,7 +282,14 @@ impl crate::output::ChunkWriter for ClickHouseChunkWriter {
             .write(&row)
             .await
             .context("Failed to write record")?;
-        // FIXME: end insert statement
+        self.pending_rows += 1;
+        if self.pending_rows >= 1000 * 1000 {
+            let insert = create_redis_record_insert(&self.client)
+                .context("Failed to create RedisRecordRow insert")?;
+            let insert = std::mem::replace(&mut self.insert, insert);
+            insert.end().await.context("Failed to end instance")?;
+            self.pending_rows = 0;
+        }
         Ok(())
     }
 

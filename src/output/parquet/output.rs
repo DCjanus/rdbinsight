@@ -15,7 +15,6 @@ use crate::{
     },
 };
 
-#[allow(dead_code)]
 pub struct ParquetOutput {
     base_dir: PathBuf,
     compression: ParquetCompression,
@@ -127,7 +126,6 @@ impl Output for ParquetOutput {
     }
 }
 
-#[allow(dead_code)]
 pub struct ParquetChunkWriter {
     writer: Option<AsyncArrowWriter<File>>,
     instance: String,

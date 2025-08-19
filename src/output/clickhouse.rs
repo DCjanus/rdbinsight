@@ -376,7 +376,11 @@ pub struct ClickHouseOutputV2 {
 
 impl ClickHouseOutputV2 {
     pub fn new(config: ClickHouseConfig, cluster: String, batch_ts: OffsetDateTime) -> Self {
-        Self { config, cluster, batch_ts }
+        Self {
+            config,
+            cluster,
+            batch_ts,
+        }
     }
 
     async fn ensure_tables(&self, client: &Client) -> AnyResult<()> {
@@ -419,12 +423,18 @@ impl ClickHouseOutputV2 {
         let none_exist = tables_exist.iter().all(|&exists| !exists);
 
         if all_exist {
-            debug!(operation = "clickhouse_tables_exist", "All required ClickHouse tables exist");
+            debug!(
+                operation = "clickhouse_tables_exist",
+                "All required ClickHouse tables exist"
+            );
             return Ok(());
         }
 
         if none_exist {
-            debug!(operation = "clickhouse_tables_missing", "No ClickHouse tables exist");
+            debug!(
+                operation = "clickhouse_tables_missing",
+                "No ClickHouse tables exist"
+            );
             if self.config.auto_create_tables {
                 debug!(
                     operation = "clickhouse_auto_create_tables_enabled",
@@ -510,7 +520,10 @@ impl crate::output::abstractions::Output for ClickHouseOutputV2 {
         self.ensure_tables(&client).await
     }
 
-    async fn create_writer(&self, _instance: &str) -> AnyResult<Box<dyn crate::output::abstractions::ChunkWriter + Send>> {
+    async fn create_writer(
+        &self,
+        _instance: &str,
+    ) -> AnyResult<Box<dyn crate::output::abstractions::ChunkWriter + Send>> {
         let client = self
             .config
             .create_client()
@@ -530,7 +543,10 @@ impl crate::output::abstractions::Output for ClickHouseOutputV2 {
             batch: self.batch_ts,
         };
 
-        info!(operation = "clickhouse_finalize_batch", "Writing batch completion row");
+        info!(
+            operation = "clickhouse_finalize_batch",
+            "Writing batch completion row"
+        );
         let mut insert: Insert<BatchCompletedRow> = client.insert("import_batches_completed")?;
         insert.write(&completion_row).await?;
         insert.end().await?;

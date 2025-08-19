@@ -12,6 +12,7 @@ use crate::{config::ParquetCompression, record::Record};
 pub mod mapper;
 pub mod path;
 pub mod schema;
+pub mod v2;
 
 /// Handle for an active Parquet writer
 struct WriterHandle {

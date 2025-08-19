@@ -17,8 +17,8 @@
 - [x] 保持现有 `output::sink::Output` 枚举与旧调用路径不变，确保编译通过。
 
 ### 验证步骤
-- [ ] 运行 `just test`，确认无编译错误、现有测试均通过。
-- [ ] 检查新文件导出是否符合现有项目模块结构（通过 `cargo check`）。
+- [x] 运行 `just test`，确认无编译错误、现有测试均通过。
+- [x] 检查新文件导出是否符合现有项目模块结构（通过 `cargo check`）。
 
 ---
 
@@ -44,19 +44,19 @@
 ## 阶段三：Parquet 新实现（实例级文件写入）
 
 ### 实现步骤
-- [ ] 在 `output/parquet/` 基于现有实现新增 `ParquetOutputV2` 与 `ParquetChunkWriter`：
-  - [ ] `ParquetOutputV2` 实现 `Output`：
+- [x] 在 `output/parquet/` 基于现有实现新增 `ParquetOutputV2` 与 `ParquetChunkWriter`：
+  - [x] `ParquetOutputV2` 实现 `Output`：
     - `prepare_batch()`：创建批次临时目录并记录 `final_batch_dir`。
     - `create_writer(instance)`：创建该实例专属 `.parquet.tmp` 的 writer（`AsyncArrowWriter<File>`）。
     - `finalize_batch()`：确保所有 writer 已关闭后，将批次临时目录原子重命名为最终目录。
-  - [ ] `ParquetChunkWriter` 实现 `ChunkWriter`：
+  - [x] `ParquetChunkWriter` 实现 `ChunkWriter`：
     - `write_chunk()`：将 `Chunk` 转 `RecordBatch` 并写入 writer。
     - `finalize_instance()`：关闭 writer 并将临时文件重命名为最终文件。
-- [ ] 保持旧路径不变。
+- [x] 保持旧路径不变。
 
 ### 验证步骤
-- [ ] 运行 `just test`，确保现有 parquet 测试仍通过（新类型未接入，不应影响）。
-- [ ] 代码检查：目录与文件命名策略与现有实现一致（避免行为变化）。
+- [x] 运行 `just test`，确保现有 parquet 测试仍通过（新类型未接入，不应影响）。
+- [x] 代码检查：目录与文件命名策略与现有实现一致（避免行为变化）。
 
 ---
 

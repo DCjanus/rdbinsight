@@ -623,7 +623,8 @@ async fn process_rdb_streams(
             async move {
                 tokio::spawn(handle_rdb_stream(stream, instance, writer, progress))
                     .await
-                    .with_context(|| "Failed to join spawned direct-writer task")??;
+                    .with_context(|| "Failed to join spawned direct-writer task")?
+                    .with_context(|| "Failed to handle RDB stream")?;
                 Ok::<(), anyhow::Error>(())
             }
         })
@@ -644,7 +645,6 @@ async fn run_report(args: ReportArgs) -> Result<()> {
         args.clickhouse_proxy_url,
     )?;
 
-    // Validate the configuration
     clickhouse_config
         .validate()
         .with_context(|| "Invalid ClickHouse configuration")?;

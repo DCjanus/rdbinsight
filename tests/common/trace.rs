@@ -22,10 +22,10 @@ where S: Subscriber
         // Extract the "path" field value.
         let mut visitor = PathVisitor::default();
         event.record(&mut visitor);
-        if let Some(path) = visitor.path {
-            if let Ok(mut vec) = self.paths.lock() {
-                vec.push(path);
-            }
+        if let Some(path) = visitor.path
+            && let Ok(mut vec) = self.paths.lock()
+        {
+            vec.push(path);
         }
     }
 }

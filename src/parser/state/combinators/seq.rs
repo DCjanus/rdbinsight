@@ -118,7 +118,7 @@ mod tests {
 
     impl InitializableParser for ByteParser {
         fn init<'a>(_buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-            Ok((input, Self::default()))
+            Ok((input, Self))
         }
     }
 
@@ -142,7 +142,7 @@ mod tests {
 
     impl InitializableParser for U16LeParser {
         fn init<'a>(_buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-            Ok((input, Self::default()))
+            Ok((input, Self))
         }
     }
 

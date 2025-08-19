@@ -19,16 +19,11 @@ const CLICKHOUSE_TAG: &str = "23.8";
 #[allow(dead_code)]
 const CLICKHOUSE_PORT: u16 = 8123;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum ProxyType {
+    #[default]
     Http,
     Socks5,
-}
-
-impl Default for ProxyType {
-    fn default() -> Self {
-        ProxyType::Http
-    }
 }
 
 #[derive(Debug, Clone, Default)]

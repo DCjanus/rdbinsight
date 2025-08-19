@@ -54,7 +54,7 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     let instance = address.as_str();
     let batch_ts = OffsetDateTime::now_utc();
 
-    let mut parquet_output = ParquetOutput::new(
+    let parquet_output = ParquetOutput::new(
         output_dir.clone(),
         ParquetCompression::None,
         cluster_name.to_string(),
@@ -164,7 +164,7 @@ async fn test_parquet_compression_algorithms() -> Result<()> {
         let batch_ts = OffsetDateTime::now_utc();
 
         // Initialize Parquet output with specific compression
-        let mut parquet_output = ParquetOutput::new(
+        let parquet_output = ParquetOutput::new(
             output_dir.clone(),
             compression,
             cluster_name.to_string(),
@@ -228,7 +228,7 @@ async fn test_multiple_instances_parquet() -> Result<()> {
     let cluster_name = "test-cluster";
     let batch_ts = OffsetDateTime::now_utc();
 
-    let mut parquet_output = ParquetOutput::new(
+    let parquet_output = ParquetOutput::new(
         output_dir.clone(),
         ParquetCompression::None,
         cluster_name.to_string(),

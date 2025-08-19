@@ -197,7 +197,7 @@ impl RedisInstance {
         let instance = Self {
             container,
             connection_string,
-            redis_version: image.replace(':', "_").replace('/', "_"),
+            redis_version: image.replace([':', '/'], "_"),
         };
 
         // If both username and password are configured, create ACL user after startup
@@ -275,16 +275,16 @@ impl RedisInstance {
                 return Err(anyhow!("Timeout waiting for Redis to be ready"));
             }
 
-            if let Ok(client) = Client::open(connection_string) {
-                if let Ok(mut conn) = client.get_multiplexed_tokio_connection().await {
-                    match redis::cmd("PING").query_async::<()>(&mut conn).await {
-                        Ok(_) => return Ok(()),
-                        Err(err) => {
-                            let s = err.to_string();
-                            if s.contains("NOAUTH") {
-                                // Redis is up but requires authentication
-                                return Ok(());
-                            }
+            if let Ok(client) = Client::open(connection_string)
+                && let Ok(mut conn) = client.get_multiplexed_tokio_connection().await
+            {
+                match redis::cmd("PING").query_async::<()>(&mut conn).await {
+                    Ok(_) => return Ok(()),
+                    Err(err) => {
+                        let s = err.to_string();
+                        if s.contains("NOAUTH") {
+                            // Redis is up but requires authentication
+                            return Ok(());
                         }
                     }
                 }

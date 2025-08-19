@@ -135,13 +135,13 @@
 ## 阶段八：清理与文档
 
 ### 实现步骤
-- [ ] 全局查找未使用代码与导入，移除冗余。
-- [ ] 更新 README 与 `README.zh_CN.md`（如涉及使用方式/性能描述变更），确保两者同步更新（内容与结构一致）。
-- [ ] 在 `templates/design.md`/报告模板无需改动；如修改 `templates/report.html`，需同步更新 `templates/design.md`（当前无此需求）。
+- [x] 全局查找未使用代码与导入，移除冗余。
+- [x] 更新 README 与 `README.zh_CN.md`（如涉及使用方式/性能描述变更），确保两者同步更新（内容与结构一致）。
+- [x] 在 `templates/design.md`/报告模板无需改动；如修改 `templates/report.html`，需同步更新 `templates/design.md`（当前无此需求）。
 
 ### 验证步骤
-- [ ] 人工审阅 README 中的新架构说明是否清晰，且中英文版本一致。
-- [ ] 运行 `just test` 确认最终状态稳定。
+- [x] 人工审阅 README 中的新架构说明是否清晰，且中英文版本一致。
+- [x] 运行 `just test` 确认最终状态稳定。
 
 ---
 

@@ -798,7 +798,11 @@ pub async fn read_response(
 
                 // Read more data into buffer with timeout
                 if buf.remaining_capacity() > 0 {
-                    buf.read_from(stream).timeout(remain_time).await??;
+                    buf.read_from(stream)
+                        .timeout(remain_time)
+                        .await
+                        .context("read more data meet timeout")?
+                        .context("read more data meet error")?;
                 } else {
                     // Buffer is full, we need to consume some data first
                     // This should not happen in normal parsing, but let's be safe

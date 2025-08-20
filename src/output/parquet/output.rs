@@ -10,7 +10,7 @@ use crate::{
     config::ParquetCompression,
     helper::AnyResult,
     output::{
-        abstractions::{ChunkWriter, Output},
+        ChunkWriter, ChunkWriterEnum, Output,
         parquet::{mapper, path},
     },
 };
@@ -70,10 +70,7 @@ impl Output for ParquetOutput {
         Ok(())
     }
 
-    async fn create_writer(
-        &self,
-        instance: &str,
-    ) -> AnyResult<crate::output::abstractions::ChunkWriterEnum> {
+    async fn create_writer(&self, instance: &str) -> AnyResult<ChunkWriterEnum> {
         let sanitized_instance = path::sanitize_instance_filename(instance);
         let temp_filename = format!("{sanitized_instance}.parquet.tmp");
         let final_filename = format!("{sanitized_instance}.parquet");
@@ -83,6 +80,8 @@ impl Output for ParquetOutput {
 
         let writer = ParquetChunkWriter::new(
             instance.to_string(),
+            self.cluster.clone(),
+            self.batch_ts,
             temp_path,
             final_path,
             self.compression,
@@ -90,21 +89,12 @@ impl Output for ParquetOutput {
         .await
         .with_context(|| format!("Failed to create Parquet writer for instance: {instance}"))?;
 
-        Ok(crate::output::abstractions::ChunkWriterEnum::Parquet(
-            Box::new(writer),
-        ))
+        Ok(ChunkWriterEnum::Parquet(Box::new(writer)))
     }
 
     async fn finalize_batch(self: Box<Self>) -> AnyResult<()> {
         let temp_batch_dir = self.temp_batch_dir();
         let final_batch_dir = self.final_batch_dir();
-
-        info!(
-            operation = "parquet_batch_dir_renaming",
-            temp_batch_dir = %temp_batch_dir.display(),
-            final_batch_dir = %final_batch_dir.display(),
-            "Renaming temporary batch directory to final"
-        );
 
         tokio::fs::rename(&temp_batch_dir, &final_batch_dir)
 			.await
@@ -115,27 +105,27 @@ impl Output for ParquetOutput {
 					final_batch_dir.display()
 				)
 			})?;
-
-        info!(
-            operation = "parquet_batch_finalized",
-            temp_batch_dir = %temp_batch_dir.display(),
-            final_batch_dir = %final_batch_dir.display(),
-            "Batch finalized and directory renamed"
-        );
         Ok(())
     }
 }
 
+const MICRO_BATCH_ROWS: usize = 8192;
+
 pub struct ParquetChunkWriter {
     writer: Option<AsyncArrowWriter<File>>,
     instance: String,
+    cluster: String,
+    batch_ts: time::OffsetDateTime,
     temp_path: PathBuf,
     final_path: PathBuf,
+    buffered_records: Vec<crate::record::Record>,
 }
 
 impl ParquetChunkWriter {
     async fn new(
         instance: String,
+        cluster: String,
+        batch_ts: time::OffsetDateTime,
         temp_path: PathBuf,
         final_path: PathBuf,
         compression: ParquetCompression,
@@ -166,98 +156,93 @@ impl ParquetChunkWriter {
         let writer = AsyncArrowWriter::try_new(file, schema, Some(props))
             .map_err(|e| anyhow!("Failed to create async arrow writer: {e}"))?;
 
-        info!(
-            operation = "parquet_writer_open",
-            instance = %instance,
-            temp_path = %temp_path.display(),
-            final_path = %final_path.display(),
-            compression = ?compression,
-            "Opened Parquet writer"
-        );
-
         Ok(Self {
             writer: Some(writer),
             instance,
+            cluster,
+            batch_ts,
             temp_path,
             final_path,
+            buffered_records: Vec::with_capacity(MICRO_BATCH_ROWS),
         })
     }
 
     async fn write_batch(&mut self, batch: RecordBatch) -> AnyResult<()> {
-        match self.writer.as_mut() {
-            Some(writer) => {
-                writer.write(&batch).await.with_context(|| {
-					anyhow!(
-						"Failed to write batch to parquet file {temp_path} for instance: {instance}",
-						temp_path = self.temp_path.display(),
-						instance = self.instance
-					)
-				})?;
-                Ok(())
-            }
-            None => Err(anyhow!(
-                "Attempted to write after writer was closed for instance: {}",
-                self.instance
-            )),
+        self.writer
+            .as_mut()
+            .expect("unexpected error: writer not initialized")
+            .write(&batch)
+            .await
+            .with_context(|| {
+                anyhow!(
+                    "Failed to write batch to parquet file {temp_path} for instance: {instance}",
+                    temp_path = self.temp_path.display(),
+                    instance = self.instance
+                )
+            })?;
+        Ok(())
+    }
+
+    async fn flush_buffer(&mut self) -> AnyResult<()> {
+        if self.buffered_records.is_empty() {
+            return Ok(());
         }
+        let records_count = self.buffered_records.len();
+        let instance = self.instance.clone();
+        let record_batch = mapper::records_to_columns(
+            &self.cluster,
+            self.batch_ts,
+            &self.instance,
+            &self.buffered_records,
+        )
+        .with_context(|| {
+            anyhow!(
+                "Failed to convert {records_count} buffered records to columns for instance: {instance}"
+            )
+        })?;
+        self.buffered_records.clear();
+        self.write_batch(record_batch).await?;
+        Ok(())
     }
 }
 
 #[async_trait::async_trait]
 impl ChunkWriter for ParquetChunkWriter {
-    async fn write_chunk(&mut self, chunk: crate::output::types::Chunk) -> AnyResult<()> {
-        let records_count = chunk.records.len();
-        let instance = &chunk.instance;
-        let record_batch = mapper::chunk_to_columns(&chunk).with_context(|| {
-            anyhow!("Failed to convert {records_count} records to columns for instance: {instance}")
-        })?;
-        self.write_batch(record_batch).await?;
-        info!(
-            operation = "parquet_batch_written",
-            instance = %chunk.instance,
-            records_count = chunk.records.len(),
-            "Batch written to Parquet"
-        );
+    async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()> {
+        self.buffered_records.push(record);
+        if self.buffered_records.len() >= MICRO_BATCH_ROWS {
+            self.flush_buffer().await?;
+        }
         Ok(())
     }
 
-    async fn finalize_instance(&mut self) -> AnyResult<()> {
-        info!(
-            operation = "parquet_writer_closing",
-            instance = %self.instance,
-            temp_path = %self.temp_path.display(),
-            final_path = %self.final_path.display(),
-            "Closing Parquet writer"
-        );
+    async fn finalize_instance(self) -> AnyResult<()> {
+        let mut this = self;
 
-        if let Some(writer) = self.writer.take() {
+        if !this.buffered_records.is_empty() {
+            this.flush_buffer().await?;
+        }
+
+        if let Some(writer) = this.writer {
             writer.close().await.with_context(|| {
                 format!(
                     "Failed to close parquet writer for file {temp_path} for instance: {instance}",
-                    temp_path = self.temp_path.display(),
-                    instance = self.instance
+                    temp_path = this.temp_path.display(),
+                    instance = this.instance
                 )
             })?;
         }
 
-        tokio::fs::rename(&self.temp_path, &self.final_path)
+        tokio::fs::rename(&this.temp_path, &this.final_path)
             .await
             .with_context(|| {
                 format!(
                     "Failed to rename parquet file from {} to {} for instance: {}",
-                    self.temp_path.display(),
-                    self.final_path.display(),
-                    self.instance
+                    this.temp_path.display(),
+                    this.final_path.display(),
+                    this.instance
                 )
             })?;
-
-        info!(
-            operation = "parquet_writer_closed",
-            instance = %self.instance,
-            temp_path = %self.temp_path.display(),
-            final_path = %self.final_path.display(),
-            "Parquet writer closed and file finalized"
-        );
         Ok(())
     }
 }

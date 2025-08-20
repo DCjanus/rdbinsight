@@ -3,3 +3,5 @@ tests/dumps/
 .cursor/
 rdb_report_*.html
 /tmp
+.idea/
+.vscode/

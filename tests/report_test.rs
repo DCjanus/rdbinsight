@@ -1,18 +1,18 @@
 use bytes::Bytes;
+use common::clickhouse::start_clickhouse;
 use rdbinsight::{
     config::ClickHouseConfig,
-    output::{abstractions::Output, clickhouse::ClickHouseOutput, types::Chunk},
+    output::{ChunkWriter, Output, clickhouse::ClickHouseOutput},
     record::{Record, RecordEncoding, RecordType},
     report::{ReportGenerator, get_latest_batch_for_cluster},
 };
-mod common;
-use common::clickhouse::start_clickhouse;
-use rdbinsight::output::abstractions::ChunkWriter;
 use time::OffsetDateTime;
 use tracing::info;
 use url::Url;
 
 use crate::common::init_log_for_debug;
+
+mod common;
 
 fn make_records() -> Vec<Record> {
     use rdbinsight::parser::{core::raw::RDBStr, model::StringEncoding};
@@ -69,27 +69,15 @@ async fn test_report_generate_data_with_clickhouse() {
     // write same records for 2 instances to exercise instance aggregates
     let records = make_records();
     let mut writer1 = output.create_writer("10.0.0.1:6379").await.unwrap();
-    writer1
-        .write_chunk(Chunk {
-            cluster: cluster.clone(),
-            batch_ts,
-            instance: "10.0.0.1:6379".to_string(),
-            records: records.clone(),
-        })
-        .await
-        .unwrap();
+    for record in records.clone() {
+        writer1.write_record(record).await.unwrap();
+    }
     writer1.finalize_instance().await.unwrap();
 
     let mut writer2 = output.create_writer("10.0.0.2:6379").await.unwrap();
-    writer2
-        .write_chunk(Chunk {
-            cluster: cluster.clone(),
-            batch_ts,
-            instance: "10.0.0.2:6379".to_string(),
-            records: records.clone(),
-        })
-        .await
-        .unwrap();
+    for record in records.clone() {
+        writer2.write_record(record).await.unwrap();
+    }
     writer2.finalize_instance().await.unwrap();
     Box::new(output).finalize_batch().await.unwrap();
 

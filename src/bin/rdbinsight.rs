@@ -1,19 +1,18 @@
 use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc, time::Instant};
 
 use anyhow::{Context, Result, anyhow};
-use backoff::backoff::Backoff;
 use clap::{CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
     config::{DumpConfig, ParquetCompression},
-    output::abstractions::{ChunkWriter, Output},
-    record::{Record, RecordStream},
+    output::{ChunkWriter, ChunkWriterEnum, Output},
+    record::RecordStream,
     source::{RDBStream, RdbSourceConfig},
 };
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
@@ -428,28 +427,18 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
         "Starting dump for cluster"
     );
 
-    let streams = source_config
+    let streams: Vec<Pin<Box<dyn RDBStream>>> = source_config
         .get_rdb_streams()
         .await
         .with_context(|| "Failed to get RDB streams")?;
-
-    debug!(
-        operation = "concurrent_processing_start",
-        stream_count = %streams.len(),
-        "Starting concurrent processing of RDB streams"
-    );
     let total_streams = streams.len();
 
-    // Use defaults from existing code: batch_size = 1_000_000
-    const BATCH_SIZE: usize = 1_000_000;
-
-    process_streams_with_direct_writers(
+    process_rdb_streams(
         streams,
         config.output,
         cluster_name.to_string(),
         batch_timestamp,
         config.concurrency,
-        BATCH_SIZE,
     )
     .await?;
 
@@ -462,15 +451,7 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     Ok(())
 }
 
-fn create_backoff() -> backoff::ExponentialBackoff {
-    backoff::ExponentialBackoffBuilder::new()
-        .with_initial_interval(std::time::Duration::from_secs(1))
-        .with_max_interval(std::time::Duration::from_secs(10))
-        .with_max_elapsed_time(Some(std::time::Duration::from_secs(60)))
-        .build()
-}
-
-fn log_progress_chunk(
+fn log_progress(
     start_time: Instant,
     processed_records: u64,
     completed_instances: usize,
@@ -490,48 +471,6 @@ fn log_progress_chunk(
         rps = rps,
         "Progress update"
     );
-}
-
-async fn write_chunk_with_retry(
-    writer: &mut dyn rdbinsight::output::abstractions::ChunkWriter,
-    chunk: rdbinsight::output::types::Chunk,
-    mut retries: backoff::ExponentialBackoff,
-) -> Result<()> {
-    loop {
-        match writer.write_chunk(chunk.clone()).await {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                warn!(operation = "write_chunk_retry", instance = %chunk.instance, error = %e, error_chain = %format!("{e:#}"), "Write chunk failed, will retry");
-                if let Some(wait) = retries.next_backoff() {
-                    tokio::time::sleep(wait).await;
-                } else {
-                    return Err(e).with_context(|| "Failed to write chunk after retries");
-                }
-            }
-        }
-    }
-}
-
-async fn finalize_instance_with_retry(
-    writer: &mut dyn rdbinsight::output::abstractions::ChunkWriter,
-    instance: &str,
-    mut retries: backoff::ExponentialBackoff,
-) -> Result<()> {
-    loop {
-        match writer.finalize_instance().await {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                warn!(operation = "finalize_instance_retry", instance = %instance, error = %e, error_chain = %format!("{e:#}"), "Finalize instance failed, will retry");
-                if let Some(wait) = retries.next_backoff() {
-                    tokio::time::sleep(wait).await;
-                } else {
-                    return Err(e).with_context(|| {
-                        format!("Failed to finalize instance {instance} after retries")
-                    });
-                }
-            }
-        }
-    }
 }
 
 struct ProgressState {
@@ -570,7 +509,7 @@ async fn update_progress_after_write(
     *entry = entry.saturating_add(added_records);
 
     let instance_processed_records = *state.per_instance_records.get(instance).unwrap_or(&0);
-    log_progress_chunk(
+    log_progress(
         state.start_time,
         state.processed_records,
         state.completed_instances,
@@ -585,7 +524,7 @@ async fn mark_instance_completed(progress: &SharedProgress, instance: &str) {
     let mut state = progress.lock().await;
     state.completed_instances = state.completed_instances.saturating_add(1);
     let instance_processed_records = *state.per_instance_records.get(instance).unwrap_or(&0);
-    log_progress_chunk(
+    log_progress(
         state.start_time,
         state.processed_records,
         state.completed_instances,
@@ -596,13 +535,10 @@ async fn mark_instance_completed(progress: &SharedProgress, instance: &str) {
     state.last_log = Instant::now();
 }
 
-async fn handle_stream_with_prepared_writer(
+async fn handle_rdb_stream(
     mut stream: Pin<Box<dyn RDBStream>>,
     instance: String,
-    mut writer: rdbinsight::output::abstractions::ChunkWriterEnum,
-    cluster: String,
-    batch_ts: OffsetDateTime,
-    batch_size: usize,
+    mut writer: ChunkWriterEnum,
     progress: SharedProgress,
 ) -> Result<()> {
     let source_type = stream.source_type();
@@ -617,62 +553,47 @@ async fn handle_stream_with_prepared_writer(
         .await
         .with_context(|| anyhow!("Failed to prepare writer for instance {instance}"))?;
 
+    const REPORT_INTERVAL: u64 = 1_000_000;
+
     let mut record_stream = RecordStream::new(stream, source_type);
-    let mut buffer: Vec<Record> = Vec::with_capacity(batch_size);
+    let mut processed_since_report: u64 = 0;
 
     while let Some(next) = record_stream.next().await {
         let record =
             next.with_context(|| anyhow!("Failed to parse record from instance {instance}"))?;
-        buffer.push(record);
-        if buffer.len() >= batch_size {
-            let chunk = rdbinsight::output::types::Chunk {
-                cluster: cluster.clone(),
-                batch_ts,
-                instance: instance.clone(),
-                records: std::mem::replace(&mut buffer, Vec::with_capacity(batch_size)),
-            };
 
-            let records_in_chunk = chunk.records.len() as u64;
-            write_chunk_with_retry(&mut writer, chunk, create_backoff())
-                .await
-                .context("Failed to write chunk")?;
+        writer
+            .write_record(record)
+            .await
+            .context("Failed to write record")?;
 
-            update_progress_after_write(&progress, records_in_chunk, &instance).await;
+        processed_since_report = processed_since_report.saturating_add(1);
+        if processed_since_report >= REPORT_INTERVAL {
+            update_progress_after_write(&progress, processed_since_report, &instance).await;
+            processed_since_report = 0;
         }
     }
 
-    if !buffer.is_empty() {
-        let chunk = rdbinsight::output::types::Chunk {
-            cluster: cluster.clone(),
-            batch_ts,
-            instance: instance.clone(),
-            records: buffer,
-        };
-
-        let records_in_chunk = chunk.records.len() as u64;
-        write_chunk_with_retry(&mut writer, chunk, create_backoff())
-            .await
-            .context("Failed to write final chunk")?;
-
-        update_progress_after_write(&progress, records_in_chunk, &instance).await;
+    if processed_since_report > 0 {
+        update_progress_after_write(&progress, processed_since_report, &instance).await;
     }
 
-    finalize_instance_with_retry(&mut writer, &instance, create_backoff())
+    writer
+        .finalize_instance()
         .await
-        .context("Failed to finalize instance")?;
+        .with_context(|| anyhow!("Failed to finalize writer for instance {instance}"))?;
 
     mark_instance_completed(&progress, &instance).await;
 
     Ok(())
 }
 
-async fn process_streams_with_direct_writers(
+async fn process_rdb_streams(
     streams: Vec<Pin<Box<dyn RDBStream>>>,
     output_config: rdbinsight::config::OutputConfig,
     cluster: String,
     batch_ts: OffsetDateTime,
     concurrency: usize,
-    batch_size: usize,
 ) -> Result<()> {
     let output = output_config
         .create_output(cluster.clone(), batch_ts)
@@ -698,14 +619,12 @@ async fn process_streams_with_direct_writers(
     futures_util::stream::iter(tasks)
         .map(Ok)
         .try_for_each_concurrent(concurrency.max(1), |(stream, instance, writer)| {
-            let cluster = cluster.clone();
             let progress = progress.clone();
             async move {
-                tokio::spawn(handle_stream_with_prepared_writer(
-                    stream, instance, writer, cluster, batch_ts, batch_size, progress,
-                ))
-                .await
-                .with_context(|| "Failed to join spawned direct-writer task")??;
+                tokio::spawn(handle_rdb_stream(stream, instance, writer, progress))
+                    .await
+                    .with_context(|| "Failed to join spawned direct-writer task")?
+                    .with_context(|| "Failed to handle RDB stream")?;
                 Ok::<(), anyhow::Error>(())
             }
         })
@@ -726,7 +645,6 @@ async fn run_report(args: ReportArgs) -> Result<()> {
         args.clickhouse_proxy_url,
     )?;
 
-    // Validate the configuration
     clickhouse_config
         .validate()
         .with_context(|| "Invalid ClickHouse configuration")?;

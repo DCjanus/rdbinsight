@@ -68,37 +68,16 @@ impl ProxyConnector {
     }
 }
 
-#[derive(Debug)]
-pub struct ProxyConnectorError(pub Box<dyn std::error::Error + Send + Sync>);
-
-impl std::fmt::Display for ProxyConnectorError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Proxy connector error: {}", self.0)
-    }
-}
-
-impl std::error::Error for ProxyConnectorError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&*self.0)
-    }
-}
-
 impl Service<Uri> for ProxyConnector {
     type Response = <HttpConnector as Service<Uri>>::Response;
-    type Error = ProxyConnectorError;
+    type Error = anyhow::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self {
-            ProxyConnector::Direct(connector) => connector
-                .poll_ready(cx)
-                .map_err(|e| ProxyConnectorError(Box::new(e))),
-            ProxyConnector::Socks5(connector) => connector
-                .poll_ready(cx)
-                .map_err(|e| ProxyConnectorError(Box::new(e))),
-            ProxyConnector::Http(connector) => connector
-                .poll_ready(cx)
-                .map_err(|e| ProxyConnectorError(Box::new(e))),
+            ProxyConnector::Direct(connector) => connector.poll_ready(cx).map_err(Into::into),
+            ProxyConnector::Socks5(connector) => connector.poll_ready(cx).map_err(Into::into),
+            ProxyConnector::Http(connector) => connector.poll_ready(cx).map_err(Into::into),
         }
     }
 
@@ -106,15 +85,15 @@ impl Service<Uri> for ProxyConnector {
         match self {
             ProxyConnector::Direct(connector) => {
                 let fut = connector.call(req);
-                Box::pin(async move { fut.await.map_err(|e| ProxyConnectorError(Box::new(e))) })
+                Box::pin(async move { fut.await.map_err(Into::into) })
             }
             ProxyConnector::Socks5(connector) => {
                 let fut = connector.call(req);
-                Box::pin(async move { fut.await.map_err(|e| ProxyConnectorError(Box::new(e))) })
+                Box::pin(async move { fut.await.map_err(Into::into) })
             }
             ProxyConnector::Http(connector) => {
                 let fut = connector.call(req);
-                Box::pin(async move { fut.await.map_err(|e| ProxyConnectorError(Box::new(e))) })
+                Box::pin(async move { fut.await.map_err(Into::into) })
             }
         }
     }

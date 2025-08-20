@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Context;
 use bytes::Bytes;
 use clickhouse::{Client, Row, insert::Insert};
@@ -5,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tracing::info;
 
-use crate::{config::ClickHouseConfig, helper::AnyResult, record::Record};
+use crate::{config::ClickHouseConfig, helper::AnyResult, output::ChunkWriterEnum};
 
 #[derive(Debug, Clone, Row, Serialize, Deserialize)]
 pub struct RedisRecordRow {
@@ -166,39 +168,10 @@ impl ClickHouseOutput {
         );
         Ok(())
     }
-
-    fn record_to_row_from_chunk(
-        record: &Record,
-        chunk: &crate::output::types::Chunk,
-    ) -> RedisRecordRow {
-        let key_bytes = match &record.key {
-            crate::parser::core::raw::RDBStr::Str(bytes) => bytes.clone(),
-            crate::parser::core::raw::RDBStr::Int(i) => Bytes::from(i.to_string()),
-        };
-
-        RedisRecordRow {
-            cluster: chunk.cluster.clone(),
-            batch: chunk.batch_ts,
-            instance: chunk.instance.clone(),
-            db: record.db,
-            key: key_bytes,
-            r#type: record.type_name().to_string(),
-            member_count: record.member_count.unwrap_or(0),
-            rdb_size: record.rdb_size,
-            encoding: record.encoding_name(),
-            expire_at: record.expire_at_ms.map(|ms| {
-                OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000).unwrap()
-            }),
-            idle_seconds: record.idle_seconds,
-            freq: record.freq,
-            codis_slot: record.codis_slot,
-            redis_slot: record.redis_slot,
-        }
-    }
 }
 
 #[async_trait::async_trait]
-impl crate::output::abstractions::Output for ClickHouseOutput {
+impl crate::output::Output for ClickHouseOutput {
     async fn prepare_batch(&self) -> AnyResult<()> {
         use tracing::debug;
         debug!(
@@ -213,17 +186,22 @@ impl crate::output::abstractions::Output for ClickHouseOutput {
         self.ensure_tables(&client).await
     }
 
-    async fn create_writer(
-        &self,
-        _instance: &str,
-    ) -> AnyResult<crate::output::abstractions::ChunkWriterEnum> {
+    async fn create_writer(&self, instance: &str) -> AnyResult<ChunkWriterEnum> {
         let client = self
             .config
             .create_client()
             .context("Failed to create ClickHouse client for writer")?;
-        Ok(crate::output::abstractions::ChunkWriterEnum::ClickHouse(
-            Box::new(ClickHouseChunkWriter { client }),
-        ))
+        let insert: Insert<RedisRecordRow> = create_redis_record_insert(&client);
+        Ok(ChunkWriterEnum::ClickHouse(Box::new(
+            ClickHouseChunkWriter {
+                client,
+                cluster: self.cluster.clone(),
+                batch_ts: self.batch_ts,
+                instance: instance.to_string(),
+                insert,
+                pending_rows: 0,
+            },
+        )))
     }
 
     async fn finalize_batch(self: Box<Self>) -> AnyResult<()> {
@@ -243,32 +221,79 @@ impl crate::output::abstractions::Output for ClickHouseOutput {
             "Writing batch completion row"
         );
         let mut insert: Insert<BatchCompletedRow> = client.insert("import_batches_completed")?;
-        insert.write(&completion_row).await?;
-        insert.end().await?;
+        insert
+            .write(&completion_row)
+            .await
+            .context("Failed to write batch completion row")?;
+        insert
+            .end()
+            .await
+            .context("Failed to end batch completion row")?;
         Ok(())
     }
+}
+
+fn create_redis_record_insert(client: &Client) -> Insert<RedisRecordRow> {
+    client
+        .insert("redis_records_raw")
+        .expect("unexpected error: failed to create RedisRecordRow insert")
+        .with_timeouts(Some(Duration::from_secs(10)), None)
 }
 
 pub struct ClickHouseChunkWriter {
     client: Client,
+    cluster: String,
+    batch_ts: OffsetDateTime,
+    instance: String,
+    insert: Insert<RedisRecordRow>,
+    pending_rows: u64,
 }
 
 #[async_trait::async_trait]
-impl crate::output::abstractions::ChunkWriter for ClickHouseChunkWriter {
-    async fn write_chunk(&mut self, chunk: crate::output::types::Chunk) -> AnyResult<()> {
-        if chunk.records.is_empty() {
-            return Ok(());
-        }
-        let mut insert: Insert<RedisRecordRow> = self.client.insert("redis_records_raw")?;
-        for record in &chunk.records {
-            let row = ClickHouseOutput::record_to_row_from_chunk(record, &chunk);
-            insert.write(&row).await?;
-        }
-        insert.end().await?;
+impl crate::output::ChunkWriter for ClickHouseChunkWriter {
+    async fn prepare_instance(&mut self) -> AnyResult<()> {
         Ok(())
     }
 
-    async fn finalize_instance(&mut self) -> AnyResult<()> {
+    async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()> {
+        let row = RedisRecordRow {
+            cluster: self.cluster.clone(),
+            batch: self.batch_ts,
+            instance: self.instance.clone(),
+            db: record.db,
+            key: match &record.key {
+                crate::parser::core::raw::RDBStr::Str(bytes) => bytes.clone(),
+                crate::parser::core::raw::RDBStr::Int(i) => Bytes::from(i.to_string()),
+            },
+            r#type: record.type_name().to_string(),
+            member_count: record.member_count.unwrap_or(0),
+            rdb_size: record.rdb_size,
+            encoding: record.encoding_name(),
+            expire_at: record.expire_at_ms.map(|ms| {
+                OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000)
+                    .expect("Failed to convert milliseconds to nanoseconds")
+            }),
+            idle_seconds: record.idle_seconds,
+            freq: record.freq,
+            codis_slot: record.codis_slot,
+            redis_slot: record.redis_slot,
+        };
+        self.insert
+            .write(&row)
+            .await
+            .context("Failed to write record")?;
+        self.pending_rows += 1;
+        if self.pending_rows >= 1000 * 1000 {
+            let insert = create_redis_record_insert(&self.client);
+            let insert = std::mem::replace(&mut self.insert, insert);
+            insert.end().await.context("Failed to end instance")?;
+            self.pending_rows = 0;
+        }
+        Ok(())
+    }
+
+    async fn finalize_instance(mut self) -> AnyResult<()> {
+        self.insert.end().await.context("Failed to end instance")?;
         Ok(())
     }
 }

@@ -1,4 +1,5 @@
 use std::{
+    net::{IpAddr, SocketAddr},
     path::PathBuf,
     pin::Pin,
     sync::{
@@ -8,7 +9,7 @@ use std::{
     time::Instant,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, ensure};
 use clap::{Args, CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
@@ -291,7 +292,15 @@ async fn main() -> Result<()> {
         .init();
 
     match main_cli.command {
-        Command::Dump(dump_args) => dump_records(dump_args.cmd).await,
+        Command::Dump(dump_args) => {
+            if let Some(ref prometheus_url) = dump_args.prometheus {
+                // Stage Two: validate and resolve the prometheus URL early
+                parse_prometheus_addr(prometheus_url)
+                    .await
+                    .with_context(|| "Invalid --prometheus URL; expected http://host:port")?;
+            }
+            dump_records(dump_args.cmd).await
+        }
         Command::Report(args) => run_report(args).await,
         Command::Misc(misc_cmd) => match misc_cmd {
             MiscCommand::PrintClickhouseSchema => {
@@ -478,6 +487,32 @@ async fn dump_records(dump_cmd: DumpCommand) -> Result<()> {
         "Dump completed successfully for all instances"
     );
     Ok(())
+}
+
+async fn parse_prometheus_addr(url: &Url) -> Result<SocketAddr> {
+    ensure!(url.scheme() == "http", "only http scheme is supported");
+
+    let port = url.port().ok_or_else(|| {
+        anyhow!("--prometheus URL must include an explicit port, e.g., http://0.0.0.0:9901")
+    })?;
+
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => Ok(SocketAddr::new(IpAddr::V4(ip), port)),
+        Some(url::Host::Ipv6(ip)) => Ok(SocketAddr::new(IpAddr::V6(ip), port)),
+        Some(url::Host::Domain(domain)) => {
+            if domain.eq_ignore_ascii_case("localhost") {
+                Ok(SocketAddr::new(
+                    IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                    port,
+                ))
+            } else {
+                Err(anyhow!(
+                    "--prometheus host must be an IP address (IPv4/IPv6) or 'localhost'"
+                ))
+            }
+        }
+        None => Err(anyhow!("--prometheus URL must include host")),
+    }
 }
 
 // Simplified global state management

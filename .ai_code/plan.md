@@ -26,16 +26,16 @@
 ## 阶段二：解析并校验 --prometheus HTTP URL（仅限 http）
 
 ### 实现步骤
-- [ ] 在 `src/bin/rdbinsight.rs` 中添加解析函数（或内联逻辑）：当 `prometheus` 为 `Some(url)` 时，使用 `url::Url::parse` 解析；仅接受 `http` scheme。
-- [ ] 从 URL 提取 host 与 port；若缺失或无效则返回用户可读错误。暂不支持从路径中读取任何信息（路径固定后续使用 `/metrics`）。
-- [ ] 将解析结果转换为 `SocketAddr`（如为主机名可使用 `tokio::net::lookup_host` 解析，取首个结果）；解析失败时提前报错退出。
-- [ ] 该阶段不启动 HTTP 服务，仅完成参数校验与解析，确保无效输入能尽早失败。
+- [x] 在 `src/bin/rdbinsight.rs` 中添加解析函数（或内联逻辑）：当 `prometheus` 为 `Some(url)` 时，使用 `url::Url::parse` 解析；仅接受 `http` scheme。
+- [x] 从 URL 提取 host 与 port；若缺失或无效则返回用户可读错误。暂不支持从路径中读取任何信息（路径固定后续使用 `/metrics`）。
+- [x] 将解析结果转换为 `SocketAddr`（如为主机名可使用 `tokio::net::lookup_host` 解析，取首个结果）；解析失败时提前报错退出。
+- [x] 该阶段不启动 HTTP 服务，仅完成参数校验与解析，确保无效输入能尽早失败。
 
 ### 验证步骤
-- [ ] 执行 `rdbinsight dump --prometheus http://0.0.0.0:9901 from-file --path /dev/null`，应通过参数阶段（后续会因业务输入失败也可）。
-- [ ] 执行 `rdbinsight dump --prometheus 0.0.0.0:9901 from-file --path /dev/null`，应提示仅支持 HTTP URL。
-- [ ] 执行 `rdbinsight dump --prometheus https://0.0.0.0:9901 from-file --path /dev/null`，应提示不支持非 http scheme。
-- [ ] 运行 `cargo clippy -D warnings`，应无新增告警。
+- [x] 执行 `rdbinsight dump --prometheus http://0.0.0.0:9901 from-file --path /dev/null`，应通过参数阶段（后续会因业务输入失败也可）。
+- [x] 执行 `rdbinsight dump --prometheus 0.0.0.0:9901 from-file --path /dev/null`，应提示仅支持 HTTP URL。
+- [x] 执行 `rdbinsight dump --prometheus https://0.0.0.0:9901 from-file --path /dev/null`，应提示不支持非 http scheme。
+- [x] 运行 `cargo clippy -D warnings`，应无新增告警。
 
 ---
 

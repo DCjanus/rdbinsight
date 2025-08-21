@@ -1,4 +1,12 @@
-use std::{collections::HashMap, path::PathBuf, pin::Pin, sync::Arc, time::Instant};
+use std::{
+    path::PathBuf,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
+};
 
 use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand, value_parser};
@@ -11,7 +19,6 @@ use rdbinsight::{
     source::{RDBStream, RdbSourceConfig},
 };
 use time::OffsetDateTime;
-use tokio::sync::Mutex;
 use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
@@ -24,11 +31,6 @@ struct MainCli {
     /// Enable verbose logging
     #[clap(short, long, global = true)]
     verbose: bool,
-
-    /// Global concurrency override
-    #[arg(long, default_value_t = default_concurrency(), global = true, env = "RDBINSIGHT_CONCURRENCY"
-    )]
-    concurrency: usize,
 }
 
 fn default_concurrency() -> usize {
@@ -52,7 +54,7 @@ enum Command {
 #[allow(clippy::enum_variant_names)]
 enum DumpCommand {
     /// Dump from Redis standalone instance
-    FromRedis(DumpRedisArgs),
+    FromStandalone(DumpStandaloneArgs),
     /// Dump from Redis cluster
     FromCluster(DumpClusterArgs),
     /// Dump from RDB file
@@ -62,7 +64,7 @@ enum DumpCommand {
 }
 
 #[derive(Parser)]
-struct DumpRedisArgs {
+struct DumpStandaloneArgs {
     /// Redis standalone server address (e.g., 127.0.0.1:6379)
     #[arg(long)]
     addr: String,
@@ -82,6 +84,12 @@ struct DumpRedisArgs {
     /// Batch timestamp (RFC3339, default = now)
     #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
+
+    /// Number of parallel connections for dump operations
+    ///
+    /// Default: CPU cores / 2 (min 1, max 8)
+    #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
+    concurrency: usize,
 
     #[command(subcommand)]
     output: OutputCommand,
@@ -112,6 +120,12 @@ struct DumpClusterArgs {
     /// Batch timestamp (RFC3339, default = now)
     #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
+
+    /// Number of parallel connections for dump operations
+    ///
+    /// Default: CPU cores / 2 (min 1, max 8)
+    #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
+    concurrency: usize,
 
     #[command(subcommand)]
     output: OutputCommand,
@@ -160,6 +174,12 @@ struct DumpCodisArgs {
     /// Batch timestamp (RFC3339, default = now)
     #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
+
+    /// Number of parallel connections for dump operations
+    ///
+    /// Default: CPU cores / 2 (min 1, max 8)
+    #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
+    concurrency: usize,
 
     #[command(subcommand)]
     output: OutputCommand,
@@ -262,7 +282,7 @@ async fn main() -> Result<()> {
         .init();
 
     match main_cli.command {
-        Command::Dump(dump_cmd) => dump_records(dump_cmd, main_cli.concurrency).await,
+        Command::Dump(dump_cmd) => dump_records(dump_cmd).await,
         Command::Report(args) => run_report(args).await,
         Command::Misc(misc_cmd) => match misc_cmd {
             MiscCommand::PrintClickhouseSchema => {
@@ -309,21 +329,20 @@ fn print_clickhouse_schema() {
 // Convert new CLI structure to Config
 fn dump_command_to_config(
     dump_cmd: DumpCommand,
-    concurrency: usize,
 ) -> Result<(rdbinsight::config::DumpConfig, Option<String>)> {
     use rdbinsight::config::{
         ClickHouseConfig, DumpConfig, OutputConfig, ParquetConfig, SourceConfig,
     };
 
-    let (source_config, batch_timestamp, output_cmd) = match dump_cmd {
-        DumpCommand::FromRedis(args) => {
+    let (source_config, batch_timestamp, output_cmd, concurrency) = match dump_cmd {
+        DumpCommand::FromStandalone(args) => {
             let source = SourceConfig::RedisStandalone {
                 cluster_name: args.cluster,
                 address: args.addr,
                 username: args.username,
                 password: args.password,
             };
-            (source, args.batch_timestamp, args.output)
+            (source, args.batch_timestamp, args.output, args.concurrency)
         }
         DumpCommand::FromCluster(args) => {
             let source = SourceConfig::RedisCluster {
@@ -333,7 +352,7 @@ fn dump_command_to_config(
                 password: args.password,
                 require_slave: args.require_slave,
             };
-            (source, args.batch_timestamp, args.output)
+            (source, args.batch_timestamp, args.output, args.concurrency)
         }
         DumpCommand::FromFile(args) => {
             let source = SourceConfig::RDBFile {
@@ -341,7 +360,8 @@ fn dump_command_to_config(
                 path: args.path.to_string_lossy().to_string(),
                 instance: args.instance,
             };
-            (source, args.batch_timestamp, args.output)
+            // For file dump, we use concurrency of 1 since we only process one file
+            (source, args.batch_timestamp, args.output, 1)
         }
         DumpCommand::FromCodis(args) => {
             let source = SourceConfig::Codis {
@@ -350,7 +370,7 @@ fn dump_command_to_config(
                 password: args.password,
                 require_slave: args.require_slave,
             };
-            (source, args.batch_timestamp, args.output)
+            (source, args.batch_timestamp, args.output, args.concurrency)
         }
     };
 
@@ -378,9 +398,9 @@ fn dump_command_to_config(
     Ok((config, batch_timestamp))
 }
 
-async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
+async fn dump_records(dump_cmd: DumpCommand) -> Result<()> {
     let (mut config, batch_timestamp_arg): (DumpConfig, Option<String>) =
-        dump_command_to_config(dump_cmd, concurrency)
+        dump_command_to_config(dump_cmd)
             .with_context(|| "Failed to parse CLI arguments into configuration")?;
 
     config
@@ -451,95 +471,54 @@ async fn dump_records(dump_cmd: DumpCommand, concurrency: usize) -> Result<()> {
     Ok(())
 }
 
-fn log_progress(
+// Simplified global state management
+struct BatchContext {
+    global_processed: Arc<AtomicU64>,
+    completed_instances: Arc<AtomicU64>,
     start_time: Instant,
-    processed_records: u64,
-    completed_instances: usize,
     total_instances: usize,
-    instance: &str,
-    instance_processed_records: u64,
-) {
-    let elapsed = start_time.elapsed().as_secs_f64().max(0.000_001);
-    let rps = processed_records as f64 / elapsed;
-    info!(
-        operation = "progress_update",
-        instance = %instance,
-        processed_records = processed_records,
-        instance_processed_records = instance_processed_records,
-        completed_instances = completed_instances,
-        total_instances = total_instances,
-        rps = rps,
-        "Progress update"
-    );
 }
 
-struct ProgressState {
-    processed_records: u64,
-    completed_instances: usize,
+// Progress state for each coroutine
+struct InstanceProgress {
+    instance_name: String,
+    local_count: u64,
+    global_processed: Arc<AtomicU64>,
+    completed_instances: Arc<AtomicU64>,
     start_time: Instant,
-    last_log: Instant,
     total_instances: usize,
-    per_instance_records: HashMap<String, u64>,
 }
 
-type SharedProgress = Arc<Mutex<ProgressState>>;
+type SharedBatchContext = Arc<BatchContext>;
 
-fn init_progress(total_instances: usize) -> SharedProgress {
-    Arc::new(Mutex::new(ProgressState {
-        processed_records: 0,
-        completed_instances: 0,
+fn create_batch_context(total_instances: usize) -> SharedBatchContext {
+    Arc::new(BatchContext {
+        global_processed: Arc::new(AtomicU64::new(0)),
+        completed_instances: Arc::new(AtomicU64::new(0)),
         start_time: Instant::now(),
-        last_log: Instant::now(),
         total_instances,
-        per_instance_records: HashMap::new(),
-    }))
+    })
 }
 
-async fn update_progress_after_write(
-    progress: &SharedProgress,
-    added_records: u64,
-    instance: &str,
-) {
-    let mut state = progress.lock().await;
-    state.processed_records = state.processed_records.saturating_add(added_records);
-    let entry = state
-        .per_instance_records
-        .entry(instance.to_string())
-        .or_insert(0);
-    *entry = entry.saturating_add(added_records);
-
-    let instance_processed_records = *state.per_instance_records.get(instance).unwrap_or(&0);
-    log_progress(
-        state.start_time,
-        state.processed_records,
-        state.completed_instances,
-        state.total_instances,
-        instance,
-        instance_processed_records,
-    );
-    state.last_log = Instant::now();
-}
-
-async fn mark_instance_completed(progress: &SharedProgress, instance: &str) {
-    let mut state = progress.lock().await;
-    state.completed_instances = state.completed_instances.saturating_add(1);
-    let instance_processed_records = *state.per_instance_records.get(instance).unwrap_or(&0);
-    log_progress(
-        state.start_time,
-        state.processed_records,
-        state.completed_instances,
-        state.total_instances,
-        instance,
-        instance_processed_records,
-    );
-    state.last_log = Instant::now();
+fn create_instance_progress(
+    instance_name: String,
+    batch_context: &SharedBatchContext,
+) -> InstanceProgress {
+    InstanceProgress {
+        instance_name,
+        local_count: 0,
+        global_processed: Arc::clone(&batch_context.global_processed),
+        completed_instances: Arc::clone(&batch_context.completed_instances),
+        start_time: batch_context.start_time,
+        total_instances: batch_context.total_instances,
+    }
 }
 
 async fn handle_rdb_stream(
     mut stream: Pin<Box<dyn RDBStream>>,
     instance: String,
     mut writer: ChunkWriterEnum,
-    progress: SharedProgress,
+    mut progress: InstanceProgress,
 ) -> Result<()> {
     let source_type = stream.source_type();
 
@@ -553,10 +532,7 @@ async fn handle_rdb_stream(
         .await
         .with_context(|| anyhow!("Failed to prepare writer for instance {instance}"))?;
 
-    const REPORT_INTERVAL: u64 = 1_000_000;
-
     let mut record_stream = RecordStream::new(stream, source_type);
-    let mut processed_since_report: u64 = 0;
 
     while let Some(next) = record_stream.next().await {
         let record =
@@ -567,15 +543,23 @@ async fn handle_rdb_stream(
             .await
             .context("Failed to write record")?;
 
-        processed_since_report = processed_since_report.saturating_add(1);
-        if processed_since_report >= REPORT_INTERVAL {
-            update_progress_after_write(&progress, processed_since_report, &instance).await;
-            processed_since_report = 0;
-        }
-    }
+        progress.local_count += 1;
+        let global_count = progress.global_processed.fetch_add(1, Ordering::Relaxed) + 1;
 
-    if processed_since_report > 0 {
-        update_progress_after_write(&progress, processed_since_report, &instance).await;
+        if progress.local_count.is_multiple_of(1_000_000) {
+            let rps = global_count as f64 / progress.start_time.elapsed().as_secs_f64();
+            let completed = progress.completed_instances.load(Ordering::Relaxed) as usize;
+
+            log_instance_progress(
+                &progress.instance_name,
+                progress.local_count,
+                global_count,
+                completed,
+                progress.total_instances,
+                rps,
+                "Progress update",
+            );
+        }
     }
 
     writer
@@ -583,7 +567,20 @@ async fn handle_rdb_stream(
         .await
         .with_context(|| anyhow!("Failed to finalize writer for instance {instance}"))?;
 
-    mark_instance_completed(&progress, &instance).await;
+    // Always output final statistics when instance completes
+    let global_count = progress.global_processed.load(Ordering::Relaxed);
+    let rps = global_count as f64 / progress.start_time.elapsed().as_secs_f64();
+    let completed = progress.completed_instances.fetch_add(1, Ordering::Relaxed) + 1;
+
+    log_instance_progress(
+        &progress.instance_name,
+        progress.local_count,
+        global_count,
+        completed as usize,
+        progress.total_instances,
+        rps,
+        "Instance completed",
+    );
 
     Ok(())
 }
@@ -614,17 +611,22 @@ async fn process_rdb_streams(
         tasks.push((stream, instance, writer));
     }
 
-    let progress = init_progress(tasks.len());
+    let batch_context = create_batch_context(tasks.len());
 
     futures_util::stream::iter(tasks)
         .map(Ok)
         .try_for_each_concurrent(concurrency.max(1), |(stream, instance, writer)| {
-            let progress = progress.clone();
+            let instance_progress = create_instance_progress(instance.clone(), &batch_context);
             async move {
-                tokio::spawn(handle_rdb_stream(stream, instance, writer, progress))
-                    .await
-                    .with_context(|| "Failed to join spawned direct-writer task")?
-                    .with_context(|| "Failed to handle RDB stream")?;
+                tokio::spawn(handle_rdb_stream(
+                    stream,
+                    instance,
+                    writer,
+                    instance_progress,
+                ))
+                .await
+                .with_context(|| "Failed to join spawned direct-writer task")?
+                .with_context(|| "Failed to handle RDB stream")?;
                 Ok::<(), anyhow::Error>(())
             }
         })
@@ -656,4 +658,212 @@ async fn run_report(args: ReportArgs) -> Result<()> {
         args.output,
     )
     .await
+}
+
+fn log_instance_progress(
+    instance_name: &str,
+    local_records: u64,
+    global_records: u64,
+    completed_instances: usize,
+    total_instances: usize,
+    rps: f64,
+    message: &str,
+) {
+    let local_records_formatted = format_number(local_records as f64);
+    let global_records_formatted = format_number(global_records as f64);
+    let rps_formatted = format_number(rps);
+
+    info!(
+        operation = "progress_update",
+        instance = %instance_name,
+        instance_progressed = %local_records_formatted,
+        global_progressed = %global_records_formatted,
+        completed_instances = completed_instances,
+        total_instances = total_instances,
+        rps = %rps_formatted,
+        "{message}"
+    );
+}
+
+/// Format numbers into human-readable format
+/// Uses units K, M, B, T where B represents billion (10^9)
+/// Handles special f64 values: NaN, infinity, and negative numbers
+fn format_number(num: f64) -> String {
+    // Handle special f64 values
+    if num.is_nan() {
+        return "NaN".to_string();
+    }
+    if num.is_infinite() {
+        return if num.is_sign_positive() {
+            "inf".to_string()
+        } else {
+            "-inf".to_string()
+        };
+    }
+    if num == 0.0 {
+        return "0".to_string();
+    }
+
+    // Handle negative numbers by formatting absolute value and adding sign back
+    let is_negative = num < 0.0;
+    let abs_num = num.abs();
+
+    let mut suffix = "";
+    let mut divisor = 1.0;
+
+    // Define units, using B as billion (10^9)
+    let units = [
+        (1_000_000_000_000.0, "T"), // trillion
+        (1_000_000_000.0, "B"),     // billion (not G)
+        (1_000_000.0, "M"),         // million
+        (1_000.0, "K"),             // thousand
+    ];
+
+    for (threshold, unit) in &units {
+        if abs_num >= *threshold {
+            suffix = unit;
+            divisor = *threshold;
+            break;
+        }
+    }
+
+    if divisor == 1.0 {
+        let result = format!("{}", abs_num as u64);
+        return if is_negative {
+            format!("-{}", result)
+        } else {
+            result
+        };
+    }
+
+    // Use integer arithmetic to avoid floating point precision issues
+    let scaled = (abs_num * 100.0) / divisor;
+    let integer_part = (scaled / 100.0) as u64;
+    let decimal_part = (scaled % 100.0) as u32;
+
+    let formatted_str = format!("{}.{:02}{}", integer_part, decimal_part, suffix);
+
+    if is_negative {
+        format!("-{}", formatted_str)
+    } else {
+        formatted_str
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_number;
+
+    #[test]
+    fn test_format_number_special_values() {
+        // Test NaN
+        assert_eq!(format_number(f64::NAN), "NaN");
+
+        // Test positive infinity
+        assert_eq!(format_number(f64::INFINITY), "inf");
+
+        // Test negative infinity
+        assert_eq!(format_number(f64::NEG_INFINITY), "-inf");
+
+        // Test zero
+        assert_eq!(format_number(0.0), "0");
+        assert_eq!(format_number(-0.0), "0");
+    }
+
+    #[test]
+    fn test_format_number_small_numbers() {
+        // Test numbers less than 1000
+        assert_eq!(format_number(0.0), "0");
+        assert_eq!(format_number(1.0), "1");
+        assert_eq!(format_number(999.0), "999");
+
+        // Test negative small numbers
+        assert_eq!(format_number(-1.0), "-1");
+        assert_eq!(format_number(-999.0), "-999");
+    }
+
+    #[test]
+    fn test_format_number_thousand_unit() {
+        // Test K unit (1000 - 999,999)
+        assert_eq!(format_number(1000.0), "1.00K");
+        assert_eq!(format_number(1500.0), "1.50K");
+        assert_eq!(format_number(999999.0), "999.99K");
+
+        // Test negative K unit
+        assert_eq!(format_number(-1000.0), "-1.00K");
+        assert_eq!(format_number(-1500.0), "-1.50K");
+
+        // Test edge cases
+        assert_eq!(format_number(999.0), "999"); // Should not be formatted as K
+        assert_eq!(format_number(1001.0), "1.00K"); // Should be formatted as K with 2 decimals
+    }
+
+    #[test]
+    fn test_format_number_million_unit() {
+        // Test M unit (1,000,000 - 999,999,999)
+        assert_eq!(format_number(1_000_000.0), "1.00M");
+        assert_eq!(format_number(1_500_000.0), "1.50M");
+        assert_eq!(format_number(999_999_999.0), "999.99M");
+
+        // Test negative M unit
+        assert_eq!(format_number(-1_000_000.0), "-1.00M");
+        assert_eq!(format_number(-1_500_000.0), "-1.50M");
+    }
+
+    #[test]
+    fn test_format_number_billion_unit() {
+        // Test B unit (1,000,000,000 - 999,999,999,999)
+        assert_eq!(format_number(1_000_000_000.0), "1.00B");
+        assert_eq!(format_number(1_500_000_000.0), "1.50B");
+        assert_eq!(format_number(999_999_999_999.0), "999.99B");
+
+        // Test negative B unit
+        assert_eq!(format_number(-1_000_000_000.0), "-1.00B");
+        assert_eq!(format_number(-1_500_000_000.0), "-1.50B");
+    }
+
+    #[test]
+    fn test_format_number_trillion_unit() {
+        // Test T unit (>= 1,000,000,000,000)
+        assert_eq!(format_number(1_000_000_000_000.0), "1.00T");
+        assert_eq!(format_number(1_500_000_000_000.0), "1.50T");
+        assert_eq!(format_number(999_999_999_999_999.0), "999.99T");
+
+        // Test negative T unit
+        assert_eq!(format_number(-1_000_000_000_000.0), "-1.00T");
+        assert_eq!(format_number(-1_500_000_000_000.0), "-1.50T");
+    }
+
+    #[test]
+    fn test_format_number_decimal_places() {
+        // With the new logic, all formatted numbers now show 2 decimal places
+        assert_eq!(format_number(100_000.0), "100.00K");
+        assert_eq!(format_number(1_500_000.0), "1.50M");
+        assert_eq!(format_number(250_000_000.0), "250.00M");
+
+        assert_eq!(format_number(10_000.0), "10.00K");
+        assert_eq!(format_number(15_000.0), "15.00K");
+        assert_eq!(format_number(99_999.0), "99.99K");
+
+        assert_eq!(format_number(1_000.0), "1.00K");
+        assert_eq!(format_number(1_500.0), "1.50K");
+        assert_eq!(format_number(9_999.0), "9.99K");
+    }
+
+    #[test]
+    fn test_format_number_edge_cases() {
+        // Test very large numbers
+        assert_eq!(format_number(1_000_000_000_000_000.0), "1000.00T");
+
+        // Test numbers just at unit boundaries
+        assert_eq!(format_number(999_999.0), "999.99K");
+        assert_eq!(format_number(1_000_000.0), "1.00M");
+        assert_eq!(format_number(999_999_999.0), "999.99M");
+        assert_eq!(format_number(1_000_000_000.0), "1.00B");
+        assert_eq!(format_number(999_999_999_999.0), "999.99B");
+        assert_eq!(format_number(1_000_000_000_000.0), "1.00T");
+
+        // Test floating point precision
+        assert_eq!(format_number(1_000_000_000.5), "1.00B");
+    }
 }

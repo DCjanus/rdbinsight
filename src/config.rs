@@ -17,6 +17,9 @@ use crate::{
 pub struct DumpConfig {
     pub source: SourceConfig,
     pub output: OutputConfig,
+    /// Number of parallel connections for dump operations
+    ///
+    /// Default: CPU cores / 2 (min 1, max 8)
     pub concurrency: usize,
 }
 

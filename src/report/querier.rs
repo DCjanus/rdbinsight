@@ -335,7 +335,6 @@ impl ClickHouseQuerier {
             tracing::info!(
                 operation = "prefix_exploration",
                 current_prefix = %String::from_utf8_lossy(&current_prefix),
-                stack_size = exploration_stack.len(),
                 "Exploring prefix"
             );
 

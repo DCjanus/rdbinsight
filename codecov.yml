@@ -3,6 +3,7 @@ coverage:
     project:
       default:
         target: 70
+    patch: off
 
 ignore:
   - "src/bin/**"

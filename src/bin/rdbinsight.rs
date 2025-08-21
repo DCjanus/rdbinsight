@@ -54,7 +54,7 @@ enum Command {
 #[allow(clippy::enum_variant_names)]
 enum DumpCommand {
     /// Dump from Redis standalone instance
-    FromRedis(DumpRedisArgs),
+    FromStandalone(DumpStandaloneArgs),
     /// Dump from Redis cluster
     FromCluster(DumpClusterArgs),
     /// Dump from RDB file
@@ -64,7 +64,7 @@ enum DumpCommand {
 }
 
 #[derive(Parser)]
-struct DumpRedisArgs {
+struct DumpStandaloneArgs {
     /// Redis standalone server address (e.g., 127.0.0.1:6379)
     #[arg(long)]
     addr: String,
@@ -335,7 +335,7 @@ fn dump_command_to_config(
     };
 
     let (source_config, batch_timestamp, output_cmd, concurrency) = match dump_cmd {
-        DumpCommand::FromRedis(args) => {
+        DumpCommand::FromStandalone(args) => {
             let source = SourceConfig::RedisStandalone {
                 cluster_name: args.cluster,
                 address: args.addr,

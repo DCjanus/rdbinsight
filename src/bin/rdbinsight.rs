@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use clap::{CommandFactory, Parser, Subcommand, value_parser};
+use clap::{Args, CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
@@ -41,8 +41,7 @@ fn default_concurrency() -> usize {
 #[derive(Subcommand)]
 enum Command {
     /// Dump Redis data to storage
-    #[command(subcommand)]
-    Dump(DumpCommand),
+    Dump(DumpArgs),
     /// Generate interactive HTML report
     Report(ReportArgs),
     /// Miscellaneous utilities
@@ -61,6 +60,16 @@ enum DumpCommand {
     FromFile(DumpFileArgs),
     /// Dump from Codis cluster
     FromCodis(DumpCodisArgs),
+}
+
+#[derive(Args)]
+struct DumpArgs {
+    /// Optional Prometheus endpoint URL (http://host:port)
+    #[clap(long, env = "RDBINSIGHT_PROMETHEUS")]
+    prometheus: Option<Url>,
+
+    #[command(subcommand)]
+    cmd: DumpCommand,
 }
 
 #[derive(Parser)]
@@ -282,7 +291,7 @@ async fn main() -> Result<()> {
         .init();
 
     match main_cli.command {
-        Command::Dump(dump_cmd) => dump_records(dump_cmd).await,
+        Command::Dump(dump_args) => dump_records(dump_args.cmd).await,
         Command::Report(args) => run_report(args).await,
         Command::Misc(misc_cmd) => match misc_cmd {
             MiscCommand::PrintClickhouseSchema => {

@@ -10,16 +10,16 @@
 ## 阶段一：重构 dump CLI 以支持全局 --prometheus 选项
 
 ### 实现步骤
-- [ ] 在 `Cargo.toml` 添加依赖：执行 `cargo add url`（仅新增依赖，不改其他逻辑）。
-- [ ] 在 `src/bin/rdbinsight.rs` 中新增 `DumpArgs` 结构体：包含 `#[clap(long, env = "RDBINSIGHT_PROMETHEUS")] prometheus: Option<String>` 与 `#[command(subcommand)] cmd: DumpCommand`。
-- [ ] 将 `enum Command` 中的 `Dump(DumpCommand)` 替换为 `Dump(DumpArgs)`；调整 `main()` 中对 `Command::Dump(...)` 的匹配逻辑，保持原有子命令行为不变。
-- [ ] 保持 `dump_records(dump_cmd: DumpCommand)` 现有签名与逻辑不变，仅由新的入口在调用时传入 `dump_args.cmd`。
-- [ ] 更新 `dump_command_to_config(...)` 的调用处以适配 `DumpArgs` 包装。
+- [x] 在 `Cargo.toml` 添加依赖：执行 `cargo add url`（仅新增依赖，不改其他逻辑）。
+- [x] 在 `src/bin/rdbinsight.rs` 中新增 `DumpArgs` 结构体：包含 `#[clap(long, env = "RDBINSIGHT_PROMETHEUS")] prometheus: Option<String>` 与 `#[command(subcommand)] cmd: DumpCommand`。
+- [x] 将 `enum Command` 中的 `Dump(DumpCommand)` 替换为 `Dump(DumpArgs)`；调整 `main()` 中对 `Command::Dump(...)` 的匹配逻辑，保持原有子命令行为不变。
+- [x] 保持 `dump_records(dump_cmd: DumpCommand)` 现有签名与逻辑不变，仅由新的入口在调用时传入 `dump_args.cmd`。
+- [x] 更新 `dump_command_to_config(...)` 的调用处以适配 `DumpArgs` 包装。
 
 ### 验证步骤
-- [ ] 运行 `cargo build`，应成功编译。
-- [ ] 执行 `rdbinsight dump --help | cat`，应在 dump 级别看到 `--prometheus <HTTP_URL>` 选项且说明从 `RDBINSIGHT_PROMETHEUS` 读取。
-- [ ] 执行 `RDBINSIGHT_PROMETHEUS=http://0.0.0.0:9901 rdbinsight dump from-file --help | cat`，确保不会因新增选项影响子命令帮助展示。
+- [x] 运行 `cargo build`，应成功编译。
+- [x] 执行 `rdbinsight dump --help | cat`，应在 dump 级别看到 `--prometheus <HTTP_URL>` 选项且说明从 `RDBINSIGHT_PROMETHEUS` 读取。
+- [x] 执行 `RDBINSIGHT_PROMETHEUS=http://0.0.0.0:9901 rdbinsight dump from-file --help | cat`，确保不会因新增选项影响子命令帮助展示。
 
 ---
 

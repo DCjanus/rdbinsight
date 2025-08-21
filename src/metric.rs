@@ -9,20 +9,21 @@ use axum::{
     routing::get,
 };
 use bytes::Bytes;
-use prometheus::{Encoder, Gauge, Opts, TextEncoder};
+use prometheus::{Encoder, IntGauge, TextEncoder, opts, register_int_gauge};
 
-pub static BUILD_INFO: LazyLock<Gauge> = LazyLock::new(|| {
-    let gauge = Gauge::with_opts(
-        Opts::new("rdbinsight_build_info", "Build and version information")
-            .const_label("version", env!("CARGO_PKG_VERSION")),
+pub static BUILD_INFO: LazyLock<IntGauge> = LazyLock::new(|| {
+    let gauge = register_int_gauge!(
+        opts!("rdbinsight_build_info", "Build and version information")
+            .const_label("version", env!("CARGO_PKG_VERSION"))
     )
-    .expect("Failed to create build info gauge");
-    gauge.set(1.0);
+    .expect("Failed to register build info gauge");
+    gauge.set(1);
     gauge
 });
 
 pub fn init_metrics() {
-    let _ = prometheus::default_registry().register(Box::new(BUILD_INFO.clone()));
+    // Eagerly initialize the gauge so it is registered in the default registry
+    let _ = &*BUILD_INFO;
 }
 
 pub async fn run_metrics_server(addr: SocketAddr) -> Result<()> {

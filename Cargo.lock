@@ -2802,8 +2802,6 @@ dependencies = [
  "futures-util",
  "hex",
  "http",
- "http-body-util",
- "hyper",
  "hyper-util",
  "lzf",
  "memchr",

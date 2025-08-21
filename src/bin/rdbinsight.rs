@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
     pin::Pin,
     sync::{
-        Arc, LazyLock,
+        Arc,
         atomic::{AtomicU64, Ordering},
     },
     time::Instant,
@@ -13,7 +13,6 @@ use anyhow::{Context, Result, anyhow, ensure};
 use clap::{Args, CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
-use prometheus::{Gauge, Opts};
 use rdbinsight::{
     config::{DumpConfig, ParquetCompression},
     metric,
@@ -26,15 +25,7 @@ use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
-static BUILD_INFO: LazyLock<Gauge> = LazyLock::new(|| {
-    let gauge = Gauge::with_opts(
-        Opts::new("rdbinsight_build_info", "Build and version information")
-            .const_label("version", env!("CARGO_PKG_VERSION")),
-    )
-    .expect("Failed to create build info gauge");
-    gauge.set(1.0);
-    gauge
-});
+// BUILD_INFO is defined and registered in `metric.rs`
 
 #[derive(Parser)]
 struct MainCli {
@@ -81,11 +72,17 @@ struct DumpArgs {
     #[clap(long, env = "RDBINSIGHT_PROMETHEUS")]
     prometheus: Option<Url>,
 
+    /// Number of parallel connections for dump operations
+    ///
+    /// Default: CPU cores / 2 (min 1, max 8)
+    #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
+    concurrency: usize,
+
     #[command(subcommand)]
     cmd: DumpCommand,
 }
 
-#[derive(Parser)]
+#[derive(Args)]
 struct DumpStandaloneArgs {
     /// Redis standalone server address (e.g., 127.0.0.1:6379)
     #[arg(long)]
@@ -107,17 +104,11 @@ struct DumpStandaloneArgs {
     #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
 
-    /// Number of parallel connections for dump operations
-    ///
-    /// Default: CPU cores / 2 (min 1, max 8)
-    #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
-    concurrency: usize,
-
     #[command(subcommand)]
     output: OutputCommand,
 }
 
-#[derive(Parser)]
+#[derive(Args)]
 struct DumpClusterArgs {
     /// Redis cluster node addresses (comma-separated, e.g., 127.0.0.1:7000,127.0.0.1:7001)
     #[arg(long, value_delimiter = ',')]
@@ -143,17 +134,11 @@ struct DumpClusterArgs {
     #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
 
-    /// Number of parallel connections for dump operations
-    ///
-    /// Default: CPU cores / 2 (min 1, max 8)
-    #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
-    concurrency: usize,
-
     #[command(subcommand)]
     output: OutputCommand,
 }
 
-#[derive(Parser)]
+#[derive(Args)]
 struct DumpFileArgs {
     /// Path to RDB file
     #[arg(long)]
@@ -175,7 +160,7 @@ struct DumpFileArgs {
     output: OutputCommand,
 }
 
-#[derive(Parser)]
+#[derive(Args)]
 struct DumpCodisArgs {
     /// Codis dashboard address (e.g., http://127.0.0.1:11080)
     #[arg(long)]
@@ -196,12 +181,6 @@ struct DumpCodisArgs {
     /// Batch timestamp (RFC3339, default = now)
     #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
-
-    /// Number of parallel connections for dump operations
-    ///
-    /// Default: CPU cores / 2 (min 1, max 8)
-    #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
-    concurrency: usize,
 
     #[command(subcommand)]
     output: OutputCommand,
@@ -303,18 +282,10 @@ async fn main() -> Result<()> {
         .with(level)
         .init();
 
-    // Ensure BUILD_INFO is registered to the global default registry
     metric::init_metrics();
 
     match main_cli.command {
         Command::Dump(dump_args) => {
-            if let Some(ref prometheus_url) = dump_args.prometheus {
-                // Stage Two: validate and resolve the prometheus URL early
-                parse_prometheus_addr(prometheus_url)
-                    .await
-                    .with_context(|| "Invalid --prometheus URL; expected http://host:port")?;
-            }
-            // Stage Three: start metrics server if enabled (no explicit shutdown)
             if let Some(ref prometheus_url) = dump_args.prometheus {
                 let addr = parse_prometheus_addr(prometheus_url)
                     .await
@@ -324,7 +295,7 @@ async fn main() -> Result<()> {
                 tokio::spawn(metric::run_metrics_server(addr));
             }
 
-            dump_records(dump_args.cmd).await
+            dump_records(dump_args.cmd, dump_args.concurrency).await
         }
         Command::Report(args) => run_report(args).await,
         Command::Misc(misc_cmd) => match misc_cmd {
@@ -372,6 +343,7 @@ fn print_clickhouse_schema() {
 // Convert new CLI structure to Config
 fn dump_command_to_config(
     dump_cmd: DumpCommand,
+    global_concurrency: usize,
 ) -> Result<(rdbinsight::config::DumpConfig, Option<String>)> {
     use rdbinsight::config::{
         ClickHouseConfig, DumpConfig, OutputConfig, ParquetConfig, SourceConfig,
@@ -385,7 +357,12 @@ fn dump_command_to_config(
                 username: args.username,
                 password: args.password,
             };
-            (source, args.batch_timestamp, args.output, args.concurrency)
+            (
+                source,
+                args.batch_timestamp,
+                args.output,
+                global_concurrency,
+            )
         }
         DumpCommand::FromCluster(args) => {
             let source = SourceConfig::RedisCluster {
@@ -395,7 +372,12 @@ fn dump_command_to_config(
                 password: args.password,
                 require_slave: args.require_slave,
             };
-            (source, args.batch_timestamp, args.output, args.concurrency)
+            (
+                source,
+                args.batch_timestamp,
+                args.output,
+                global_concurrency,
+            )
         }
         DumpCommand::FromFile(args) => {
             let source = SourceConfig::RDBFile {
@@ -413,7 +395,12 @@ fn dump_command_to_config(
                 password: args.password,
                 require_slave: args.require_slave,
             };
-            (source, args.batch_timestamp, args.output, args.concurrency)
+            (
+                source,
+                args.batch_timestamp,
+                args.output,
+                global_concurrency,
+            )
         }
     };
 
@@ -441,9 +428,9 @@ fn dump_command_to_config(
     Ok((config, batch_timestamp))
 }
 
-async fn dump_records(dump_cmd: DumpCommand) -> Result<()> {
+async fn dump_records(dump_cmd: DumpCommand, global_concurrency: usize) -> Result<()> {
     let (mut config, batch_timestamp_arg): (DumpConfig, Option<String>) =
-        dump_command_to_config(dump_cmd)
+        dump_command_to_config(dump_cmd, global_concurrency)
             .with_context(|| "Failed to parse CLI arguments into configuration")?;
 
     config

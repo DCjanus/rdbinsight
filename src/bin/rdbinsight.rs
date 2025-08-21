@@ -85,7 +85,9 @@ struct DumpRedisArgs {
     #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
 
-    /// Concurrency for dump operations
+    /// Number of parallel connections for dump operations
+    ///
+    /// Default: CPU cores / 2 (min 1, max 8)
     #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
     concurrency: usize,
 
@@ -119,7 +121,9 @@ struct DumpClusterArgs {
     #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
 
-    /// Concurrency for dump operations
+    /// Number of parallel connections for dump operations
+    ///
+    /// Default: CPU cores / 2 (min 1, max 8)
     #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
     concurrency: usize,
 
@@ -171,7 +175,9 @@ struct DumpCodisArgs {
     #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
 
-    /// Concurrency for dump operations
+    /// Number of parallel connections for dump operations
+    ///
+    /// Default: CPU cores / 2 (min 1, max 8)
     #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
     concurrency: usize,
 

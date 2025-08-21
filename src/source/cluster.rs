@@ -48,6 +48,8 @@ impl Config {
     }
 
     /// Get recommended concurrency based on cluster size
+    ///
+    /// Returns: min(cluster nodes, CPU cores), minimum 1
     pub fn recommended_concurrency(&self) -> usize {
         // Suggest concurrency based on cluster size, but respect system limits
         self.addrs.len().min(num_cpus::get()).max(1)

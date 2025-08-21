@@ -13,8 +13,11 @@ use anyhow::{Context, Result, anyhow, ensure};
 use clap::{Args, CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
+use lazy_static::lazy_static;
+use prometheus::{Gauge, Opts};
 use rdbinsight::{
     config::{DumpConfig, ParquetCompression},
+    metrics,
     output::{ChunkWriter, ChunkWriterEnum, Output},
     record::RecordStream,
     source::{RDBStream, RdbSourceConfig},
@@ -23,6 +26,18 @@ use time::OffsetDateTime;
 use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
+
+lazy_static! {
+    static ref BUILD_INFO: Gauge = {
+        let gauge = Gauge::with_opts(
+            Opts::new("rdbinsight_build_info", "Build and version information")
+                .const_label("version", env!("CARGO_PKG_VERSION")),
+        )
+        .expect("Failed to create build info gauge");
+        gauge.set(1.0);
+        gauge
+    };
+}
 
 #[derive(Parser)]
 struct MainCli {
@@ -291,6 +306,9 @@ async fn main() -> Result<()> {
         .with(level)
         .init();
 
+    // Ensure BUILD_INFO is registered to the global default registry
+    metrics::init_metrics();
+
     match main_cli.command {
         Command::Dump(dump_args) => {
             if let Some(ref prometheus_url) = dump_args.prometheus {
@@ -299,6 +317,16 @@ async fn main() -> Result<()> {
                     .await
                     .with_context(|| "Invalid --prometheus URL; expected http://host:port")?;
             }
+            // Stage Three: start metrics server if enabled (no explicit shutdown)
+            if let Some(ref prometheus_url) = dump_args.prometheus {
+                let addr = parse_prometheus_addr(prometheus_url)
+                    .await
+                    .with_context(|| "Invalid --prometheus URL; expected http://host:port")?;
+
+                info!(operation = "metrics_start", listen = %addr, path = "/metrics", "Starting Prometheus metrics endpoint");
+                tokio::spawn(metrics::run_metrics_server(addr));
+            }
+
             dump_records(dump_args.cmd).await
         }
         Command::Report(args) => run_report(args).await,

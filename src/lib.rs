@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod helper;
+pub mod metrics;
 pub mod output;
 pub mod parser;
 pub mod record;

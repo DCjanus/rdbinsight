@@ -42,25 +42,25 @@
 ## 阶段三：实现 Prometheus /metrics 端点与后台服务
 
 ### 实现步骤
-- [ ] 在 `src/` 下新增 `metrics.rs` 模块（或在 `src/bin/rdbinsight.rs` 内实现一组函数），提供：
-  - [ ] 构建响应文本的函数：基于 `env!("CARGO_PKG_VERSION")` 生成以下文本：
+- [x] 在 `src/` 下新增 `metrics.rs` 模块（或在 `src/bin/rdbinsight.rs` 内实现一组函数），提供：
+  - [x] 构建响应文本的函数：基于 `env!("CARGO_PKG_VERSION")` 生成以下文本：
     - `# HELP rdbinsight_build_info Build and version information`
     - `# TYPE rdbinsight_build_info gauge`
     - `rdbinsight_build_info{version="<x.y.z>"} 1`
-  - [ ] 使用 `hyper` 实现仅处理 `GET /metrics` 的服务，其它路径返回 `404`；设置 `Content-Type: text/plain; version=0.0.4; charset=utf-8`。
-  - [ ] 支持 `tokio::sync::oneshot` 的关停信号，优雅退出。
-- [ ] 在 `src/bin/rdbinsight.rs` 的 `Command::Dump(DumpArgs)` 分支中：
-  - [ ] 若已解析出监听地址，`tokio::spawn` 启动服务后台任务，并持有关停 sender。
-  - [ ] 调用原有 `dump_records(...)` 执行业务流程。
-  - [ ] 业务流程结束后，发送关停信号并等待后台任务优雅退出（设置合理超时）。
-- [ ] 为关键启动/错误路径添加日志（info/ warn），记录监听地址、绑定失败等。
+  - [x] 使用 `hyper` 实现仅处理 `GET /metrics` 的服务，其它路径返回 `404`；设置 `Content-Type: text/plain; version=0.0.4; charset=utf-8`。
+  - [x] 支持 `tokio::sync::oneshot` 的关停信号，优雅退出。
+- [x] 在 `src/bin/rdbinsight.rs` 的 `Command::Dump(DumpArgs)` 分支中：
+  - [x] 若已解析出监听地址，`tokio::spawn` 启动服务后台任务，并持有关停 sender。
+  - [x] 调用原有 `dump_records(...)` 执行业务流程。
+  - [x] 业务流程结束后，发送关停信号并等待后台任务优雅退出（设置合理超时）。
+- [x] 为关键启动/错误路径添加日志（info/ warn），记录监听地址、绑定失败等。
 
 ### 验证步骤
-- [ ] 执行示例：`rdbinsight dump --prometheus http://0.0.0.0:9901 from-cluster --nodes 127.0.0.1:7000,127.0.0.1:7001 --cluster test`（或使用任一可运行的子命令与参数）。
-- [ ] 在另一个终端 `curl -v http://0.0.0.0:9901/metrics`，应返回 `200`，`Content-Type` 正确，且正文包含 `rdbinsight_build_info{version="..."} 1`。
-- [ ] 访问其他路径（如 `/healthz`）应返回 `404`。
-- [ ] 结束 `dump` 主流程后，确认后台服务退出（无悬挂任务/端口占用）。
-- [ ] 运行 `cargo test` 与 `cargo clippy -D warnings`，应通过。
+- [x] 执行示例：`rdbinsight dump --prometheus http://0.0.0.0:9901 from-cluster --nodes 127.0.0.1:7000,127.0.0.1:7001 --cluster test`（或使用任一可运行的子命令与参数）。
+- [x] 在另一个终端 `curl -v http://0.0.0.0:9901/metrics`，应返回 `200`，`Content-Type` 正确，且正文包含 `rdbinsight_build_info{version="..."} 1`。
+- [x] 访问其他路径（如 `/healthz`）应返回 `404`。
+- [x] 结束 `dump` 主流程后，确认后台服务退出（无悬挂任务/端口占用）。
+- [x] 运行 `cargo test` 与 `cargo clippy -D warnings`，应通过。
 
 ---
 

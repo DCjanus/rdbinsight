@@ -23,12 +23,16 @@ crc = "3.0"
 futures-util = "0.3.31"
 hex = "0.4.3"
 http = "1.3.1"
+http-body-util = "0.1.3"
+hyper = { version = "1.7.0", features = ["http1", "server"] }
 hyper-util = { version = "0.1.10", features = ["client-legacy"] }
+lazy_static = "1"
 lzf = "1.0.0"
 memchr = "2.7.5"
 num_cpus = "1.17.0"
 num_enum = "0.7.3"
 parquet = { version = "56.0.0", features = ["arrow", "async"] }
+prometheus = "0.14"
 rand = "0.9.1"
 redis = { version = "0.32.4", features = [
     "cluster",

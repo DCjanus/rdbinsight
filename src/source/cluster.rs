@@ -47,14 +47,6 @@ impl Config {
         Ok(())
     }
 
-    /// Get recommended concurrency based on cluster size
-    ///
-    /// Returns: min(cluster nodes, CPU cores), minimum 1
-    pub fn recommended_concurrency(&self) -> usize {
-        // Suggest concurrency based on cluster size, but respect system limits
-        self.addrs.len().min(num_cpus::get()).max(1)
-    }
-
     /// Select the appropriate node for a shard based on require_slave setting
     fn select_node_for_shard<'a>(
         &self,

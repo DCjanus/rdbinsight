@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
     pin::Pin,
     sync::{
-        Arc,
+        Arc, LazyLock,
         atomic::{AtomicU64, Ordering},
     },
     time::Instant,
@@ -13,11 +13,10 @@ use anyhow::{Context, Result, anyhow, ensure};
 use clap::{Args, CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
-use lazy_static::lazy_static;
 use prometheus::{Gauge, Opts};
 use rdbinsight::{
     config::{DumpConfig, ParquetCompression},
-    metrics,
+    metric,
     output::{ChunkWriter, ChunkWriterEnum, Output},
     record::RecordStream,
     source::{RDBStream, RdbSourceConfig},
@@ -27,17 +26,15 @@ use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
-lazy_static! {
-    static ref BUILD_INFO: Gauge = {
-        let gauge = Gauge::with_opts(
-            Opts::new("rdbinsight_build_info", "Build and version information")
-                .const_label("version", env!("CARGO_PKG_VERSION")),
-        )
-        .expect("Failed to create build info gauge");
-        gauge.set(1.0);
-        gauge
-    };
-}
+static BUILD_INFO: LazyLock<Gauge> = LazyLock::new(|| {
+    let gauge = Gauge::with_opts(
+        Opts::new("rdbinsight_build_info", "Build and version information")
+            .const_label("version", env!("CARGO_PKG_VERSION")),
+    )
+    .expect("Failed to create build info gauge");
+    gauge.set(1.0);
+    gauge
+});
 
 #[derive(Parser)]
 struct MainCli {
@@ -307,7 +304,7 @@ async fn main() -> Result<()> {
         .init();
 
     // Ensure BUILD_INFO is registered to the global default registry
-    metrics::init_metrics();
+    metric::init_metrics();
 
     match main_cli.command {
         Command::Dump(dump_args) => {
@@ -324,7 +321,7 @@ async fn main() -> Result<()> {
                     .with_context(|| "Invalid --prometheus URL; expected http://host:port")?;
 
                 info!(operation = "metrics_start", listen = %addr, path = "/metrics", "Starting Prometheus metrics endpoint");
-                tokio::spawn(metrics::run_metrics_server(addr));
+                tokio::spawn(metric::run_metrics_server(addr));
             }
 
             dump_records(dump_args.cmd).await

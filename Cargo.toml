@@ -11,6 +11,7 @@ anyhow = "1.0.98"
 arrow = "56.0.0"
 async-trait = "0.1.88"
 async_async_io = "0.2.3"
+axum = "0.8.4"
 backoff = { version = "0.4", features = ["tokio"] }
 base64 = "0.22.1"
 bytes = { version = "1.10.1", features = ["serde"] }
@@ -26,7 +27,6 @@ http = "1.3.1"
 http-body-util = "0.1.3"
 hyper = { version = "1.7.0", features = ["http1", "server"] }
 hyper-util = { version = "0.1.10", features = ["client-legacy"] }
-lazy_static = "1"
 lzf = "1.0.0"
 memchr = "2.7.5"
 num_cpus = "1.17.0"

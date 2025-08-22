@@ -43,6 +43,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_bytes = "0.11.17"
 serde_json = "1.0.140"
 serde_with = { version = "3.11.0", features = ["base64"] }
+shadow-rs = "1.2.1"
 spire_enum = "0.6.0"
 thiserror = "2.0.12"
 time = { version = "0.3.41", features = ["formatting", "parsing", "macros"] }
@@ -61,3 +62,6 @@ url = "2.5.6"
 tempfile = "3.20.0"
 testcontainers = { version = "0.25.0", features = ["http_wait"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+
+[build-dependencies]
+shadow-rs = "1.2.1"

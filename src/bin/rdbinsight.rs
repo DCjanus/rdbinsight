@@ -25,8 +25,10 @@ use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
+shadow_rs::shadow!(build);
+
 #[derive(Parser)]
-#[command(version)]
+#[command(version = build::VERSION)]
 struct MainCli {
     #[command(subcommand)]
     command: Command,

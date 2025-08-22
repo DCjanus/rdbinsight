@@ -9,7 +9,10 @@ use axum::{
     routing::get,
 };
 use bytes::Bytes;
-use prometheus::{Encoder, IntGauge, IntCounterVec, TextEncoder, opts, register_int_gauge, register_int_counter_vec};
+use prometheus::{
+    Encoder, IntCounterVec, IntGauge, TextEncoder, opts, register_int_counter_vec,
+    register_int_gauge,
+};
 
 pub static BUILD_INFO: LazyLock<IntGauge> = LazyLock::new(|| {
     let gauge = register_int_gauge!(
@@ -25,11 +28,7 @@ pub static RECORDS_PARSED_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec!(
         "rdbinsight_records_parsed_total",
         "Total number of records parsed per instance",
-        &[
-            "cluster",
-            "batch",
-            "instance",
-        ]
+        &["cluster", "batch", "instance",]
     )
     .expect("Failed to register records parsed counter")
 });

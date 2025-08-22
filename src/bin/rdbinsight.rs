@@ -662,10 +662,9 @@ async fn process_rdb_streams(
         .with_context(|| "Failed to prepare batch for output")?;
 
     let mut tasks = Vec::with_capacity(streams.len());
-    let batch_label = match batch_ts.format(&time::format_description::well_known::Rfc3339) {
-        Ok(s) => s,
-        Err(_) => batch_ts.unix_timestamp().to_string(),
-    };
+    let batch_label = batch_ts
+        .format(&time::format_description::well_known::Rfc3339)
+        .context("Failed to format batch timestamp")?;
     for stream in streams {
         let instance = stream.instance().to_string();
         let writer = output

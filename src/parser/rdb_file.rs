@@ -137,6 +137,7 @@ impl RDBFileParser {
                     let (input, aux_key) = read_rdb_str(input).context("read aux key")?;
                     let (input, aux_val) = read_rdb_str(input).context("read aux val")?;
                     buffer.consume_to(input.as_ptr());
+                    debug!("aux field: {aux_key} = {aux_val}");
                     self.return_item(Item::Aux {
                         key: aux_key,
                         val: aux_val,

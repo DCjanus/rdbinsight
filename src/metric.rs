@@ -9,7 +9,10 @@ use axum::{
     routing::get,
 };
 use bytes::Bytes;
-use prometheus::{Encoder, IntGauge, TextEncoder, opts, register_int_gauge};
+use prometheus::{
+    Encoder, IntCounterVec, IntGauge, TextEncoder, opts, register_int_counter_vec,
+    register_int_gauge,
+};
 
 pub static BUILD_INFO: LazyLock<IntGauge> = LazyLock::new(|| {
     let gauge = register_int_gauge!(
@@ -21,9 +24,20 @@ pub static BUILD_INFO: LazyLock<IntGauge> = LazyLock::new(|| {
     gauge
 });
 
+pub static RECORDS_PARSED_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "rdbinsight_records_parsed_total",
+        "Total number of records parsed per instance",
+        &["cluster", "batch", "instance",]
+    )
+    .expect("Failed to register records parsed counter")
+});
+
 pub fn init_metrics() {
-    // Eagerly initialize the gauge so it is registered in the default registry
+    // Eagerly initialize all metrics so they are registered in the default registry
+
     let _ = &*BUILD_INFO;
+    let _ = &*RECORDS_PARSED_TOTAL;
 }
 
 pub async fn run_metrics_server(addr: SocketAddr) -> Result<()> {
@@ -55,4 +69,10 @@ async fn metrics_handler() -> impl IntoResponse {
         HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
     );
     response
+}
+
+pub fn inc_record(cluster: &str, batch: &str, instance: &str) {
+    RECORDS_PARSED_TOTAL
+        .with_label_values(&[cluster, batch, instance])
+        .inc();
 }

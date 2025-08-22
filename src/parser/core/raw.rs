@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use anyhow::{anyhow, bail};
 use bytes::Bytes;
 
@@ -87,6 +89,15 @@ pub fn read_rdb_str(input: &[u8]) -> AnyResult<(&[u8], RDBStr)> {
             let decompressed = lzf::decompress(compressed, out_len as usize)
                 .map_err(|e| anyhow!("Failed to decompress LZFStr: {}", e))?;
             Ok((input, RDBStr::Str(Bytes::from(decompressed))))
+        }
+    }
+}
+
+impl Display for RDBStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RDBStr::Str(s) => write!(f, "{:?}", s),
+            RDBStr::Int(i) => write!(f, "{}", i),
         }
     }
 }

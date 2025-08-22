@@ -25,9 +25,10 @@ use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
-// BUILD_INFO is defined and registered in `metric.rs`
+shadow_rs::shadow!(build);
 
 #[derive(Parser)]
+#[command(version = build::VERSION)]
 struct MainCli {
     #[command(subcommand)]
     command: Command,

@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [0.1.0-rc.1] - 2024-12-19
+## [0.1.0-rc.1]
 
 ### Features
 - **Multiple Data Sources Support**: Support for dumping data from Redis standalone instances, Redis clusters, Codis clusters, and local RDB files

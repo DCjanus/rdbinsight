@@ -575,6 +575,8 @@ async fn handle_rdb_stream(
     instance: String,
     mut writer: ChunkWriterEnum,
     mut progress: InstanceProgress,
+    cluster: String,
+    batch_label: String,
 ) -> Result<()> {
     let source_type = stream.source_type();
 
@@ -598,6 +600,8 @@ async fn handle_rdb_stream(
             .write_record(record)
             .await
             .context("Failed to write record")?;
+
+        metric::inc_record(&cluster, &batch_label, &progress.instance_name);
 
         progress.local_count += 1;
         let global_count = progress.global_processed.fetch_add(1, Ordering::Relaxed) + 1;
@@ -658,6 +662,10 @@ async fn process_rdb_streams(
         .with_context(|| "Failed to prepare batch for output")?;
 
     let mut tasks = Vec::with_capacity(streams.len());
+    let batch_label = match batch_ts.format(&time::format_description::well_known::Rfc3339) {
+        Ok(s) => s,
+        Err(_) => batch_ts.unix_timestamp().to_string(),
+    };
     for stream in streams {
         let instance = stream.instance().to_string();
         let writer = output
@@ -673,12 +681,16 @@ async fn process_rdb_streams(
         .map(Ok)
         .try_for_each_concurrent(concurrency.max(1), |(stream, instance, writer)| {
             let instance_progress = create_instance_progress(instance.clone(), &batch_context);
+            let cluster_clone = cluster.clone();
+            let batch_clone = batch_label.clone();
             async move {
                 tokio::spawn(handle_rdb_stream(
                     stream,
                     instance,
                     writer,
                     instance_progress,
+                    cluster_clone,
+                    batch_clone,
                 ))
                 .await
                 .with_context(|| "Failed to join spawned direct-writer task")?

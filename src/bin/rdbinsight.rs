@@ -1,4 +1,5 @@
 use std::{
+    net::{IpAddr, SocketAddr},
     path::PathBuf,
     pin::Pin,
     sync::{
@@ -8,12 +9,13 @@ use std::{
     time::Instant,
 };
 
-use anyhow::{Context, Result, anyhow};
-use clap::{CommandFactory, Parser, Subcommand, value_parser};
+use anyhow::{Context, Result, anyhow, ensure};
+use clap::{Args, CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
 use rdbinsight::{
     config::{DumpConfig, ParquetCompression},
+    metric,
     output::{ChunkWriter, ChunkWriterEnum, Output},
     record::RecordStream,
     source::{RDBStream, RdbSourceConfig},
@@ -22,6 +24,8 @@ use time::OffsetDateTime;
 use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
+
+// BUILD_INFO is defined and registered in `metric.rs`
 
 #[derive(Parser)]
 struct MainCli {
@@ -41,8 +45,7 @@ fn default_concurrency() -> usize {
 #[derive(Subcommand)]
 enum Command {
     /// Dump Redis data to storage
-    #[command(subcommand)]
-    Dump(DumpCommand),
+    Dump(DumpArgs),
     /// Generate interactive HTML report
     Report(ReportArgs),
     /// Miscellaneous utilities
@@ -63,7 +66,23 @@ enum DumpCommand {
     FromCodis(DumpCodisArgs),
 }
 
-#[derive(Parser)]
+#[derive(Args)]
+struct DumpArgs {
+    /// Optional Prometheus endpoint URL (http://host:port)
+    #[clap(long, env = "RDBINSIGHT_PROMETHEUS")]
+    prometheus: Option<Url>,
+
+    /// Number of parallel connections for dump operations
+    ///
+    /// Default: CPU cores / 2 (min 1, max 8)
+    #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
+    concurrency: usize,
+
+    #[command(subcommand)]
+    cmd: DumpCommand,
+}
+
+#[derive(Args)]
 struct DumpStandaloneArgs {
     /// Redis standalone server address (e.g., 127.0.0.1:6379)
     #[arg(long)]
@@ -85,17 +104,11 @@ struct DumpStandaloneArgs {
     #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
 
-    /// Number of parallel connections for dump operations
-    ///
-    /// Default: CPU cores / 2 (min 1, max 8)
-    #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
-    concurrency: usize,
-
     #[command(subcommand)]
     output: OutputCommand,
 }
 
-#[derive(Parser)]
+#[derive(Args)]
 struct DumpClusterArgs {
     /// Redis cluster node addresses (comma-separated, e.g., 127.0.0.1:7000,127.0.0.1:7001)
     #[arg(long, value_delimiter = ',')]
@@ -121,17 +134,11 @@ struct DumpClusterArgs {
     #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
 
-    /// Number of parallel connections for dump operations
-    ///
-    /// Default: CPU cores / 2 (min 1, max 8)
-    #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
-    concurrency: usize,
-
     #[command(subcommand)]
     output: OutputCommand,
 }
 
-#[derive(Parser)]
+#[derive(Args)]
 struct DumpFileArgs {
     /// Path to RDB file
     #[arg(long)]
@@ -153,7 +160,7 @@ struct DumpFileArgs {
     output: OutputCommand,
 }
 
-#[derive(Parser)]
+#[derive(Args)]
 struct DumpCodisArgs {
     /// Codis dashboard address (e.g., http://127.0.0.1:11080)
     #[arg(long)]
@@ -174,12 +181,6 @@ struct DumpCodisArgs {
     /// Batch timestamp (RFC3339, default = now)
     #[arg(long, env = "RDBINSIGHT_BATCH")]
     batch_timestamp: Option<String>,
-
-    /// Number of parallel connections for dump operations
-    ///
-    /// Default: CPU cores / 2 (min 1, max 8)
-    #[arg(long, default_value_t = default_concurrency(), env = "RDBINSIGHT_CONCURRENCY")]
-    concurrency: usize,
 
     #[command(subcommand)]
     output: OutputCommand,
@@ -281,8 +282,21 @@ async fn main() -> Result<()> {
         .with(level)
         .init();
 
+    metric::init_metrics();
+
     match main_cli.command {
-        Command::Dump(dump_cmd) => dump_records(dump_cmd).await,
+        Command::Dump(dump_args) => {
+            if let Some(ref prometheus_url) = dump_args.prometheus {
+                let addr = parse_prometheus_addr(prometheus_url)
+                    .await
+                    .with_context(|| "Invalid --prometheus URL; expected http://host:port")?;
+
+                info!(operation = "metrics_start", listen = %addr, path = "/metrics", "Starting Prometheus metrics endpoint");
+                tokio::spawn(metric::run_metrics_server(addr));
+            }
+
+            dump_records(dump_args.cmd, dump_args.concurrency).await
+        }
         Command::Report(args) => run_report(args).await,
         Command::Misc(misc_cmd) => match misc_cmd {
             MiscCommand::PrintClickhouseSchema => {
@@ -329,6 +343,7 @@ fn print_clickhouse_schema() {
 // Convert new CLI structure to Config
 fn dump_command_to_config(
     dump_cmd: DumpCommand,
+    global_concurrency: usize,
 ) -> Result<(rdbinsight::config::DumpConfig, Option<String>)> {
     use rdbinsight::config::{
         ClickHouseConfig, DumpConfig, OutputConfig, ParquetConfig, SourceConfig,
@@ -342,7 +357,12 @@ fn dump_command_to_config(
                 username: args.username,
                 password: args.password,
             };
-            (source, args.batch_timestamp, args.output, args.concurrency)
+            (
+                source,
+                args.batch_timestamp,
+                args.output,
+                global_concurrency,
+            )
         }
         DumpCommand::FromCluster(args) => {
             let source = SourceConfig::RedisCluster {
@@ -352,7 +372,12 @@ fn dump_command_to_config(
                 password: args.password,
                 require_slave: args.require_slave,
             };
-            (source, args.batch_timestamp, args.output, args.concurrency)
+            (
+                source,
+                args.batch_timestamp,
+                args.output,
+                global_concurrency,
+            )
         }
         DumpCommand::FromFile(args) => {
             let source = SourceConfig::RDBFile {
@@ -370,7 +395,12 @@ fn dump_command_to_config(
                 password: args.password,
                 require_slave: args.require_slave,
             };
-            (source, args.batch_timestamp, args.output, args.concurrency)
+            (
+                source,
+                args.batch_timestamp,
+                args.output,
+                global_concurrency,
+            )
         }
     };
 
@@ -398,9 +428,9 @@ fn dump_command_to_config(
     Ok((config, batch_timestamp))
 }
 
-async fn dump_records(dump_cmd: DumpCommand) -> Result<()> {
+async fn dump_records(dump_cmd: DumpCommand, global_concurrency: usize) -> Result<()> {
     let (mut config, batch_timestamp_arg): (DumpConfig, Option<String>) =
-        dump_command_to_config(dump_cmd)
+        dump_command_to_config(dump_cmd, global_concurrency)
             .with_context(|| "Failed to parse CLI arguments into configuration")?;
 
     config
@@ -469,6 +499,32 @@ async fn dump_records(dump_cmd: DumpCommand) -> Result<()> {
         "Dump completed successfully for all instances"
     );
     Ok(())
+}
+
+async fn parse_prometheus_addr(url: &Url) -> Result<SocketAddr> {
+    ensure!(url.scheme() == "http", "only http scheme is supported");
+
+    let port = url.port().ok_or_else(|| {
+        anyhow!("--prometheus URL must include an explicit port, e.g., http://0.0.0.0:9901")
+    })?;
+
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => Ok(SocketAddr::new(IpAddr::V4(ip), port)),
+        Some(url::Host::Ipv6(ip)) => Ok(SocketAddr::new(IpAddr::V6(ip), port)),
+        Some(url::Host::Domain(domain)) => {
+            if domain.eq_ignore_ascii_case("localhost") {
+                Ok(SocketAddr::new(
+                    IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                    port,
+                ))
+            } else {
+                Err(anyhow!(
+                    "--prometheus host must be an IP address (IPv4/IPv6) or 'localhost'"
+                ))
+            }
+        }
+        None => Err(anyhow!("--prometheus URL must include host")),
+    }
 }
 
 // Simplified global state management

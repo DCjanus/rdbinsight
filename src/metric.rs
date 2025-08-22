@@ -34,9 +34,9 @@ pub static RECORDS_PARSED_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
 });
 
 pub fn init_metrics() {
-    // Eagerly initialize the gauge so it is registered in the default registry
+    // Eagerly initialize all metrics so they are registered in the default registry
+
     let _ = &*BUILD_INFO;
-    // Eagerly initialize counters as well
     let _ = &*RECORDS_PARSED_TOTAL;
 }
 

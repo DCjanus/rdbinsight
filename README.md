@@ -120,7 +120,3 @@ The query-based workflow removes the need for Redis-side commands, and similar t
 
 - [ ] Use testcontainers to build Redis Cluster integration tests and verify parsing accuracy in cluster scenarios.
 - [ ] Use testcontainers to create a Codis cluster test environment (based on the `pikadb/codis:v3.5.5` image) to ensure compatibility.
-
-### Performance
-
-- [ ] Evaluate the performance gains of replacing the default allocator with mimalloc, especially for large files.

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.2]
+
+### Changed
+- CLI: `report` now uses a subcommand: `rdbinsight report from-clickhouse --url <URL> [--proxy-url <PROXY>] --cluster <CLUSTER> [--batch <RFC3339>] [-o <OUTPUT>]`. This replaces passing ClickHouse parameters directly on `report`.
+
 ## [0.1.0-rc.1]
 
 ### Features

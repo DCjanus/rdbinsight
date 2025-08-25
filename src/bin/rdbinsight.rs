@@ -227,6 +227,20 @@ struct ParquetOutputArgs {
 
 #[derive(Parser)]
 struct ReportArgs {
+    /// Report command variants
+    #[command(subcommand)]
+    cmd: ReportCommand,
+}
+
+#[derive(Subcommand)]
+enum ReportCommand {
+    /// Generate report from ClickHouse
+    #[command(name = "from-clickhouse")]
+    FromClickhouse(ReportFromClickHouseArgs),
+}
+
+#[derive(Args)]
+struct ReportFromClickHouseArgs {
     /// Cluster name
     #[clap(long, env = "RDBINSIGHT_CLUSTER")]
     cluster: String,
@@ -245,11 +259,11 @@ struct ReportArgs {
     ///
     /// Default database: rdbinsight
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
-    clickhouse_url: Url,
+    url: Url,
 
     /// HTTP proxy URL for ClickHouse connections
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PROXY_URL")]
-    clickhouse_proxy_url: Option<String>,
+    proxy_url: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -709,23 +723,27 @@ async fn process_rdb_streams(
 }
 
 async fn run_report(args: ReportArgs) -> Result<()> {
-    let clickhouse_config = rdbinsight::config::ClickHouseConfig::new(
-        args.clickhouse_url,
-        false, // Reports don't need auto-creation
-        args.clickhouse_proxy_url,
-    )?;
+    match args.cmd {
+        ReportCommand::FromClickhouse(sub) => {
+            let clickhouse_config = rdbinsight::config::ClickHouseConfig::new(
+                sub.url,
+                false, // Reports don't need auto-creation
+                sub.proxy_url,
+            )?;
 
-    clickhouse_config
-        .validate()
-        .with_context(|| "Invalid ClickHouse configuration")?;
+            clickhouse_config
+                .validate()
+                .with_context(|| "Invalid ClickHouse configuration")?;
 
-    rdbinsight::report::run_report_with_config(
-        clickhouse_config,
-        args.cluster,
-        args.batch,
-        args.output,
-    )
-    .await
+            rdbinsight::report::run_report_with_config(
+                clickhouse_config,
+                sub.cluster,
+                sub.batch,
+                sub.output,
+            )
+            .await
+        }
+    }
 }
 
 fn log_instance_progress(

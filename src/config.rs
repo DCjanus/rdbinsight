@@ -356,9 +356,7 @@ pub struct ClickHouseConfig {
     #[serde(default)]
     pub auto_create_tables: bool,
     pub proxy_url: Option<String>,
-
-    /// Full ClickHouse server URL (must include explicit port and ?database=)
-    pub address: String,
+    pub url: Url,
 }
 
 impl ClickHouseConfig {
@@ -417,7 +415,7 @@ impl ClickHouseConfig {
         Ok(Self {
             auto_create_tables,
             proxy_url,
-            address: url.to_string(),
+            url,
         })
     }
 
@@ -438,7 +436,14 @@ impl ClickHouseConfig {
             .pool_idle_timeout(Duration::from_secs(90))
             .build(proxy_connector);
 
-        let client = Client::with_http_client(http_client).with_url(&self.address);
+        let mut client = Client::with_http_client(http_client).with_url(&self.url.to_string());
+
+        if !self.url.username().is_empty() {
+            client = client.with_user(self.url.username());
+        }
+        if let Some(password) = self.url.password() {
+            client = client.with_password(password);
+        }
 
         Ok(client)
     }

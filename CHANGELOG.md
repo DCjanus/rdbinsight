@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.3]
+### Breaking
+- Require `http[s]://host:port?database=<db>` for ClickHouse (path database removed)
+
+### Features
+- Add sanitized info logs for ClickHouse/Proxy URLs
+
 ## [0.1.0-rc.2]
 
 ### Changed

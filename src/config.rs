@@ -1,6 +1,6 @@
 use std::{path::PathBuf, pin::Pin};
 
-use anyhow::{Context, anyhow, ensure};
+use anyhow::{Context, ensure};
 use async_trait::async_trait;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
@@ -79,9 +79,7 @@ impl DumpConfig {
 
         // Validate output configuration
         match &self.output {
-            OutputConfig::Clickhouse(clickhouse_config) => {
-                clickhouse_config.validate()?;
-            }
+            OutputConfig::Clickhouse(_clickhouse_config) => {}
             OutputConfig::Parquet(parquet_config) => {
                 parquet_config.validate()?;
             }
@@ -98,33 +96,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_clickhouse_config_default_database() {
-        let config =
+    fn test_clickhouse_config_requires_database_and_port() {
+        // Missing database
+        assert!(
             ClickHouseConfig::new(Url::parse("http://localhost:8123").unwrap(), false, None)
-                .unwrap();
-
-        assert_eq!(config.database, "rdbinsight");
-    }
-
-    #[test]
-    fn test_clickhouse_config_custom_database() {
-        let config = ClickHouseConfig::new(
-            Url::parse("http://localhost:8123/mydb").unwrap(),
-            false,
-            None,
-        )
-        .unwrap();
-
-        assert_eq!(config.database, "mydb");
+                .is_err()
+        );
+        // Missing port
+        assert!(
+            ClickHouseConfig::new(
+                Url::parse("http://localhost?database=db").unwrap(),
+                false,
+                None
+            )
+            .is_err()
+        );
+        // OK
+        assert!(
+            ClickHouseConfig::new(
+                Url::parse("http://localhost:8123?database=db").unwrap(),
+                false,
+                None
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn test_clickhouse_config_validation() {
-        let config =
-            ClickHouseConfig::new(Url::parse("http://localhost:8123").unwrap(), false, None)
-                .unwrap();
-
-        assert!(config.validate().is_ok());
+        // Construction performs validation; this should succeed
+        let cfg_ok = ClickHouseConfig::new(
+            Url::parse("http://localhost:8123?database=db").unwrap(),
+            false,
+            None,
+        );
+        assert!(cfg_ok.is_ok());
     }
 
     #[test]
@@ -139,7 +145,7 @@ mod tests {
     #[test]
     fn test_clickhouse_config_invalid_database_name() {
         let config = ClickHouseConfig::new(
-            Url::parse("http://localhost:8123/invalid-db-name!").unwrap(),
+            Url::parse("http://localhost:8123?database=invalid-db-name!").unwrap(),
             false,
             None,
         );
@@ -351,15 +357,8 @@ pub struct ClickHouseConfig {
     pub auto_create_tables: bool,
     pub proxy_url: Option<String>,
 
-    /// Address of ClickHouse server (e.g., http[s]://<host>:[port])
+    /// Full ClickHouse server URL (must include explicit port and ?database=)
     pub address: String,
-    /// Username for authentication (empty string means no username)
-    pub username: String,
-    /// Password for authentication (optional)
-    pub password: Option<String>,
-    /// Database name (defaults to "rdbinsight")
-    #[serde(default = "default_database")]
-    pub database: String,
 }
 
 impl ClickHouseConfig {
@@ -378,12 +377,21 @@ impl ClickHouseConfig {
             "ClickHouse URL must contain a host"
         );
 
+        ensure!(
+            url.port().is_some(),
+            "ClickHouse URL must include an explicit port"
+        );
+
         let database = url
-            .path_segments()
-            .and_then(|mut segments| segments.next())
-            .filter(|db| !db.is_empty())
-            .map(|db| db.to_string())
-            .unwrap_or_else(|| "rdbinsight".to_string());
+            .query_pairs()
+            .find(|(k, _)| k == "database")
+            .map(|(_, v)| v.into_owned())
+            .unwrap_or_default();
+
+        ensure!(
+            !database.is_empty(),
+            "ClickHouse URL must include '?database=' query parameter"
+        );
 
         ensure!(
             database
@@ -393,54 +401,27 @@ impl ClickHouseConfig {
             database
         );
 
-        let username = url.username().to_string();
-
-        let password = url.password().map(|p| p.to_string());
-
-        let mut address = url.clone();
-        address
-            .set_username("")
-            .map_err(|_| anyhow!("failed to set username"))?;
-        address
-            .set_password(None)
-            .map_err(|_| anyhow!("failed to set password"))?;
-        address.set_path("");
-        address.set_query(None);
+        // Log sanitized URLs for observability
+        let ch_url_sanitized = crate::helper::sanitize_url(url.as_str());
+        let proxy_url_sanitized = proxy_url
+            .as_deref()
+            .map(crate::helper::sanitize_url)
+            .unwrap_or_else(|| "<none>".to_string());
+        tracing::info!(
+            operation = "clickhouse_config_new",
+            clickhouse_url = %ch_url_sanitized,
+            proxy_url = %proxy_url_sanitized,
+            "Creating ClickHouseConfig"
+        );
 
         Ok(Self {
             auto_create_tables,
             proxy_url,
-            address: address.to_string(),
-            username,
-            password,
-            database,
+            address: url.to_string(),
         })
     }
 
-    /// Validate the ClickHouse configuration
-    pub fn validate(&self) -> AnyResult<()> {
-        use anyhow::ensure;
-
-        ensure!(
-            !self.address.is_empty(),
-            "ClickHouse base URL cannot be empty"
-        );
-
-        ensure!(
-            self.address.starts_with("http://") || self.address.starts_with("https://"),
-            "ClickHouse base URL must start with http:// or https://"
-        );
-
-        ensure!(
-            self.database
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '_' || c == '-'),
-            "ClickHouse database name '{}' contains invalid characters. Only alphanumeric, underscore, and hyphen are allowed",
-            self.database
-        );
-
-        Ok(())
-    }
+    // validate() removed; validation happens in new()
 
     /// Create a ClickHouse client based on this configuration
     pub fn create_client(&self) -> AnyResult<clickhouse::Client> {
@@ -457,23 +438,10 @@ impl ClickHouseConfig {
             .pool_idle_timeout(Duration::from_secs(90))
             .build(proxy_connector);
 
-        let mut client = Client::with_http_client(http_client).with_url(&self.address);
-
-        let username = self.username.clone();
-        if !username.is_empty() {
-            client = client.with_user(username);
-        }
-
-        if let Some(password) = self.password.as_deref() {
-            client = client.with_password(password);
-        }
-
-        client = client.with_database(&self.database);
+        let client = Client::with_http_client(http_client).with_url(&self.address);
 
         Ok(client)
     }
 }
 
-fn default_database() -> String {
-    "rdbinsight".to_string()
-}
+// removed: default_database (database must be provided in URL)

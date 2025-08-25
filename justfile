@@ -46,5 +46,5 @@ down_dev:
 
 demo with_data='true': up_dev
     if {{with_data}} == 'true'; then cargo run --release --bin fill_redis_memory -- 'redis://127.0.0.1:6380' '512M'; fi
-    cargo run --release --bin rdbinsight -- dump from-standalone --addr '127.0.0.1:6380' --cluster 'dev-test-cluster' into-clickhouse --url 'http://rdbinsight:rdbinsight@127.0.0.1:8124' --auto-create-tables
-    cargo run --release --bin rdbinsight -- report --cluster 'dev-test-cluster' --clickhouse-url 'http://rdbinsight:rdbinsight@127.0.0.1:8124'
+    cargo run --release --bin rdbinsight -- dump from-standalone --addr '127.0.0.1:6380' --cluster 'dev-test-cluster' into-clickhouse --url 'http://rdbinsight:rdbinsight@127.0.0.1:8124?database=rdbinsight' --auto-create-tables
+    cargo run --release --bin rdbinsight -- report from-clickhouse --cluster 'dev-test-cluster' --url 'http://rdbinsight:rdbinsight@127.0.0.1:8124?database=rdbinsight'

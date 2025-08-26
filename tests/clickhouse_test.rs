@@ -224,6 +224,7 @@ async fn run_clickhouse_test(test_case: &TestCase) -> AnyResult {
 
 #[tokio::test]
 async fn test_clickhouse_connections() {
+    // TODO: add testcase to clickhouse with authentication
     let test_cases = [
         TestCase {
             name: "Direct connection",

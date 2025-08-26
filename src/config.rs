@@ -1,6 +1,6 @@
 use std::{path::PathBuf, pin::Pin};
 
-use anyhow::{Context, ensure};
+use anyhow::{Context, anyhow, ensure};
 use async_trait::async_trait;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
@@ -436,7 +436,16 @@ impl ClickHouseConfig {
             .pool_idle_timeout(Duration::from_secs(90))
             .build(proxy_connector);
 
-        let mut client = Client::with_http_client(http_client).with_url(self.url.to_string());
+        let database = self
+            .url
+            .query_pairs()
+            .find(|(k, _)| k == "database")
+            .map(|(_, v)| v.into_owned())
+            .ok_or_else(|| anyhow!("ClickHouse URL must include '?database=' query parameter"))?;
+
+        let mut client = Client::with_http_client(http_client)
+            .with_url(self.url.to_string())
+            .with_database(database);
 
         if !self.url.username().is_empty() {
             client = client.with_user(self.url.username());

@@ -46,8 +46,8 @@ pub async fn start_clickhouse(network_name: Option<&str>) -> Result<ClickHouseIn
         .await
         .context("Failed to get ClickHouse container bridge IP address")?;
 
-    let internal_url = format!("http://{internal_ip}:{CLICKHOUSE_PORT}");
-    let host_url = format!("http://127.0.0.1:{host_port}");
+    let internal_url = format!("http://{internal_ip}:{CLICKHOUSE_PORT}?database=rdbinsight");
+    let host_url = format!("http://127.0.0.1:{host_port}?database=rdbinsight");
 
     Ok(ClickHouseInstance {
         container,

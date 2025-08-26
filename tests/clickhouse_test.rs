@@ -28,7 +28,6 @@ pub enum ProxyType {
 
 #[derive(Debug, Clone, Default)]
 pub struct TestInfrastructureConfig {
-    pub clickhouse: bool,
     pub clickhouse_username: Option<String>,
     pub clickhouse_password: Option<String>,
     pub proxy_enabled: bool,
@@ -257,7 +256,6 @@ async fn test_clickhouse_connections() {
         TestCase {
             name: "Direct connection",
             config: TestInfrastructureConfig {
-                clickhouse: true,
                 clickhouse_username: None,
                 clickhouse_password: None,
                 proxy_enabled: false,
@@ -271,7 +269,6 @@ async fn test_clickhouse_connections() {
         TestCase {
             name: "Direct connection with ClickHouse auth",
             config: TestInfrastructureConfig {
-                clickhouse: true,
                 clickhouse_username: Some("testuser".to_string()),
                 clickhouse_password: Some("testpass".to_string()),
                 proxy_enabled: false,
@@ -285,7 +282,6 @@ async fn test_clickhouse_connections() {
         TestCase {
             name: "Direct connection missing ClickHouse auth",
             config: TestInfrastructureConfig {
-                clickhouse: true,
                 clickhouse_username: Some("testuser".to_string()),
                 clickhouse_password: Some("testpass".to_string()),
                 proxy_enabled: false,
@@ -299,7 +295,6 @@ async fn test_clickhouse_connections() {
         TestCase {
             name: "Anonymous HTTP proxy",
             config: TestInfrastructureConfig {
-                clickhouse: true,
                 clickhouse_username: None,
                 clickhouse_password: None,
                 proxy_enabled: true,
@@ -313,7 +308,6 @@ async fn test_clickhouse_connections() {
         TestCase {
             name: "Authenticated HTTP proxy",
             config: TestInfrastructureConfig {
-                clickhouse: true,
                 clickhouse_username: None,
                 clickhouse_password: None,
                 proxy_enabled: true,
@@ -327,7 +321,6 @@ async fn test_clickhouse_connections() {
         TestCase {
             name: "Anonymous SOCKS5 proxy",
             config: TestInfrastructureConfig {
-                clickhouse: true,
                 clickhouse_username: None,
                 clickhouse_password: None,
                 proxy_enabled: true,
@@ -341,7 +334,6 @@ async fn test_clickhouse_connections() {
         TestCase {
             name: "Authenticated SOCKS5 proxy",
             config: TestInfrastructureConfig {
-                clickhouse: true,
                 clickhouse_username: None,
                 clickhouse_password: None,
                 proxy_enabled: true,

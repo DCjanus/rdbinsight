@@ -448,5 +448,3 @@ impl ClickHouseConfig {
         Ok(client)
     }
 }
-
-// removed: default_database (database must be provided in URL)

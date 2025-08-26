@@ -419,8 +419,6 @@ impl ClickHouseConfig {
         })
     }
 
-    // validate() removed; validation happens in new()
-
     /// Create a ClickHouse client based on this configuration
     pub fn create_client(&self) -> AnyResult<clickhouse::Client> {
         use std::time::Duration;

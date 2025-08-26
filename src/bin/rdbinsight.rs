@@ -197,11 +197,8 @@ enum OutputCommand {
 
 #[derive(Parser)]
 struct ClickHouseOutputArgs {
-    /// ClickHouse server URL (http[s]://[username[:password]@]host[:port]/[database])
-    ///
-    /// Default port: 8123
-    ///
-    /// Default database: rdbinsight
+    /// ClickHouse server URL (must include explicit port and ?database=<db>)
+    /// Example: http[s]://[user[:pass]@]host:8123?database=<db>
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
     url: Url,
 
@@ -253,11 +250,8 @@ struct ReportFromClickHouseArgs {
     #[clap(short, long, env = "RDBINSIGHT_REPORT_OUTPUT")]
     output: Option<PathBuf>,
 
-    /// ClickHouse server URL (http[s]://[username[:password]@]host[:port]/[database])
-    ///
-    /// Default port: 8123
-    ///
-    /// Default database: rdbinsight
+    /// ClickHouse server URL (must include explicit port and ?database=<db>)
+    /// Example: http[s]://[user[:pass]@]host:8123?database=<db>
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_URL")]
     url: Url,
 
@@ -730,10 +724,6 @@ async fn run_report(args: ReportArgs) -> Result<()> {
                 false, // Reports don't need auto-creation
                 sub.proxy_url,
             )?;
-
-            clickhouse_config
-                .validate()
-                .with_context(|| "Invalid ClickHouse configuration")?;
 
             rdbinsight::report::run_report_with_config(
                 clickhouse_config,

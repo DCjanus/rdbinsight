@@ -202,8 +202,9 @@ async fn run_clickhouse_test(test_case: &TestCase) -> AnyResult {
         println!("Proxy URL: {}", proxy);
     }
 
+    let url_with_db = format!("{}?database=rdbinsight", clickhouse_url);
     let client = rdbinsight::config::ClickHouseConfig::new(
-        Url::parse(clickhouse_url).unwrap(),
+        Url::parse(&url_with_db).unwrap(),
         false,
         proxy_url,
     )?
@@ -223,6 +224,7 @@ async fn run_clickhouse_test(test_case: &TestCase) -> AnyResult {
 
 #[tokio::test]
 async fn test_clickhouse_connections() {
+    // TODO: add testcase to clickhouse with authentication
     let test_cases = [
         TestCase {
             name: "Direct connection",

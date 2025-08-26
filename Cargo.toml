@@ -56,12 +56,12 @@ tracing-subscriber = { version = "0.3.19", features = [
     "env-filter",
 ] }
 typed-builder = "0.21.2"
-url = "2.5.6"
+url = { version = "2.5.6", features = ["serde"] }
+
+[build-dependencies]
+shadow-rs = "1.2.1"
 
 [dev-dependencies]
 tempfile = "3.20.0"
 testcontainers = { version = "0.25.0", features = ["http_wait"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-
-[build-dependencies]
-shadow-rs = "1.2.1"

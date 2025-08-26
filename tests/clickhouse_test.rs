@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use common::clickhouse::{ClickHouseInstance, start_clickhouse};
 use rdbinsight::helper::AnyResult;
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
@@ -9,7 +10,6 @@ use tracing::debug;
 use url::Url;
 
 mod common;
-use common::clickhouse::start_clickhouse;
 
 // Kept for historical context; now handled in common::clickhouse
 #[allow(dead_code)]
@@ -28,7 +28,8 @@ pub enum ProxyType {
 
 #[derive(Debug, Clone, Default)]
 pub struct TestInfrastructureConfig {
-    pub clickhouse: bool,
+    pub clickhouse_username: Option<String>,
+    pub clickhouse_password: Option<String>,
     pub proxy_enabled: bool,
     pub proxy_type: ProxyType,
     pub proxy_username: Option<String>,
@@ -36,9 +37,7 @@ pub struct TestInfrastructureConfig {
 }
 
 struct ClickHouseSetup {
-    _container: ContainerAsync<GenericImage>,
-    internal_url: String,
-    host_url: String,
+    instance: ClickHouseInstance,
 }
 
 struct ProxySetup {
@@ -57,7 +56,7 @@ impl TestInfrastructure {
         let test_id = rand::random::<u32>().to_be_bytes();
         let network_name = format!("rdbinsight-test-{}", hex::encode(test_id));
 
-        let clickhouse = Self::setup_clickhouse(&network_name)
+        let clickhouse = Self::setup_clickhouse(&network_name, &config)
             .await
             .context("Failed to setup ClickHouse")?;
 
@@ -78,14 +77,20 @@ impl TestInfrastructure {
         })
     }
 
-    async fn setup_clickhouse(network_name: &str) -> Result<ClickHouseSetup> {
-        let inst = start_clickhouse(Some(network_name)).await?;
+    async fn setup_clickhouse(
+        network_name: &str,
+        config: &TestInfrastructureConfig,
+    ) -> Result<ClickHouseSetup> {
+        let inst = start_clickhouse(
+            Some(network_name),
+            match (&config.clickhouse_username, &config.clickhouse_password) {
+                (Some(u), Some(p)) => Some((u.as_str(), p.as_str())),
+                _ => None,
+            },
+        )
+        .await?;
         debug!("ClickHouse container started");
-        Ok(ClickHouseSetup {
-            _container: inst.container,
-            internal_url: inst.internal_url,
-            host_url: inst.host_url,
-        })
+        Ok(ClickHouseSetup { instance: inst })
     }
 
     async fn setup_proxy(
@@ -161,14 +166,22 @@ impl TestInfrastructure {
         }
     }
 
-    /// Returns the ClickHouse URL for access from within the Docker network
-    pub fn clickhouse_internal_url(&self) -> &str {
-        &self.clickhouse.internal_url
+    pub fn clickhouse_internal_url(&self, include_auth: bool) -> Url {
+        let mut url = self.clickhouse.instance.internal_clickhouse_url();
+        if !include_auth {
+            url.set_username("").ok();
+            url.set_password(None).ok();
+        }
+        url
     }
 
-    /// Returns the ClickHouse URL for access from the host machine
-    pub fn clickhouse_host_url(&self) -> &str {
-        &self.clickhouse.host_url
+    pub fn clickhouse_host_url(&self, include_auth: bool) -> Url {
+        let mut url = self.clickhouse.instance.host_clickhouse_url();
+        if !include_auth {
+            url.set_username("").ok();
+            url.set_password(None).ok();
+        }
+        url
     }
 
     /// Returns the complete proxy URL including authentication if configured
@@ -180,6 +193,8 @@ impl TestInfrastructure {
 struct TestCase {
     name: &'static str,
     config: TestInfrastructureConfig,
+    expected_success: bool,
+    include_clickhouse_credentials_in_url: bool,
 }
 
 async fn run_clickhouse_test(test_case: &TestCase) -> AnyResult {
@@ -190,9 +205,9 @@ async fn run_clickhouse_test(test_case: &TestCase) -> AnyResult {
         .context("Failed to start test infrastructure")?;
 
     let clickhouse_url = if test_case.config.proxy_enabled {
-        infrastructure.clickhouse_internal_url()
+        infrastructure.clickhouse_internal_url(test_case.include_clickhouse_credentials_in_url)
     } else {
-        infrastructure.clickhouse_host_url()
+        infrastructure.clickhouse_host_url(test_case.include_clickhouse_credentials_in_url)
     };
 
     let proxy_url = infrastructure.proxy_url().map(|s| s.to_string());
@@ -202,79 +217,132 @@ async fn run_clickhouse_test(test_case: &TestCase) -> AnyResult {
         println!("Proxy URL: {}", proxy);
     }
 
-    let url_with_db = format!("{}?database=rdbinsight", clickhouse_url);
-    let client = rdbinsight::config::ClickHouseConfig::new(
-        Url::parse(&url_with_db).unwrap(),
-        false,
-        proxy_url,
-    )?
-    .create_client()
-    .context("Failed to create ClickHouse client")?;
+    let client_result = rdbinsight::config::ClickHouseConfig::new(clickhouse_url, false, proxy_url)
+        .and_then(|cfg| cfg.create_client());
 
-    let result: u16 = client
-        .query("SELECT 1+1")
-        .fetch_one()
-        .await
-        .context("Failed to execute query")?;
-    assert_eq!(result, 2);
-
-    println!("✅ {} test passed", test_case.name);
-    Ok(())
+    if test_case.expected_success {
+        let client = client_result.context("Failed to create ClickHouse client")?;
+        let result: u16 = client
+            .query("SELECT 1+1")
+            .fetch_one()
+            .await
+            .context("Failed to execute query")?;
+        assert_eq!(result, 2);
+        println!("✅ {} test passed", test_case.name);
+        Ok(())
+    } else {
+        match client_result {
+            Ok(client) => match client.query("SELECT 1+1").fetch_one::<u16>().await {
+                Ok(_) => panic!(
+                    "Test '{}' expected authentication failure, but query succeeded",
+                    test_case.name
+                ),
+                Err(_) => {
+                    println!("✅ {} expected failure occurred", test_case.name);
+                    Ok(())
+                }
+            },
+            Err(_) => {
+                println!("✅ {} expected failure occurred", test_case.name);
+                Ok(())
+            }
+        }
+    }
 }
 
 #[tokio::test]
 async fn test_clickhouse_connections() {
-    // TODO: add testcase to clickhouse with authentication
     let test_cases = [
         TestCase {
             name: "Direct connection",
             config: TestInfrastructureConfig {
-                clickhouse: true,
+                clickhouse_username: None,
+                clickhouse_password: None,
                 proxy_enabled: false,
                 proxy_type: ProxyType::Http,
                 proxy_username: None,
                 proxy_password: None,
             },
+            expected_success: true,
+            include_clickhouse_credentials_in_url: false,
+        },
+        TestCase {
+            name: "Direct connection with ClickHouse auth",
+            config: TestInfrastructureConfig {
+                clickhouse_username: Some("testuser".to_string()),
+                clickhouse_password: Some("testpass".to_string()),
+                proxy_enabled: false,
+                proxy_type: ProxyType::Http,
+                proxy_username: None,
+                proxy_password: None,
+            },
+            expected_success: true,
+            include_clickhouse_credentials_in_url: true,
+        },
+        TestCase {
+            name: "Direct connection missing ClickHouse auth",
+            config: TestInfrastructureConfig {
+                clickhouse_username: Some("testuser".to_string()),
+                clickhouse_password: Some("testpass".to_string()),
+                proxy_enabled: false,
+                proxy_type: ProxyType::Http,
+                proxy_username: None,
+                proxy_password: None,
+            },
+            expected_success: false,
+            include_clickhouse_credentials_in_url: false,
         },
         TestCase {
             name: "Anonymous HTTP proxy",
             config: TestInfrastructureConfig {
-                clickhouse: true,
+                clickhouse_username: None,
+                clickhouse_password: None,
                 proxy_enabled: true,
                 proxy_type: ProxyType::Http,
                 proxy_username: None,
                 proxy_password: None,
             },
+            expected_success: true,
+            include_clickhouse_credentials_in_url: false,
         },
         TestCase {
             name: "Authenticated HTTP proxy",
             config: TestInfrastructureConfig {
-                clickhouse: true,
+                clickhouse_username: None,
+                clickhouse_password: None,
                 proxy_enabled: true,
                 proxy_type: ProxyType::Http,
                 proxy_username: Some("testuser".to_string()),
                 proxy_password: Some("testpass".to_string()),
             },
+            expected_success: true,
+            include_clickhouse_credentials_in_url: false,
         },
         TestCase {
             name: "Anonymous SOCKS5 proxy",
             config: TestInfrastructureConfig {
-                clickhouse: true,
+                clickhouse_username: None,
+                clickhouse_password: None,
                 proxy_enabled: true,
                 proxy_type: ProxyType::Socks5,
                 proxy_username: None,
                 proxy_password: None,
             },
+            expected_success: true,
+            include_clickhouse_credentials_in_url: false,
         },
         TestCase {
             name: "Authenticated SOCKS5 proxy",
             config: TestInfrastructureConfig {
-                clickhouse: true,
+                clickhouse_username: None,
+                clickhouse_password: None,
                 proxy_enabled: true,
                 proxy_type: ProxyType::Socks5,
                 proxy_username: Some("testuser".to_string()),
                 proxy_password: Some("testpass".to_string()),
             },
+            expected_success: true,
+            include_clickhouse_credentials_in_url: false,
         },
     ];
 

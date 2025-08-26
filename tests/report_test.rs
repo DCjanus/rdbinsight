@@ -8,7 +8,6 @@ use rdbinsight::{
 };
 use time::OffsetDateTime;
 use tracing::info;
-use url::Url;
 
 use crate::common::init_log_for_debug;
 
@@ -54,15 +53,11 @@ async fn test_report_generate_data_with_clickhouse() {
 
     // 1) start clickhouse
     info!("Starting ClickHouse container");
-    let env = start_clickhouse(None).await.unwrap();
+    let env = start_clickhouse(None, None).await.unwrap();
     info!("ClickHouse container started: {}", env.host_url);
 
     // 2) build clickhouse config and output (auto-create tables)
-    let mut ch_url = Url::parse(&env.host_url).unwrap();
-    ch_url
-        .query_pairs_mut()
-        .append_pair("database", "rdbinsight");
-    let ch_config = ClickHouseConfig::new(ch_url, true, None).unwrap();
+    let ch_config = ClickHouseConfig::new(env.host_clickhouse_url(), true, None).unwrap();
     let cluster = "test-cluster".to_string();
     let batch_ts = OffsetDateTime::now_utc();
     let output = ClickHouseOutput::new(ch_config.clone(), cluster.clone(), batch_ts);
@@ -139,15 +134,11 @@ async fn test_report_generate_data_with_empty_cluster() {
 
     // 1) start clickhouse
     info!("Starting ClickHouse container");
-    let env = start_clickhouse(None).await.unwrap();
+    let env = start_clickhouse(None, None).await.unwrap();
     info!("ClickHouse container started: {}", env.host_url);
 
     // 2) build clickhouse config and output (auto-create tables)
-    let mut ch_url = Url::parse(&env.host_url).unwrap();
-    ch_url
-        .query_pairs_mut()
-        .append_pair("database", "rdbinsight");
-    let ch_config = ClickHouseConfig::new(ch_url, true, None).unwrap();
+    let ch_config = ClickHouseConfig::new(env.host_clickhouse_url(), true, None).unwrap();
     let cluster = "empty-cluster".to_string();
     let batch_ts = OffsetDateTime::now_utc();
     let output = ClickHouseOutput::new(ch_config.clone(), cluster.clone(), batch_ts);

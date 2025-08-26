@@ -436,7 +436,7 @@ impl ClickHouseConfig {
             .pool_idle_timeout(Duration::from_secs(90))
             .build(proxy_connector);
 
-        let mut client = Client::with_http_client(http_client).with_url(&self.url.to_string());
+        let mut client = Client::with_http_client(http_client).with_url(self.url.to_string());
 
         if !self.url.username().is_empty() {
             client = client.with_user(self.url.username());

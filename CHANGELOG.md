@@ -2,7 +2,6 @@
 
 ## [Unreleased]
 
-## [0.1.0-rc.3]
 ### Breaking
 - Require `http[s]://host:port?database=<db>` for ClickHouse to align with the [official HTTP interface](https://clickhouse.com/docs/interfaces/http) and avoid issues in complex deployments (e.g., multi-layer reverse proxies); path-based database selection is removed
 

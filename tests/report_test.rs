@@ -8,7 +8,6 @@ use rdbinsight::{
 };
 use time::OffsetDateTime;
 use tracing::info;
-use url::Url;
 
 use crate::common::init_log_for_debug;
 

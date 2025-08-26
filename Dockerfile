@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM rustlang/rust:nightly-bookworm-slim AS builder
+FROM rustlang/rust:nightly-trixie-slim AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --bin rdbinsight && \
     cp target/release/rdbinsight /tmp/rdbinsight
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

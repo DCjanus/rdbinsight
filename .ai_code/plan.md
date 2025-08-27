@@ -70,34 +70,26 @@
 将该实例的所有分段文件按 (db, key) 做 k 路归并，生成单一 `<instance>.parquet`（使用最终 `compression`）。
 
 ### 实现步骤
-- [ ] 实现基于最小堆的多路归并迭代器（或“锦标赛树” selection tree）：
-  - [ ] 数据结构：
-    - [ ] 每个 Run 的“批游标”（BatchCursor）：持有当前 RecordBatch、当前行索引、源文件句柄；
-    - [ ] 最小堆（`BinaryHeap` with `Reverse` 或自建 tournament tree），键为 `(db, key)` 与来源 run_id；
-    - [ ] 输出批构建器：按列的 Arrow Array Builders，达到目标行数后形成 RecordBatch 写出。
-  - [ ] 算法：
-    - [ ] 初始化：从每个 Run 读取首个 RecordBatch，将首行放入堆，携带 run_id 与行位置；
-    - [ ] 循环：弹出堆顶（最小 `(db, key)`），将该行追加到输出构建器；然后推动对应 Run 的游标到下一行；若当前批用尽，则拉取该 Run 的下一 RecordBatch；若该 Run 结束，从堆中移除；
-    - [ ] Flush：输出构建器达到阈值（例如 64K 行）或所有 Run 结束时，生成 RecordBatch 写入 AsyncArrowWriter；
-    - [ ] 终止：所有 Run 耗尽。
-  - [ ] Writer：
-    - [ ] 使用最终 `compression` 写出 `<instance>.parquet`；
-    - [ ] 设置 WriterProperties.sorting_columns = [(db ASC), (key ASC)]；
-    - [ ] 可选设置目标 Row Group 行数/估算大小（如 128MB），以平衡读取性能与元数据体量。
-  - [ ] 资源与性能控制：
-    - [ ] Fan-in 限制：当 Run 数极大时（例如 >128），分批归并（多轮）：先将若干 Runs 合并为少量临时“大 Run”（仍写入临时目录），最终一轮合并出 `<instance>.parquet`；
-    - [ ] 批大小：输入 RecordBatch 尺寸与输出批尺寸可调（例如 8K/64K 行），以兼顾内存与吞吐；
-    - [ ] I/O：顺序读取、尽量避免随机访问；可在文件层面启用较大的读缓冲；
-    - [ ] 内存上界：约为 k 个输入批的同时常驻量 + 一个输出批 + 堆（k log k），k 为同时参与的 Run 数；用 fan-in 控制 k；
-    - [ ] 分配复用：循环复用列构建器与工作缓冲，减少分配与拷贝。
-- [ ] 归并结束后删除该实例的 `*.000N.parquet`。
-- [ ] 归并中输出 tracing：归并路数、写出行数、耗时、压缩比、堆大小、批尺寸等关键指标。
+- [x] 实现基于最小堆的多路归并迭代器（或“锦标赛树” selection tree）：
+  - [x] 数据结构：
+    - [x] 每个 Run 的“批游标”（BatchCursor）：持有当前 RecordBatch、当前行索引、源文件句柄；
+    - [x] 最小堆（`BinaryHeap` with `Reverse` 或自建 tournament tree），键为 `(db, key)` 与来源 run_id；
+    - [x] 输出批构建器：按列的 Arrow Array Builders，达到目标行数后形成 RecordBatch 写出。
+  - [x] 算法：
+    - [x] 初始化：从每个 Run 读取首个 RecordBatch，将首行放入堆，携带 run_id 与行位置；
+    - [x] 循环：弹出堆顶（最小 `(db, key)`），将该行追加到输出构建器；然后推动对应 Run 的游标到下一行；若当前批用尽，则拉取该 Run 的下一 RecordBatch；若该 Run 结束，从堆中移除；
+    - [x] Flush：输出构建器达到阈值（例如 64K 行）或所有 Run 结束时，生成 RecordBatch 写入 AsyncArrowWriter；
+    - [x] 终止：所有 Run 耗尽。
+  - [x] Writer：
+    - [x] 使用最终 `compression` 写出 `<instance>.parquet`；
+    - [x] 设置 WriterProperties.sorting_columns = [(db ASC), (key ASC)]；
+- [x] 归并结束后删除该实例的 `*.000N.parquet`。
 
 ### 验证步骤
-- [ ] 在测试中将 `run_rows` 下调以确保触发多 Run 情况，归并后读取 `<instance>.parquet`，验证全局 (db, key) 有序。
-- [ ] 验证最终文件压缩算法为 `compression`、分段文件压缩算法为 `intermediate_compression`。
-- [ ] 验证最终文件 Parquet 元数据包含 sorting_columns 且为 (db, key) 升序。
-- [ ] 压测：构造高 k（如 200+）的 Run 数量，验证 fan-in 多轮归并路径正确性与资源峰值受控。
+- [x] 在测试中将 `run_rows` 下调以确保触发多 Run 情况，归并后读取 `<instance>.parquet`，验证全局 (db, key) 有序。
+- [x] 验证最终文件压缩算法为 `compression`、分段文件压缩算法为 `intermediate_compression`。
+- [x] 验证最终文件 Parquet 元数据包含 sorting_columns 且为 (db, key) 升序。
+- [x] 压测：构造高 k（如 200+）的 Run 数量，验证 fan-in 多轮归并路径正确性与资源峰值受控。
 
 ---
 

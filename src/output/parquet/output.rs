@@ -11,7 +11,7 @@ use crate::{
     helper::AnyResult,
     output::{
         ChunkWriter, ChunkWriterEnum, Output,
-        parquet::{mapper, path},
+        parquet::{mapper, merge, path},
     },
 };
 
@@ -162,6 +162,7 @@ pub struct ParquetChunkWriter {
     intermediate_compression: ParquetCompression,
     run_index: usize,
     run_buffer: BTreeMap<SortKey, crate::record::Record>,
+    final_compression: ParquetCompression,
 }
 
 impl ParquetChunkWriter {
@@ -199,11 +200,9 @@ impl ParquetChunkWriter {
                 WriterProperties::builder().set_compression(parquet::basic::Compression::LZ4)
             }
         };
-        // In our schema, columns are: 0 cluster, 1 batch, 2 instance, 3 db, 4 key, ...
-        let sorting_columns = vec![
-            parquet::format::SortingColumn::new(3, false, false),
-            parquet::format::SortingColumn::new(4, false, false),
-        ];
+        // Create sorting_columns by field name lookups
+        let sorting_columns = super::schema::create_db_key_sorting_columns(&schema)
+            .map_err(|e| anyhow!("Failed to resolve sorting columns: {e}"))?;
         builder = builder.set_sorting_columns(Some(sorting_columns));
         let props = builder.build();
 
@@ -222,8 +221,9 @@ impl ParquetChunkWriter {
             buffered_records: Vec::with_capacity(MICRO_BATCH_ROWS),
             run_rows,
             intermediate_compression,
-            run_index: 1,
+            run_index: 0,
             run_buffer: BTreeMap::new(),
+            final_compression: compression,
         })
     }
 
@@ -282,22 +282,25 @@ impl ParquetChunkWriter {
         })?;
 
         let schema = std::sync::Arc::new(super::schema::create_redis_record_schema());
+        let sorting_columns = super::schema::create_db_key_sorting_columns(&schema)
+            .map_err(|e| anyhow!("Failed to resolve sorting columns: {e}"))?;
 
-        let props = match self.intermediate_compression {
-            ParquetCompression::Zstd => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::ZSTD(
-                    parquet::basic::ZstdLevel::default(),
-                ))
-                .build(),
-            ParquetCompression::Snappy => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::SNAPPY)
-                .build(),
-            ParquetCompression::None => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::UNCOMPRESSED)
-                .build(),
-            ParquetCompression::Lz4 => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::LZ4)
-                .build(),
+        let props = {
+            let mut builder =
+                match self.intermediate_compression {
+                    ParquetCompression::Zstd => WriterProperties::builder().set_compression(
+                        parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()),
+                    ),
+                    ParquetCompression::Snappy => WriterProperties::builder()
+                        .set_compression(parquet::basic::Compression::SNAPPY),
+                    ParquetCompression::None => WriterProperties::builder()
+                        .set_compression(parquet::basic::Compression::UNCOMPRESSED),
+                    ParquetCompression::Lz4 => WriterProperties::builder()
+                        .set_compression(parquet::basic::Compression::LZ4),
+                };
+            // Mark run segments as sorted by (db ASC, key ASC)
+            builder = builder.set_sorting_columns(Some(sorting_columns));
+            builder.build()
         };
 
         let mut run_writer = AsyncArrowWriter::try_new(file, schema, Some(props))
@@ -382,7 +385,8 @@ impl ChunkWriter for ParquetChunkWriter {
             this.flush_run_segment().await?;
         }
 
-        if let Some(writer) = this.writer {
+        // Ensure temp writer (micro-batch file) is closed before merge
+        if let Some(writer) = this.writer.take() {
             writer.close().await.with_context(|| {
                 format!(
                     "Failed to close parquet writer for file {temp_path} for instance: {instance}",
@@ -392,16 +396,28 @@ impl ChunkWriter for ParquetChunkWriter {
             })?;
         }
 
-        tokio::fs::rename(&this.temp_path, &this.final_path)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to rename parquet file from {} to {} for instance: {}",
-                    this.temp_path.display(),
-                    this.final_path.display(),
-                    this.instance
-                )
-            })?;
+        // Build merge context and drop non-Send writer before awaiting heavy merge
+        let merge_ctx = merge::MergeContext {
+            cluster: this.cluster.clone(),
+            instance: this.instance.clone(),
+            batch_ts: this.batch_ts,
+            temp_batch_dir: this.temp_batch_dir.clone(),
+            temp_path: this.temp_path.clone(),
+            final_path: this.final_path.clone(),
+            instance_sanitized: this.instance_sanitized.clone(),
+            final_compression: this.final_compression,
+            run_count: this.run_index,
+        };
+
+        // Explicitly drop `this` to ensure no non-Send fields are held across await
+        drop(this);
+
+        // Perform in-instance k-way merge of run segments into final parquet file
+        merge_ctx.merge_run_segments_into_final().await?;
+
+        // Best-effort cleanup: remove intermediate micro-batch temp file if still present
+        let _ = tokio::fs::remove_file(&merge_ctx.temp_path).await;
+
         Ok(())
     }
 }

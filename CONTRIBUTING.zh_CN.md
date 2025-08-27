@@ -39,6 +39,22 @@ fix(report): correct memory flame graph color legend
 chore(ci): bump actions/checkout to v4
 ```
 
+### 版本一致性检查
+
+- 使用 `just verify_version` 校验当前 Git 标签与项目版本元数据是否一致。
+- 未显式传入标签时，命令会自动读取当前 HEAD 的标签。
+- 若 HEAD 没有标签，命令会报错并提示显式指定标签。
+
+示例：
+
+```bash
+# 自动从 HEAD 读取标签
+just verify_version
+
+# 显式指定标签
+just verify_version tag=v1.2.3
+```
+
 ### 测试与覆盖率
 
 - 单元测试：使用 `cargo nextest`（通过 `just test`）。

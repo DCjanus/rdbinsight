@@ -1,0 +1,7 @@
+name: Verify version consistency
+description: Ensure Git tag version matches Cargo.toml and CHANGELOG; Unreleased section must be empty on tag.
+runs:
+  using: node20
+  main: index.js
+
+

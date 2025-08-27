@@ -40,6 +40,22 @@ fix(report): correct memory flame graph color legend
 chore(ci): bump actions/checkout to v4
 ```
 
+### Version Consistency Check
+
+- Use `just verify_version` to ensure the current Git tag matches the project's version metadata.
+- If no tag is provided, the command auto-detects the tag of the current HEAD.
+- If HEAD is not tagged, the command fails and asks you to specify a tag.
+
+Examples:
+
+```bash
+# Auto-detect tag from HEAD
+just verify_version
+
+# Specify tag explicitly
+just verify_version tag=v1.2.3
+```
+
 ### Tests & Coverage
 
 - Unit tests: use `cargo nextest` (via `just test`).

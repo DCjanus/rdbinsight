@@ -217,9 +217,18 @@ struct ParquetOutputArgs {
     #[arg(long)]
     dir: PathBuf,
 
-    /// Compression algorithm
+    /// Compression algorithm for final merged files
     #[arg(long, value_enum, default_value_t = ParquetCompression::Zstd)]
     compression: ParquetCompression,
+
+    /// Max rows per run segment before flushing to disk
+    /// MVP uses row-based limit; set small in tests to force multiple runs
+    #[arg(long, default_value_t = 100_000)]
+    run_rows: usize,
+
+    /// Compression algorithm for intermediate run segments
+    #[arg(long, value_enum, default_value_t = ParquetCompression::Lz4)]
+    intermediate_compression: ParquetCompression,
 }
 
 #[derive(Parser)]
@@ -420,7 +429,12 @@ fn dump_command_to_config(
             OutputConfig::Clickhouse(ch_config)
         }
         OutputCommand::IntoParquet(parquet_args) => {
-            let parquet_config = ParquetConfig::new(parquet_args.dir, parquet_args.compression)?;
+            let parquet_config = ParquetConfig::new(
+                parquet_args.dir,
+                parquet_args.compression,
+                parquet_args.run_rows,
+                parquet_args.intermediate_compression,
+            )?;
             OutputConfig::Parquet(parquet_config)
         }
     };

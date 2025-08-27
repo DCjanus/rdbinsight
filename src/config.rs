@@ -327,17 +327,34 @@ impl OutputConfig {
 pub struct ParquetConfig {
     pub dir: PathBuf,
     pub compression: ParquetCompression,
+    pub run_rows: usize,
+    pub intermediate_compression: ParquetCompression,
 }
 
 impl ParquetConfig {
     /// Create a new ParquetConfig
-    pub fn new(dir: PathBuf, compression: ParquetCompression) -> AnyResult<Self> {
-        Ok(Self { dir, compression })
+    pub fn new(
+        dir: PathBuf,
+        compression: ParquetCompression,
+        run_rows: usize,
+        intermediate_compression: ParquetCompression,
+    ) -> AnyResult<Self> {
+        Ok(Self {
+            dir,
+            compression,
+            run_rows,
+            intermediate_compression,
+        })
     }
 
     /// Validate the Parquet configuration
     pub fn validate(&self) -> AnyResult<()> {
         ensure!(!self.dir.is_file(), "Parquet directory cannot be a file");
+        ensure!(
+            self.run_rows > 0,
+            "run_rows must be greater than 0, got: {}",
+            self.run_rows
+        );
 
         Ok(())
     }
@@ -349,6 +366,7 @@ pub enum ParquetCompression {
     Zstd,
     Snappy,
     None,
+    Lz4,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

@@ -151,6 +151,9 @@ impl ParquetChunkWriter {
             ParquetCompression::None => WriterProperties::builder()
                 .set_compression(parquet::basic::Compression::UNCOMPRESSED)
                 .build(),
+            ParquetCompression::Lz4 => WriterProperties::builder()
+                .set_compression(parquet::basic::Compression::LZ4)
+                .build(),
         };
 
         let writer = AsyncArrowWriter::try_new(file, schema, Some(props))

@@ -12,16 +12,16 @@
 本阶段仅做必要参数与默认值的接入，不引入无关配置；并发复用 `DumpArgs.concurrency`。
 
 ### 实现步骤
-- [ ] 为 Parquet 输出增加运行规模控制参数：`run_rows`（默认 100000，测试可下调以强制生成多 Run）。
-- [ ] 为最终文件增加压缩参数：`compression`（默认 zstd）。
-- [ ] 为 Run 分段增加压缩参数：`intermediate_compression`（默认 lz4）。
-- [ ] 在现有 CLI 中为 into-parquet 分支接入上述参数（名称与文档与设计一致）。
-- [ ] 确认并复用 `DumpArgs.concurrency` 作为实例级并发度来源（排序与 dump 共享协程）。
+- [x] 为 Parquet 输出增加运行规模控制参数：`run_rows`（默认 100000，测试可下调以强制生成多 Run）。
+- [x] 为最终文件增加压缩参数：`compression`（默认 zstd）。
+- [x] 为 Run 分段增加压缩参数：`intermediate_compression`（默认 lz4）。
+- [x] 在现有 CLI 中为 into-parquet 分支接入上述参数（名称与文档与设计一致）。
+- [x] 确认并复用 `DumpArgs.concurrency` 作为实例级并发度来源（排序与 dump 共享协程）。
 
 ### 验证步骤
-- [ ] 编译与 Lint：`cargo clippy --all-targets --all-features -- -D warnings` 通过。
-- [ ] 运行：`cargo run --bin rdbinsight -- dump ... into-parquet --help` 能正确显示新参数与默认值。
-- [ ] 配置反序列化与默认值单测通过（新增/调整 tests）。
+- [x] 编译与 Lint：`cargo clippy --all-targets --all-features -- -D warnings` 通过。
+- [x] 运行：`cargo run --bin rdbinsight -- dump ... into-parquet --help` 能正确显示新参数与默认值。
+- [x] 配置反序列化与默认值单测通过（新增/调整 tests）。
 
 ---
 

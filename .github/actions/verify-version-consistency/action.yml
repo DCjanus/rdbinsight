@@ -1,0 +1,62 @@
+name: Verify version consistency
+description: Ensure Git tag version matches Cargo.toml and CHANGELOG; Unreleased section must be empty on tag.
+runs:
+  using: composite
+  steps:
+    - name: Verify version consistency (tag/Cargo.toml/CHANGELOG)
+      shell: bash
+      run: |
+        set -euo pipefail
+        TAG="${GITHUB_REF_NAME}"
+        TAG_VERSION="${TAG#v}"
+        # Read Cargo version from [package] section
+        CARGO_VERSION=$(awk '
+        $0 ~ /^\[package\]/ { in_pkg=1; next }
+        $0 ~ /^\[/ && $0 !~ /^\[package\]/ { in_pkg=0 }
+        in_pkg && $0 ~ /^version[[:space:]]*=[[:space:]]*"/ {
+          match($0, /version[[:space:]]*=[[:space:]]*"(.*)"/, arr);
+          print arr[1]; exit
+        }' Cargo.toml)
+        if [ -z "${CARGO_VERSION:-}" ]; then
+          echo "::error::Failed to parse version from Cargo.toml"
+          exit 1
+        fi
+        # Read latest version from CHANGELOG (first non-Unreleased heading)
+        CHANGELOG_VERSION=$(grep -E '^## \[[^]]+\]' CHANGELOG.md | grep -v 'Unreleased' | head -n1 | sed -E 's/^## \[([^]]+)\].*/\1/')
+        if [ -z "${CHANGELOG_VERSION:-}" ]; then
+          echo "::error::Failed to parse latest released version from CHANGELOG.md"
+          exit 1
+        fi
+        # Ensure Unreleased section is empty
+        if awk '
+          /^## \[Unreleased\]/ { in=1; next }
+          in && /^## \[/ { in=0 }
+          in {
+            if ($0 !~ /^[[:space:]]*$/) bad=1
+          }
+          END { if (bad) exit 1 }
+        ' CHANGELOG.md; then
+          :
+        else
+          echo "::error::CHANGELOG.md has non-empty Unreleased section on tag ${TAG}"
+          exit 1
+        fi
+        # Compare versions
+        ok=1
+        if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+          echo "::error::Tag version (${TAG_VERSION}) != Cargo.toml version (${CARGO_VERSION})"
+          ok=0
+        fi
+        if [ "$TAG_VERSION" != "$CHANGELOG_VERSION" ]; then
+          echo "::error::Tag version (${TAG_VERSION}) != CHANGELOG latest version (${CHANGELOG_VERSION})"
+          ok=0
+        fi
+        if [ "$ok" -ne 1 ]; then
+          echo "TAG=${TAG_VERSION}"
+          echo "CARGO=${CARGO_VERSION}"
+          echo "CHANGELOG=${CHANGELOG_VERSION}"
+          exit 1
+        fi
+        echo "Version check passed: ${TAG_VERSION}"
+
+

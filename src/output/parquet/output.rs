@@ -38,14 +38,17 @@ impl ParquetOutput {
     }
 
     fn temp_batch_dir(&self) -> PathBuf {
-        let batch_dir_name = path::format_batch_dir(self.batch_ts);
-        let temp_batch_dir_name = path::make_tmp_batch_dir(&batch_dir_name);
-        self.base_dir.join(&self.cluster).join(temp_batch_dir_name)
+        let batch_slug = path::format_batch_dir(self.batch_ts);
+        let cluster_dir = path::cluster_dir_name(&self.cluster);
+        let temp_batch_dir_name = path::temp_batch_dir_name(&batch_slug);
+        self.base_dir.join(cluster_dir).join(temp_batch_dir_name)
     }
 
     fn final_batch_dir(&self) -> PathBuf {
-        let batch_dir_name = path::format_batch_dir(self.batch_ts);
-        self.base_dir.join(&self.cluster).join(batch_dir_name)
+        let batch_slug = path::format_batch_dir(self.batch_ts);
+        let cluster_dir = path::cluster_dir_name(&self.cluster);
+        let final_batch_dir_name = path::final_batch_dir_name(&batch_slug);
+        self.base_dir.join(cluster_dir).join(final_batch_dir_name)
     }
 }
 
@@ -73,7 +76,7 @@ impl Output for ParquetOutput {
     async fn create_writer(&self, instance: &str) -> AnyResult<ChunkWriterEnum> {
         let sanitized_instance = path::sanitize_instance_filename(instance);
         let temp_filename = format!("{sanitized_instance}.parquet.tmp");
-        let final_filename = format!("{sanitized_instance}.parquet");
+        let final_filename = path::final_instance_filename(&sanitized_instance);
 
         let temp_path = self.temp_batch_dir().join(temp_filename);
         let final_path = self.temp_batch_dir().join(final_filename);
@@ -96,15 +99,15 @@ impl Output for ParquetOutput {
         let temp_batch_dir = self.temp_batch_dir();
         let final_batch_dir = self.final_batch_dir();
 
-        tokio::fs::rename(&temp_batch_dir, &final_batch_dir)
-			.await
-			.with_context(|| {
-				format!(
-					"Failed to rename batch directory from {} to {} (ensure no other process is accessing these files)",
-					temp_batch_dir.display(),
-					final_batch_dir.display()
-				)
-			})?;
+        path::finalize_batch_dir(&temp_batch_dir, &final_batch_dir).await?;
+
+        info!(
+            operation = "parquet_batch_finalize",
+            cluster = %self.cluster,
+            temp_batch_dir = %temp_batch_dir.display(),
+            final_batch_dir = %final_batch_dir.display(),
+            "Finalized batch directory via atomic rename"
+        );
         Ok(())
     }
 }

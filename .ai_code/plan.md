@@ -30,17 +30,17 @@
 引入 Hadoop 分区风格目录与批次级临时目录，最终以目录级 rename 完成“全有或全无”。
 
 ### 实现步骤
-- [ ] 更新 `output/parquet/path.rs`：
-  - [ ] 临时根：`<output_root>/cluster=<cluster>/_tmp_batch=<batch>/`
-  - [ ] 最终根：`<output_root>/cluster=<cluster>/batch=<batch>/`
-  - [ ] 规范实例分段 Run 文件命名：`<instance>.0001.parquet`、`<instance>.0002.parquet`...
-  - [ ] 规范实例最终文件命名：`<instance>.parquet`。
-  - [ ] 提供批次“最终化”函数：将 `_tmp_batch=<batch>` 一次性 rename 为 `batch=<batch>`。
-- [ ] 日志中输出新路径与关键操作（创建临时目录、最终化）。
+- [x] 更新 `output/parquet/path.rs`：
+  - [x] 临时根：`<output_root>/cluster=<cluster>/_tmp_batch=<batch>/`
+  - [x] 最终根：`<output_root>/cluster=<cluster>/batch=<batch>/`
+  - [x] 规范实例分段 Run 文件命名：`<instance>.0001.parquet`、`<instance>.0002.parquet`...
+  - [x] 规范实例最终文件命名：`<instance>.parquet`。
+  - [x] 提供批次“最终化”函数：将 `_tmp_batch=<batch>` 一次性 rename 为 `batch=<batch>`。
+- [x] 日志中输出新路径与关键操作（创建临时目录、最终化）。
 
 ### 验证步骤
-- [ ] 编译与 Lint 通过。
-- [ ] 新增/调整针对路径格式的单测：确保目录与文件路径符合预期（特别是最终化逻辑）。
+- [x] 编译与 Lint 通过。
+- [x] 新增/调整针对路径格式的单测：确保目录与文件路径符合预期（特别是最终化逻辑）。
 
 ---
 

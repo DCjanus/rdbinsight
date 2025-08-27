@@ -87,7 +87,13 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
 
     // Verify the output files exist
     let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_ts);
-    let final_batch_dir = output_dir.join(cluster_name).join(batch_dir_name);
+    let final_batch_dir = output_dir
+        .join(rdbinsight::output::parquet::path::cluster_dir_name(
+            cluster_name,
+        ))
+        .join(rdbinsight::output::parquet::path::final_batch_dir_name(
+            &batch_dir_name,
+        ));
     assert!(
         final_batch_dir.exists(),
         "Final batch directory should exist"
@@ -175,8 +181,12 @@ async fn test_parquet_compression_algorithms() -> Result<()> {
         // Verify file exists
         let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_ts);
         let instance_file = output_dir
-            .join(cluster_name)
-            .join(batch_dir_name)
+            .join(rdbinsight::output::parquet::path::cluster_dir_name(
+                cluster_name,
+            ))
+            .join(rdbinsight::output::parquet::path::final_batch_dir_name(
+                &batch_dir_name,
+            ))
             .join("127.0.0.1-6379.parquet");
 
         assert!(
@@ -235,7 +245,13 @@ async fn test_multiple_instances_parquet() -> Result<()> {
 
     // Verify all instance files exist
     let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_ts);
-    let final_batch_dir = output_dir.join(cluster_name).join(batch_dir_name);
+    let final_batch_dir = output_dir
+        .join(rdbinsight::output::parquet::path::cluster_dir_name(
+            cluster_name,
+        ))
+        .join(rdbinsight::output::parquet::path::final_batch_dir_name(
+            &batch_dir_name,
+        ));
 
     for instance in instances {
         let sanitized_instance = instance.replace(':', "-");

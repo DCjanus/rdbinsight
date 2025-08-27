@@ -18,6 +18,8 @@ use crate::{
 pub struct ParquetOutput {
     base_dir: PathBuf,
     compression: ParquetCompression,
+    run_rows: usize,
+    intermediate_compression: ParquetCompression,
     cluster: String,
     batch_ts: time::OffsetDateTime,
 }
@@ -26,12 +28,16 @@ impl ParquetOutput {
     pub fn new(
         base_dir: PathBuf,
         compression: ParquetCompression,
+        run_rows: usize,
+        intermediate_compression: ParquetCompression,
         cluster: String,
         batch_ts: time::OffsetDateTime,
     ) -> Self {
         Self {
             base_dir,
             compression,
+            run_rows,
+            intermediate_compression,
             cluster,
             batch_ts,
         }
@@ -83,11 +89,15 @@ impl Output for ParquetOutput {
 
         let writer = ParquetChunkWriter::new(
             instance.to_string(),
+            sanitized_instance,
             self.cluster.clone(),
             self.batch_ts,
+            self.temp_batch_dir(),
             temp_path,
             final_path,
             self.compression,
+            self.run_rows,
+            self.intermediate_compression,
         )
         .await
         .with_context(|| format!("Failed to create Parquet writer for instance: {instance}"))?;
@@ -114,24 +124,59 @@ impl Output for ParquetOutput {
 
 const MICRO_BATCH_ROWS: usize = 8192;
 
+use std::collections::BTreeMap;
+
+use crate::parser::core::raw::RDBStr;
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct SortKey {
+    db: i64,
+    key: Vec<u8>,
+}
+
+impl SortKey {
+    fn from_record(record: &crate::record::Record) -> Self {
+        let key_bytes = match &record.key {
+            RDBStr::Str(bytes) => bytes.to_vec(),
+            RDBStr::Int(int_val) => int_val.to_string().into_bytes(),
+        };
+        Self {
+            db: record.db as i64,
+            key: key_bytes,
+        }
+    }
+}
+
 pub struct ParquetChunkWriter {
     writer: Option<AsyncArrowWriter<File>>,
     instance: String,
+    instance_sanitized: String,
     cluster: String,
     batch_ts: time::OffsetDateTime,
+    temp_batch_dir: PathBuf,
     temp_path: PathBuf,
     final_path: PathBuf,
     buffered_records: Vec<crate::record::Record>,
+    // Run buffer (sorted) and controls
+    run_rows: usize,
+    intermediate_compression: ParquetCompression,
+    run_index: usize,
+    run_buffer: BTreeMap<SortKey, crate::record::Record>,
 }
 
 impl ParquetChunkWriter {
+    #[allow(clippy::too_many_arguments)]
     async fn new(
         instance: String,
+        instance_sanitized: String,
         cluster: String,
         batch_ts: time::OffsetDateTime,
+        temp_batch_dir: PathBuf,
         temp_path: PathBuf,
         final_path: PathBuf,
         compression: ParquetCompression,
+        run_rows: usize,
+        intermediate_compression: ParquetCompression,
     ) -> AnyResult<Self> {
         let file = File::create(&temp_path).await.with_context(|| {
             format!(
@@ -141,23 +186,26 @@ impl ParquetChunkWriter {
         })?;
 
         let schema = std::sync::Arc::new(super::schema::create_redis_record_schema());
-
-        let props = match compression {
-            ParquetCompression::Zstd => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::ZSTD(
-                    parquet::basic::ZstdLevel::default(),
-                ))
-                .build(),
-            ParquetCompression::Snappy => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::SNAPPY)
-                .build(),
+        let mut builder = match compression {
+            ParquetCompression::Zstd => WriterProperties::builder().set_compression(
+                parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()),
+            ),
+            ParquetCompression::Snappy => {
+                WriterProperties::builder().set_compression(parquet::basic::Compression::SNAPPY)
+            }
             ParquetCompression::None => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::UNCOMPRESSED)
-                .build(),
-            ParquetCompression::Lz4 => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::LZ4)
-                .build(),
+                .set_compression(parquet::basic::Compression::UNCOMPRESSED),
+            ParquetCompression::Lz4 => {
+                WriterProperties::builder().set_compression(parquet::basic::Compression::LZ4)
+            }
         };
+        // In our schema, columns are: 0 cluster, 1 batch, 2 instance, 3 db, 4 key, ...
+        let sorting_columns = vec![
+            parquet::format::SortingColumn::new(3, false, false),
+            parquet::format::SortingColumn::new(4, false, false),
+        ];
+        builder = builder.set_sorting_columns(Some(sorting_columns));
+        let props = builder.build();
 
         let writer = AsyncArrowWriter::try_new(file, schema, Some(props))
             .map_err(|e| anyhow!("Failed to create async arrow writer: {e}"))?;
@@ -165,11 +213,17 @@ impl ParquetChunkWriter {
         Ok(Self {
             writer: Some(writer),
             instance,
+            instance_sanitized,
             cluster,
             batch_ts,
+            temp_batch_dir,
             temp_path,
             final_path,
             buffered_records: Vec::with_capacity(MICRO_BATCH_ROWS),
+            run_rows,
+            intermediate_compression,
+            run_index: 1,
+            run_buffer: BTreeMap::new(),
         })
     }
 
@@ -210,14 +264,108 @@ impl ParquetChunkWriter {
         self.write_batch(record_batch).await?;
         Ok(())
     }
+
+    async fn flush_run_segment(&mut self) -> AnyResult<()> {
+        if self.run_buffer.is_empty() {
+            return Ok(());
+        }
+
+        let segment_filename = path::run_segment_filename(&self.instance_sanitized, self.run_index);
+        let segment_path = self.temp_batch_dir.join(segment_filename);
+        self.run_index += 1;
+
+        let file = File::create(&segment_path).await.with_context(|| {
+            format!(
+                "Failed to create run segment parquet file: {}",
+                segment_path.display()
+            )
+        })?;
+
+        let schema = std::sync::Arc::new(super::schema::create_redis_record_schema());
+
+        let props = match self.intermediate_compression {
+            ParquetCompression::Zstd => WriterProperties::builder()
+                .set_compression(parquet::basic::Compression::ZSTD(
+                    parquet::basic::ZstdLevel::default(),
+                ))
+                .build(),
+            ParquetCompression::Snappy => WriterProperties::builder()
+                .set_compression(parquet::basic::Compression::SNAPPY)
+                .build(),
+            ParquetCompression::None => WriterProperties::builder()
+                .set_compression(parquet::basic::Compression::UNCOMPRESSED)
+                .build(),
+            ParquetCompression::Lz4 => WriterProperties::builder()
+                .set_compression(parquet::basic::Compression::LZ4)
+                .build(),
+        };
+
+        let mut run_writer = AsyncArrowWriter::try_new(file, schema, Some(props))
+            .map_err(|e| anyhow!("Failed to create async arrow run writer: {e}"))?;
+
+        // Drain in-order records for this run
+        let taken_map = std::mem::take(&mut self.run_buffer);
+        let mut ordered_records: Vec<crate::record::Record> = Vec::with_capacity(taken_map.len());
+        for (_k, v) in taken_map {
+            ordered_records.push(v);
+        }
+
+        let record_batch = mapper::records_to_columns(
+            &self.cluster,
+            self.batch_ts,
+            &self.instance,
+            &ordered_records,
+        )
+        .with_context(|| {
+            anyhow!(
+                "Failed to convert {} run records to columns for instance: {}",
+                ordered_records.len(),
+                self.instance
+            )
+        })?;
+
+        run_writer.write(&record_batch).await.with_context(|| {
+            anyhow!(
+                "Failed to write run segment parquet file: {}",
+                segment_path.display()
+            )
+        })?;
+
+        run_writer.close().await.with_context(|| {
+            format!(
+                "Failed to close run segment parquet writer for file: {}",
+                segment_path.display()
+            )
+        })?;
+
+        info!(
+            operation = "parquet_run_flushed",
+            instance = %self.instance,
+            segment = %segment_path.file_name().and_then(|s| s.to_str()).unwrap_or("<unknown>"),
+            rows = ordered_records.len(),
+            compression = ?self.intermediate_compression,
+            "Flushed sorted run segment"
+        );
+
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
 impl ChunkWriter for ParquetChunkWriter {
     async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()> {
-        self.buffered_records.push(record);
+        // Feed final-file micro-batch path (existing behaviour)
+        self.buffered_records.push(record.clone());
         if self.buffered_records.len() >= MICRO_BATCH_ROWS {
             self.flush_buffer().await?;
+        }
+
+        // Feed run buffer (sorted by (db, key))
+        let key = SortKey::from_record(&record);
+        // On duplicate keys, newer record overwrites previous one. This should be rare/non-existent in typical RDB dumps.
+        self.run_buffer.insert(key, record);
+        if self.run_buffer.len() >= self.run_rows {
+            self.flush_run_segment().await?;
         }
         Ok(())
     }
@@ -227,6 +375,11 @@ impl ChunkWriter for ParquetChunkWriter {
 
         if !this.buffered_records.is_empty() {
             this.flush_buffer().await?;
+        }
+
+        // Flush tail run segment if any
+        if !this.run_buffer.is_empty() {
+            this.flush_run_segment().await?;
         }
 
         if let Some(writer) = this.writer {

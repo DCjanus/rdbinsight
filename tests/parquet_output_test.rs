@@ -56,6 +56,8 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     let parquet_output = ParquetOutput::new(
         output_dir.clone(),
         ParquetCompression::None,
+        100_000,
+        ParquetCompression::Lz4,
         cluster_name.to_string(),
         batch_ts,
     );
@@ -150,6 +152,8 @@ async fn test_parquet_compression_algorithms() -> Result<()> {
         let parquet_output = ParquetOutput::new(
             output_dir.clone(),
             compression,
+            100_000,
+            ParquetCompression::Lz4,
             cluster_name.to_string(),
             batch_ts,
         );
@@ -212,6 +216,8 @@ async fn test_multiple_instances_parquet() -> Result<()> {
     let parquet_output = ParquetOutput::new(
         output_dir.clone(),
         ParquetCompression::None,
+        100_000,
+        ParquetCompression::Lz4,
         cluster_name.to_string(),
         batch_ts,
     );

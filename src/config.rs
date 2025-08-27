@@ -314,6 +314,8 @@ impl OutputConfig {
                 let output = crate::output::parquet::output::ParquetOutput::new(
                     parquet_config.dir.clone(),
                     parquet_config.compression,
+                    parquet_config.run_rows,
+                    parquet_config.intermediate_compression,
                     cluster,
                     batch_ts,
                 );

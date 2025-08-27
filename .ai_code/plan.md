@@ -49,19 +49,19 @@
 将 dump 输出在内存聚合到“行数上限”的 Run，采用 BTree 增量有序缓冲摊平排序成本，按 (db, key) 顺序写出分段文件（使用 `intermediate_compression`）。
 
 ### 实现步骤
-- [ ] 在 Parquet 输出模块中新增“Run 缓冲器”（按实例维护）：
-  - [ ] 使用 `BTreeMap<(db, key), Record>` 作为增量有序结构（以 O(log n) 插入；基于 RDB 语义假设不会产生重复 (db, key)）。
-  - [ ] 接收记录（沿用现有 Record/Arrow 路径），每条插入 BTree；达到 `run_rows` 上限后触发落盘；
-  - [ ] 落盘时按 BTree 的 in-order 迭代 key，输出为 `<instance>.000N.parquet`（使用 `intermediate_compression`）。
-  - [ ] 设置 WriterProperties.sorting_columns = [(db ASC), (key ASC)]，在分段文件的 Parquet 元数据中标明排序键。
-  - [ ] 清空缓冲并递增 N。
-- [ ] 实例结束时，如有未满 Run 的尾块，同样按有序迭代落盘，并设置相同的 sorting_columns 元数据。
-- [ ] 统一 tracing：记录每个 Run 的行数/耗时/输出大小/压缩方式，并输出插入/落盘的速率以观察是否存在 CPU 尖刺。
+- [x] 在 Parquet 输出模块中新增“Run 缓冲器”（按实例维护）：
+  - [x] 使用 `BTreeMap<(db, key), Record>` 作为增量有序结构（以 O(log n) 插入；基于 RDB 语义假设不会产生重复 (db, key)）。
+  - [x] 接收记录（沿用现有 Record/Arrow 路径），每条插入 BTree；达到 `run_rows` 上限后触发落盘；
+  - [x] 落盘时按 BTree 的 in-order 迭代 key，输出为 `<instance>.000N.parquet`（使用 `intermediate_compression`）。
+  - [x] 设置 WriterProperties.sorting_columns = [(db ASC), (key ASC)]，在分段文件的 Parquet 元数据中标明排序键。
+  - [x] 清空缓冲并递增 N。
+- [x] 实例结束时，如有未满 Run 的尾块，同样按有序迭代落盘，并设置相同的 sorting_columns 元数据。
+- [x] 统一 tracing：记录每个 Run 的行数/耗时/输出大小/压缩方式，并输出插入/落盘的速率以观察是否存在 CPU 尖刺。
 
 ### 验证步骤
-- [ ] 将 `run_rows` 在测试中下调为很小值（如 10~50），强制形成 ≥2 个 Run，检查分段文件存在与行数正确。
-- [ ] 读取分段 Parquet，验证 (db, key) 局部有序（跨 Run 的全局有序在下一阶段验证）。
-- [ ] 检查分段文件 Parquet 元数据包含 sorting_columns 且为 (db, key) 升序。
+- [x] 将 `run_rows` 在测试中下调为很小值（如 10~50），强制形成 ≥2 个 Run，检查分段文件存在与行数正确。
+- [x] 读取分段 Parquet，验证 (db, key) 局部有序（跨 Run 的全局有序在下一阶段验证）。
+- [x] 检查分段文件 Parquet 元数据包含 sorting_columns 且为 (db, key) 升序。
 
 ---
 

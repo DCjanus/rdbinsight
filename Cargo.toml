@@ -8,7 +8,7 @@ default-run = "rdbinsight"
 
 [dependencies]
 anyhow = "1.0.98"
-arrow = "56.0.0"
+arrow = "56.1.0"
 async-trait = "0.1.88"
 async_async_io = "0.2.3"
 axum = "0.8.4"
@@ -29,7 +29,7 @@ lzf = "1.0.0"
 memchr = "2.7.5"
 num_cpus = "1.17.0"
 num_enum = "0.7.3"
-parquet = { version = "56.0.0", features = ["arrow", "async"] }
+parquet = { version = "56.1.0", features = ["arrow", "async"] }
 prometheus = { version = "0.14.0", features = ["process"] }
 rand = "0.9.1"
 redis = { version = "0.32.4", features = [

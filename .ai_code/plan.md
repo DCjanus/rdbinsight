@@ -85,15 +85,15 @@
 加入 `merge_fan_in` 参数（默认 64），用于控制滚动合并的最大 fan-in。
 
 ### 实现步骤
-- [ ] 扩展配置结构体与 CLI：
-  - [ ] 在 `config.rs` 与 `src/bin/rdbinsight.rs` 的 into-parquet 分支接入 `merge_fan_in`；
-  - [ ] 将该参数传递至 `ParquetOutput` 与 `ParquetChunkWriter`；
-- [ ] 更新帮助信息与默认值展示；
-- [ ] 日志打印 `merge_fan_in` 生效值。
+- [x] 扩展配置结构体与 CLI：
+  - [x] 在 `config.rs` 与 `src/bin/rdbinsight.rs` 的 into-parquet 分支接入 `merge_fan_in`；
+  - [x] 将该参数传递至 `ParquetOutput` 与 `ParquetChunkWriter`；
+- [x] 更新帮助信息与默认值展示；
+- [x] 日志打印 `merge_fan_in` 生效值。
 
 ### 验证步骤
-- [ ] `cargo run --bin rdbinsight -- dump ... into-parquet --help` 能看到 `merge_fan_in`；
-- [ ] 指定不同 `merge_fan_in` 值时，日志中展示的选取规模与行为符合预期。
+- [x] `cargo run --bin rdbinsight -- dump ... into-parquet --help` 能看到 `merge_fan_in`；
+- [x] 指定不同 `merge_fan_in` 值时，日志中展示的选取规模与行为符合预期。
 
 ---
 

@@ -229,6 +229,10 @@ struct ParquetOutputArgs {
     /// Compression algorithm for intermediate run segments
     #[arg(long, value_enum, default_value_t = ParquetCompression::Lz4)]
     intermediate_compression: ParquetCompression,
+
+    /// Maximum fan-in for rolling merges
+    #[arg(long, default_value_t = 64)]
+    merge_fan_in: usize,
 }
 
 #[derive(Parser)]
@@ -434,6 +438,7 @@ fn dump_command_to_config(
                 parquet_args.compression,
                 parquet_args.run_rows,
                 parquet_args.intermediate_compression,
+                parquet_args.merge_fan_in,
             )?;
             OutputConfig::Parquet(parquet_config)
         }

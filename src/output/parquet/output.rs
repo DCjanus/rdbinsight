@@ -22,6 +22,7 @@ pub struct ParquetOutput {
     intermediate_compression: ParquetCompression,
     cluster: String,
     batch_ts: time::OffsetDateTime,
+    merge_fan_in: usize,
 }
 
 impl ParquetOutput {
@@ -30,6 +31,7 @@ impl ParquetOutput {
         compression: ParquetCompression,
         run_rows: usize,
         intermediate_compression: ParquetCompression,
+        merge_fan_in: usize,
         cluster: String,
         batch_ts: time::OffsetDateTime,
     ) -> Self {
@@ -40,6 +42,7 @@ impl ParquetOutput {
             intermediate_compression,
             cluster,
             batch_ts,
+            merge_fan_in,
         }
     }
 
@@ -95,6 +98,7 @@ impl Output for ParquetOutput {
             self.compression,
             self.run_rows,
             self.intermediate_compression,
+            self.merge_fan_in,
         )
         .await
         .with_context(|| format!("Failed to create Parquet writer for instance: {instance}"))?;
@@ -106,6 +110,7 @@ impl Output for ParquetOutput {
             instance_sanitized = %sanitized_instance,
             run_rows = self.run_rows,
             intermediate_compression = ?self.intermediate_compression,
+            merge_fan_in = self.merge_fan_in,
             "Initialized Parquet run generation for instance"
         );
 
@@ -166,6 +171,7 @@ pub struct ParquetChunkWriter {
     final_compression: ParquetCompression,
     issuer: u64,
     candidates: Vec<PathBuf>,
+    merge_fan_in: usize,
 }
 
 impl ParquetChunkWriter {
@@ -180,6 +186,7 @@ impl ParquetChunkWriter {
         compression: ParquetCompression,
         run_rows: usize,
         intermediate_compression: ParquetCompression,
+        merge_fan_in: usize,
     ) -> AnyResult<Self> {
         Ok(Self {
             instance,
@@ -194,6 +201,7 @@ impl ParquetChunkWriter {
             final_compression: compression,
             issuer: 0,
             candidates: Vec::new(),
+            merge_fan_in,
         })
     }
 
@@ -316,8 +324,7 @@ impl ChunkWriter for ParquetChunkWriter {
         }
 
         // Stage 3 orchestration: rolling F-way merge until one output remains
-        // Temporary default until wired via CLI/config in Stage 4
-        let fan_in: usize = 64;
+        let fan_in: usize = this.merge_fan_in;
 
         // If there is no candidate (no data), create an empty final parquet
         if this.candidates.is_empty() {

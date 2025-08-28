@@ -316,6 +316,7 @@ impl OutputConfig {
                     parquet_config.compression,
                     parquet_config.run_rows,
                     parquet_config.intermediate_compression,
+                    parquet_config.merge_fan_in,
                     cluster,
                     batch_ts,
                 );
@@ -331,6 +332,7 @@ pub struct ParquetConfig {
     pub compression: ParquetCompression,
     pub run_rows: usize,
     pub intermediate_compression: ParquetCompression,
+    pub merge_fan_in: usize,
 }
 
 impl ParquetConfig {
@@ -340,12 +342,14 @@ impl ParquetConfig {
         compression: ParquetCompression,
         run_rows: usize,
         intermediate_compression: ParquetCompression,
+        merge_fan_in: usize,
     ) -> AnyResult<Self> {
         Ok(Self {
             dir,
             compression,
             run_rows,
             intermediate_compression,
+            merge_fan_in,
         })
     }
 
@@ -356,6 +360,11 @@ impl ParquetConfig {
             self.run_rows > 0,
             "run_rows must be greater than 0, got: {}",
             self.run_rows
+        );
+        ensure!(
+            self.merge_fan_in >= 1,
+            "merge_fan_in must be at least 1, got: {}",
+            self.merge_fan_in
         );
 
         Ok(())

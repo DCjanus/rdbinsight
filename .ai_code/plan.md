@@ -12,17 +12,17 @@
 将 Run 分段与滚动产物统一命名为 `<instance>.<idx:06>.run`（内容为 Parquet），最终文件为 `<instance>.parquet`。
 
 ### 实现步骤
-- [ ] 更新 `src/output/parquet/path.rs`：
-  - [ ] 新增/调整生成 run 文件名的函数：`run_filename(instance_sanitized: &str, idx: u64) -> PathBuf`，返回 `<instance>.<idx:06>.run`；
-  - [ ] 保留/更新最终文件名函数，保证 `<instance>.parquet` 不变；
-  - [ ] 路径相关日志使用统一的 helper 输出。
-- [ ] 更新 `src/output/parquet/output.rs`：
-  - [ ] `ParquetChunkWriter::flush_run_segment` 改为使用新的 `run_filename`，写出 `.run`（内容为 Parquet），并设置完整 `sorting_columns`；
-  - [ ] 移除对旧的 `*.000N.parquet` 命名的依赖。
+- [x] 更新 `src/output/parquet/path.rs`：
+  - [x] 新增/调整生成 run 文件名的函数：`run_filename(instance_sanitized: &str, idx: u64) -> PathBuf`，返回 `<instance>.<idx:06>.run`；
+  - [x] 保留/更新最终文件名函数，保证 `<instance>.parquet` 不变；
+  - [x] 路径相关日志使用统一的 helper 输出。
+- [x] 更新 `src/output/parquet/output.rs`：
+  - [x] `ParquetChunkWriter::flush_run_segment` 改为使用新的 `run_filename`，写出 `.run`（内容为 Parquet），并设置完整 `sorting_columns`；
+  - [x] 移除对旧的 `*.000N.parquet` 命名的依赖。
 
 ### 验证步骤
-- [ ] 编译与 Lint：`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo build` 通过。
-- [ ] 人工运行一次最小化 dump（或单元测试中的模拟）后检查临时目录，确认生成的文件名符合 `<instance>.<idx:06>.run` 约定，最终文件仍为 `<instance>.parquet`。
+- [x] 编译与 Lint：`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo build` 通过。
+- [x] 人工运行一次最小化 dump（或单元测试中的模拟）后检查临时目录，确认生成的文件名符合 `<instance>.<idx:06>.run` 约定，最终文件仍为 `<instance>.parquet`。
 
 ---
 

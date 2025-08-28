@@ -201,8 +201,10 @@ impl ParquetChunkWriter {
             return Ok(());
         }
 
-        let segment_filename = path::run_segment_filename(&self.instance_sanitized, self.run_index);
-        let segment_path = self.temp_batch_dir.join(segment_filename);
+        let segment_path = self.temp_batch_dir.join(path::run_filename(
+            &self.instance_sanitized,
+            self.run_index as u64,
+        ));
         self.run_index += 1;
 
         let file = File::create(&segment_path).await.with_context(|| {

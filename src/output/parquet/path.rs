@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use time::{OffsetDateTime, UtcOffset};
@@ -49,10 +49,10 @@ pub fn sanitize_instance_filename(instance: &str) -> String {
         .replace(' ', "_") // Spaces in hostnames
 }
 
-/// Construct run segment filename for an instance (zero-based index)
-/// e.g. <instance>.0.run for the first run
-pub fn run_segment_filename(instance_sanitized: &str, index_zero_based: usize) -> String {
-    format!("{instance_sanitized}.{index_zero_based:0>6}.run")
+/// Construct run segment filename for an instance with 6-digit zero padding
+/// e.g. <instance>.000000.run for the first run
+pub fn run_filename(instance_sanitized: &str, idx: u64) -> PathBuf {
+    PathBuf::from(format!("{instance_sanitized}.{idx:06}.run"))
 }
 
 /// Construct final instance parquet filename
@@ -169,8 +169,14 @@ mod tests {
     #[test]
     fn test_run_and_final_filenames() {
         let inst = "node-1-6379";
-        assert_eq!(run_segment_filename(inst, 0), "node-1-6379.0.run");
-        assert_eq!(run_segment_filename(inst, 42), "node-1-6379.42.run");
+        assert_eq!(
+            run_filename(inst, 0),
+            PathBuf::from("node-1-6379.000000.run")
+        );
+        assert_eq!(
+            run_filename(inst, 42),
+            PathBuf::from("node-1-6379.000042.run")
+        );
         assert_eq!(final_instance_filename(inst), "node-1-6379.parquet");
     }
 

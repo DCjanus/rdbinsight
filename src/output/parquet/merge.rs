@@ -116,8 +116,8 @@ impl MergeContext {
     fn build_segment_paths(&self) -> Vec<PathBuf> {
         (0..self.run_count)
             .map(|idx| {
-                let name = path::run_segment_filename(&self.instance_sanitized, idx);
-                self.temp_batch_dir.join(name)
+                self.temp_batch_dir
+                    .join(path::run_filename(&self.instance_sanitized, idx as u64))
             })
             .collect()
     }

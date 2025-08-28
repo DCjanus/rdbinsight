@@ -242,7 +242,11 @@ impl RunCursor {
                 Ok(true)
             }
             Some(Err(e)) => Err(e.into()),
-            None => Ok(false),
+            None => {
+                self.current = None;
+                self.row = 0;
+                Ok(false)
+            }
         }
     }
 

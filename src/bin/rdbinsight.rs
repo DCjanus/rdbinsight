@@ -231,7 +231,7 @@ struct ParquetOutputArgs {
     intermediate_compression: ParquetCompression,
 
     /// Maximum fan-in for rolling merges
-    #[arg(long, default_value_t = 64)]
+    #[arg(long, default_value_t = 32)]
     merge_fan_in: usize,
 }
 

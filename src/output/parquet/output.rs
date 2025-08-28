@@ -348,6 +348,25 @@ impl ChunkWriter for ParquetChunkWriter {
                 .temp_batch_dir
                 .join(path::run_filename(&this.instance_sanitized, next_idx));
 
+            let min_file = inputs
+                .first()
+                .and_then(|x| x.file_name())
+                .and_then(|x| x.to_str())
+                .ok_or_else(|| anyhow!("no input files"))?
+                .to_string();
+            let max_file = inputs
+                .last()
+                .and_then(|x| x.file_name())
+                .and_then(|x| x.to_str())
+                .ok_or_else(|| anyhow!("no input files"))?
+                .to_string();
+            let out_file = out_path
+                .file_name()
+                .and_then(|x| x.to_str())
+                .ok_or_else(|| anyhow!("no output file"))?
+                .to_string();
+            let begin = std::time::Instant::now();
+
             let merge_ctx = merge::MergeContext {
                 inputs,
                 output: out_path.clone(),
@@ -360,6 +379,17 @@ impl ChunkWriter for ParquetChunkWriter {
                 .merge_once_delete_inputs_on_success()
                 .await
                 .context("merge parquets failed")?;
+
+            let cost = begin.elapsed();
+            info!(
+                operation = "parquet_rolling_merge_done",
+                instance = %this.instance,
+                fan_in = fan_in,
+                min_segment = %min_file,
+                max_segment = %max_file,
+                output_segment = %out_file,
+                cost =? cost,
+            );
 
             // Add new output back to candidates and resort
             this.candidates.push(out_path);

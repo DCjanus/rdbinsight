@@ -68,6 +68,7 @@ impl MergeContext {
                 }
             };
             props_builder = props_builder.set_sorting_columns(Some(sorting_columns));
+            props_builder = props_builder.set_max_row_group_size(8192);
             let props = props_builder.build();
 
             let mut writer = ArrowWriter::try_new(final_file, schema_arc.clone(), Some(props))
@@ -84,7 +85,7 @@ impl MergeContext {
 
             // Heap merge state
             let field_indices = ColumnIndices::new()?;
-            let mut builders = OutputBuilders::with_capacity(64 * 1024);
+            let mut builders = OutputBuilders::with_capacity(8 * 1024);
             let mut heap: BinaryHeap<Reverse<HeapItem>> = BinaryHeap::new();
 
             // Initialize heap
@@ -246,7 +247,7 @@ impl RunCursor {
                     path.display()
                 )
             })?
-            .with_max_predicate_cache_size(1024 * 1024);
+            .with_batch_size(1024);
         let reader = builder.build().with_context(|| {
             format!(
                 "Failed to build ParquetRecordBatchReader for {}",

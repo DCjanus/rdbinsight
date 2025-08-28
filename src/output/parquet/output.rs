@@ -4,7 +4,7 @@ use anyhow::{Context, anyhow};
 use arrow::record_batch::RecordBatch;
 use parquet::{arrow::async_writer::AsyncArrowWriter, file::properties::WriterProperties};
 use tokio::fs::File;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{
     config::ParquetCompression,
@@ -102,8 +102,7 @@ impl Output for ParquetOutput {
         .await
         .with_context(|| format!("Failed to create Parquet writer for instance: {instance}"))?;
 
-        // Trace start of run generation for this instance
-        info!(
+        debug!(
             operation = "parquet_run_gen_started",
             cluster = %self.cluster,
             instance = %instance,

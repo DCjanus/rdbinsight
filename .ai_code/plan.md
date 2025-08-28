@@ -56,27 +56,27 @@
 `ParquetChunkWriter` 负责：产生 `.run` 文件、维护候选集合、在 `finalize_instance` 阶段按 fan-in 进行滚动合并，直到仅剩一个输出（最终为 `<instance>.parquet`）。
 
 ### 实现步骤
-- [ ] 在 `ParquetChunkWriter` 中新增：
-  - [ ] `issuer: u64` 发号器，从 0 开始单调递增；
-  - [ ] `candidates: Vec<PathBuf>` 用于记录本实例产生的所有 `.run` 路径；
-- [ ] `flush_run_segment`：
-  - [ ] 使用 `issuer` 生成 `out = <instance>.<idx:06>.run`，写出（内容 Parquet）后将 `out` 推入 `candidates`；
-  - [ ] 仍使用 `intermediate_compression` 与完整 `sorting_columns`；
-- [ ] `finalize_instance`：
-  - [ ] 计算 `fan_in = merge_fan_in`（从配置/CLI 注入）；
-  - [ ] 若 `candidates.len() <= fan_in`：调用 `MergeContext` 将全部候选合并输出为 `<instance>.parquet`；
-  - [ ] 否则循环：
-    - [ ] 取按 idx 升序的最小 `fan_in` 个候选为集合 S；
-    - [ ] 生成 `out = <instance>.<idx:06>.run`（由 `issuer` 发号）；
-    - [ ] 调用 `MergeContext` 将 S 合并到 `out`（使用 `intermediate_compression`），成功后将 `out` 加回 `candidates` 并移除 S；
-    - [ ] 重复直到候选数 ≤ fan_in；最后一次合并输出 `<instance>.parquet`（使用最终 `compression`）。
-  - [ ] 日志：按规范输出 `operation`、`fan_in`、选取的最小/最大 idx、`next_idx`、耗时与速率。
+- [x] 在 `ParquetChunkWriter` 中新增：
+  - [x] `issuer: u64` 发号器，从 0 开始单调递增；
+  - [x] `candidates: Vec<PathBuf>` 用于记录本实例产生的所有 `.run` 路径；
+- [x] `flush_run_segment`：
+  - [x] 使用 `issuer` 生成 `out = <instance>.<idx:06>.run`，写出（内容 Parquet）后将 `out` 推入 `candidates`；
+  - [x] 仍使用 `intermediate_compression` 与完整 `sorting_columns`；
+- [x] `finalize_instance`：
+  - [x] 计算 `fan_in = merge_fan_in`（从配置/CLI 注入）；
+  - [x] 若 `candidates.len() <= fan_in`：调用 `MergeContext` 将全部候选合并输出为 `<instance>.parquet`；
+  - [x] 否则循环：
+    - [x] 取按 idx 升序的最小 `fan_in` 个候选为集合 S；
+    - [x] 生成 `out = <instance>.<idx:06>.run`（由 `issuer` 发号）；
+    - [x] 调用 `MergeContext` 将 S 合并到 `out`（使用 `intermediate_compression`），成功后将 `out` 加回 `candidates` 并移除 S；
+    - [x] 重复直到候选数 ≤ fan_in；最后一次合并输出 `<instance>.parquet`（使用最终 `compression`）。
+  - [x] 日志：按规范输出 `operation`、`fan_in`、选取的最小/最大 idx、`next_idx`、耗时与速率。
 
 ### 验证步骤
-- [ ] 增补集成测试：设置较小的 `run_rows` 强制生成多个 `.run`，设置 `merge_fan_in=3`，验证：
-  - [ ] 滚动合并过程结束后，实例目录仅剩 `<instance>.parquet`（无 `.run` 残留）；
-  - [ ] 最终文件 `(cluster,batch,instance,db,key)` 有序且 `sorting_columns` 完整；
-  - [ ] 运行日志包含 fan-in 与 idx 信息（人工检查或基于测试日志捕获）。
+- [x] 增补集成测试：设置较小的 `run_rows` 强制生成多个 `.run`，设置 `merge_fan_in=3`，验证：
+  - [x] 滚动合并过程结束后，实例目录仅剩 `<instance>.parquet`（无 `.run` 残留）；
+  - [x] 最终文件 `(cluster,batch,instance,db,key)` 有序且 `sorting_columns` 完整；
+  - [x] 运行日志包含 fan-in 与 idx 信息（人工检查或基于测试日志捕获）。
 
 ---
 

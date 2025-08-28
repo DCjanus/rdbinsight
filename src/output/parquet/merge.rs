@@ -15,11 +15,7 @@ use parquet::{
 };
 use tracing::debug;
 
-use crate::{
-    config::ParquetCompression,
-    helper::AnyResult,
-    output::parquet::schema,
-};
+use crate::{config::ParquetCompression, helper::AnyResult, output::parquet::schema};
 
 /// Merge context for a single merge execution (k-way merge, delete inputs on success)
 pub struct MergeContext {
@@ -97,14 +93,17 @@ impl MergeContext {
             .map_err(|e| anyhow!("Failed to create sorting columns: {e}"))?;
 
         let mut props_builder = match self.compression {
-            ParquetCompression::Zstd => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default())),
-            ParquetCompression::Snappy =>
-                WriterProperties::builder().set_compression(parquet::basic::Compression::SNAPPY),
+            ParquetCompression::Zstd => WriterProperties::builder().set_compression(
+                parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()),
+            ),
+            ParquetCompression::Snappy => {
+                WriterProperties::builder().set_compression(parquet::basic::Compression::SNAPPY)
+            }
             ParquetCompression::None => WriterProperties::builder()
                 .set_compression(parquet::basic::Compression::UNCOMPRESSED),
-            ParquetCompression::Lz4 =>
-                WriterProperties::builder().set_compression(parquet::basic::Compression::LZ4),
+            ParquetCompression::Lz4 => {
+                WriterProperties::builder().set_compression(parquet::basic::Compression::LZ4)
+            }
         };
         props_builder = props_builder.set_sorting_columns(Some(sorting_columns));
         let props = props_builder.build();

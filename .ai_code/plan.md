@@ -98,13 +98,13 @@
 确保排序过程与 dump 共享协程、并使用 `DumpArgs.concurrency` 控制实例级并发，避免额外 CPU 竞争。
 
 ### 实现步骤
-- [ ] 在当前 Parquet 输出 Writer 生命周期中插入 Run 生成与实例归并流程；
-- [ ] 串联与 `DumpArgs.concurrency`：确保实例任务数量上限与 dump 相同；
-- [ ] 在所有实例完成后，调用“批次最终化”完成目录 rename。
+- [x] 在当前 Parquet 输出 Writer 生命周期中插入 Run 生成与实例归并流程；
+- [x] 串联与 `DumpArgs.concurrency`：确保实例任务数量上限与 dump 相同；
+- [x] 在所有实例完成后，调用“批次最终化”完成目录 rename。
 
 ### 验证步骤
-- [ ] 在本地/CI 环境执行端到端 dump（多实例）流程，观察 CPU 与并发度符合预期（无额外独立线程池/阻塞 IO）。
-- [ ] 验证最终目录为 `cluster=<cluster>/batch=<batch>/`，且每实例仅有一个 `<instance>.parquet`。
+- [x] 在本地/CI 环境执行端到端 dump（多实例）流程，观察 CPU 与并发度符合预期（无额外独立线程池/阻塞 IO）。
+- [x] 验证最终目录为 `cluster=<cluster>/batch=<batch>/`，且每实例仅有一个 `<instance>.parquet`。
 
 ---
 

@@ -89,7 +89,7 @@ impl Output for ParquetOutput {
 
         let writer = ParquetChunkWriter::new(
             instance.to_string(),
-            sanitized_instance,
+            sanitized_instance.clone(),
             self.cluster.clone(),
             self.batch_ts,
             self.temp_batch_dir(),
@@ -102,6 +102,18 @@ impl Output for ParquetOutput {
         .await
         .with_context(|| format!("Failed to create Parquet writer for instance: {instance}"))?;
 
+        // Trace start of run generation for this instance
+        info!(
+            operation = "parquet_run_gen_started",
+            cluster = %self.cluster,
+            instance = %instance,
+            instance_sanitized = %sanitized_instance,
+            run_rows = self.run_rows,
+            intermediate_compression = ?self.intermediate_compression,
+            micro_batch_rows = MICRO_BATCH_ROWS,
+            "Initialized Parquet run generation for instance"
+        );
+
         Ok(ChunkWriterEnum::Parquet(Box::new(writer)))
     }
 
@@ -109,13 +121,16 @@ impl Output for ParquetOutput {
         let temp_batch_dir = self.temp_batch_dir();
         let final_batch_dir = self.final_batch_dir();
 
+        let start = std::time::Instant::now();
         path::finalize_batch_dir(&temp_batch_dir, &final_batch_dir).await?;
+        let duration_ms = start.elapsed().as_millis() as u64;
 
         info!(
             operation = "parquet_batch_finalize",
             cluster = %self.cluster,
             temp_batch_dir = %temp_batch_dir.display(),
             final_batch_dir = %final_batch_dir.display(),
+            rename_duration_ms = duration_ms,
             "Finalized batch directory via atomic rename"
         );
         Ok(())
@@ -327,6 +342,7 @@ impl ParquetChunkWriter {
             )
         })?;
 
+        let start = std::time::Instant::now();
         run_writer.write(&record_batch).await.with_context(|| {
             anyhow!(
                 "Failed to write run segment parquet file: {}",
@@ -340,6 +356,12 @@ impl ParquetChunkWriter {
                 segment_path.display()
             )
         })?;
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        let segment_size_bytes = tokio::fs::metadata(&segment_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
 
         info!(
             operation = "parquet_run_flushed",
@@ -347,6 +369,8 @@ impl ParquetChunkWriter {
             segment = %segment_path.file_name().and_then(|s| s.to_str()).unwrap_or("<unknown>"),
             rows = ordered_records.len(),
             compression = ?self.intermediate_compression,
+            duration_ms = duration_ms,
+            size_bytes = segment_size_bytes,
             "Flushed sorted run segment"
         );
 

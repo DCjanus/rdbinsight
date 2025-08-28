@@ -42,15 +42,27 @@ impl MergeContext {
         }
 
         let segments = self.build_segment_paths();
+
+        info!(
+            operation = "parquet_instance_merge_started",
+            cluster = %self.cluster,
+            instance = %self.instance,
+            run_count = self.run_count,
+            compression = ?self.final_compression,
+            "Starting in-instance k-way merge"
+        );
+
         let merge_params = MergeParams::new(self, segments.clone());
 
+        let start = std::time::Instant::now();
         let result = tokio::task::spawn_blocking(move || merge_params.perform_merge())
             .await
             .map_err(|e| anyhow!("Failed to join merge task: {e}"))?;
 
         result?;
+        let duration_ms = start.elapsed().as_millis() as u64;
         self.cleanup_segments(segments).await?;
-        self.log_completion();
+        self.log_completion(duration_ms);
 
         Ok(())
     }
@@ -89,11 +101,12 @@ impl MergeContext {
     }
 
     /// Log merge completion
-    fn log_completion(&self) {
+    fn log_completion(&self, duration_ms: u64) {
         info!(
             operation = "parquet_instance_merge_completed",
             instance = %self.instance,
             final_path = %self.final_path.display(),
+            duration_ms = duration_ms,
             "Merged run segments into final parquet file"
         );
     }

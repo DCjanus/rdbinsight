@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, anyhow};
+use itertools::Itertools;
 use parquet::{arrow::async_writer::AsyncArrowWriter, file::properties::WriterProperties};
 use tokio::fs::File;
 use tracing::{debug, info};
@@ -236,34 +237,23 @@ impl ParquetChunkWriter {
         let mut run_writer = AsyncArrowWriter::try_new(file, schema, Some(props))
             .map_err(|e| anyhow!("Failed to create async arrow run writer: {e}"))?;
 
-        // Drain in-order records for this run
-        let taken_map = std::mem::take(&mut self.run_buffer);
-        let mut ordered_records: Vec<crate::record::Record> = Vec::with_capacity(taken_map.len());
-        for (_k, v) in taken_map {
-            ordered_records.push(v);
-        }
-
-        let record_batch = mapper::records_to_columns(
-            &self.cluster,
-            self.batch_ts,
-            &self.instance,
-            &ordered_records,
-        )
-        .with_context(|| {
-            anyhow!(
-                "Failed to convert {} run records to columns for instance: {}",
-                ordered_records.len(),
-                self.instance
-            )
-        })?;
-
         let start = std::time::Instant::now();
-        run_writer.write(&record_batch).await.with_context(|| {
-            anyhow!(
-                "Failed to write run segment parquet file: {}",
-                segment_path.display()
-            )
-        })?;
+        let row_count = self.run_buffer.len();
+
+        let records = self.run_buffer.values().cloned().collect_vec();
+        self.run_buffer.clear();
+
+        for chunk in records.chunks(8192) {
+            let batch =
+                mapper::records_to_columns(&self.cluster, self.batch_ts, &self.instance, chunk)
+                    .context("failed to convert run records to columns")?;
+            run_writer.write(&batch).await.with_context(|| {
+                anyhow!(
+                    "Failed to write run segment parquet file: {}",
+                    segment_path.display()
+                )
+            })?;
+        }
 
         run_writer.close().await.with_context(|| {
             format!(
@@ -282,7 +272,7 @@ impl ParquetChunkWriter {
             operation = "parquet_run_flushed",
             instance = %self.instance,
             segment = %segment_path.file_name().and_then(|s| s.to_str()).unwrap_or("<unknown>"),
-            rows = ordered_records.len(),
+            rows = row_count,
             compression = ?self.intermediate_compression,
             duration_ms = duration_ms,
             size_bytes = segment_size_bytes,

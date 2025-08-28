@@ -2897,6 +2897,7 @@ dependencies = [
  "hex",
  "http",
  "hyper-util",
+ "itertools",
  "lzf",
  "memchr",
  "num_cpus",

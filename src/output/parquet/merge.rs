@@ -306,7 +306,6 @@ impl RunMerger {
     fn flush_if_full(&mut self) -> AnyResult<()> {
         if self.builders.is_full() {
             let batch = self.builders.finish_to_batch()?;
-            self.builders = OutputBuilders::with_capacity(Self::OUTPUT_BATCH_ROWS);
             self.writer
                 .write(&batch)
                 .map_err(|e| anyhow!("Failed to write merged batch: {e}"))?;

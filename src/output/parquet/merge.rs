@@ -27,7 +27,6 @@ pub struct MergeContext {
     pub instance: String,
     pub batch_ts: time::OffsetDateTime,
     pub temp_batch_dir: PathBuf,
-    pub temp_path: PathBuf,
     pub final_path: PathBuf,
     pub instance_sanitized: String,
     pub final_compression: ParquetCompression,
@@ -67,18 +66,49 @@ impl MergeContext {
         Ok(())
     }
 
-    /// Handle the case where no run segments exist (rename temp file directly)
+    /// Handle the case where no run segments exist: create an empty final parquet file
     async fn handle_no_segments_case(&self) -> AnyResult<()> {
-        tokio::fs::rename(&self.temp_path, &self.final_path)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to rename parquet file from {} to {} for instance: {} (no run segments found)",
-                    self.temp_path.display(),
-                    self.final_path.display(),
-                    self.instance
-                )
-            })?;
+        // Create empty parquet file with schema and sorting columns
+        let final_path = &self.final_path;
+        let schema_arc = Arc::new(schema::create_redis_record_schema());
+        let sorting_columns = schema::create_db_key_sorting_columns(&schema_arc)
+            .map_err(|e| anyhow!("Failed to create sorting columns: {e}"))?;
+
+        let mut props_builder = match self.final_compression {
+            ParquetCompression::Zstd => WriterProperties::builder().set_compression(
+                parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()),
+            ),
+            ParquetCompression::Snappy => {
+                WriterProperties::builder().set_compression(parquet::basic::Compression::SNAPPY)
+            }
+            ParquetCompression::None => WriterProperties::builder()
+                .set_compression(parquet::basic::Compression::UNCOMPRESSED),
+            ParquetCompression::Lz4 => {
+                WriterProperties::builder().set_compression(parquet::basic::Compression::LZ4)
+            }
+        };
+        props_builder = props_builder.set_sorting_columns(Some(sorting_columns));
+        let props = props_builder.build();
+
+        let file = std::fs::File::create(final_path).with_context(|| {
+            format!(
+                "Failed to create empty final parquet file: {}",
+                final_path.display()
+            )
+        })?;
+        let writer = ArrowWriter::try_new(file, schema_arc, Some(props))
+            .map_err(|e| anyhow!("Failed to create ArrowWriter for empty file: {e}"))?;
+        writer
+            .close()
+            .map_err(|e| anyhow!("Failed to close empty final parquet writer: {e}"))?;
+
+        info!(
+            operation = "parquet_instance_empty_final_created",
+            instance = %self.instance,
+            final_path = %self.final_path.display(),
+            "Created empty final parquet file (no run segments)"
+        );
+
         Ok(())
     }
 

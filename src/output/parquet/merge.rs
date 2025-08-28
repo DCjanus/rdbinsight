@@ -344,12 +344,14 @@ impl RunCursor {
         let file = std::fs::File::open(path).with_context(|| {
             format!("Failed to open run segment for reading: {}", path.display())
         })?;
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file).with_context(|| {
-            format!(
-                "Failed to create ParquetRecordBatchReaderBuilder for {}",
-                path.display()
-            )
-        })?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+            .with_context(|| {
+                format!(
+                    "Failed to create ParquetRecordBatchReaderBuilder for {}",
+                    path.display()
+                )
+            })?
+            .with_max_predicate_cache_size(1024 * 1024);
         let reader = builder.build().with_context(|| {
             format!(
                 "Failed to build ParquetRecordBatchReader for {}",

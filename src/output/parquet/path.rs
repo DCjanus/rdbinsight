@@ -49,10 +49,10 @@ pub fn sanitize_instance_filename(instance: &str) -> String {
         .replace(' ', "_") // Spaces in hostnames
 }
 
-/// Construct run segment filename for an instance, 6-digit zero-padded index (zero-based)
-/// e.g. <instance>.000000.parquet for the first run
+/// Construct run segment filename for an instance (zero-based index)
+/// e.g. <instance>.0.run for the first run
 pub fn run_segment_filename(instance_sanitized: &str, index_zero_based: usize) -> String {
-    format!("{instance_sanitized}.{index_zero_based:0>6}.parquet")
+    format!("{instance_sanitized}.{index_zero_based:0>6}.run")
 }
 
 /// Construct final instance parquet filename
@@ -169,8 +169,8 @@ mod tests {
     #[test]
     fn test_run_and_final_filenames() {
         let inst = "node-1-6379";
-        assert_eq!(run_segment_filename(inst, 0), "node-1-6379.000000.parquet");
-        assert_eq!(run_segment_filename(inst, 42), "node-1-6379.000042.parquet");
+        assert_eq!(run_segment_filename(inst, 0), "node-1-6379.0.run");
+        assert_eq!(run_segment_filename(inst, 42), "node-1-6379.42.run");
         assert_eq!(final_instance_filename(inst), "node-1-6379.parquet");
     }
 

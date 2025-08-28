@@ -4,7 +4,7 @@ use anyhow::{Context, anyhow};
 use itertools::Itertools;
 use parquet::{arrow::async_writer::AsyncArrowWriter, file::properties::WriterProperties};
 use tokio::fs::File;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::{
     config::ParquetCompression,
@@ -253,9 +253,6 @@ impl ParquetChunkWriter {
         let mut run_writer = AsyncArrowWriter::try_new(file, schema, Some(props))
             .map_err(|e| anyhow!("Failed to create async arrow run writer: {e}"))?;
 
-        let start = std::time::Instant::now();
-        let row_count = self.run_buffer.len();
-
         let records = self.run_buffer.values().cloned().collect_vec();
         self.run_buffer.clear();
 
@@ -277,12 +274,6 @@ impl ParquetChunkWriter {
                 segment_path.display()
             )
         })?;
-        let duration_ms = start.elapsed().as_millis() as u64;
-
-        let segment_size_bytes = tokio::fs::metadata(&segment_path)
-            .await
-            .map(|m| m.len())
-            .unwrap_or(0);
 
         // Track candidate for rolling merge
         self.candidates.push(segment_path.clone());
@@ -291,10 +282,8 @@ impl ParquetChunkWriter {
             operation = "parquet_run_flushed",
             instance = %self.instance,
             segment = %segment_path.file_name().and_then(|s| s.to_str()).unwrap_or("<unknown>"),
-            rows = row_count,
+            rows = records.len(),
             compression = ?self.intermediate_compression,
-            duration_ms = duration_ms,
-            size_bytes = segment_size_bytes,
             "Flushed sorted run segment"
         );
 
@@ -353,31 +342,12 @@ impl ChunkWriter for ParquetChunkWriter {
             for _ in 0..fan_in {
                 inputs.push(this.candidates.remove(0));
             }
-            let min_segment: String = inputs
-                .first()
-                .and_then(|p| p.file_name().and_then(|s| s.to_str()))
-                .unwrap_or("<unknown>")
-                .to_string();
-            let max_segment: String = inputs
-                .last()
-                .and_then(|p| p.file_name().and_then(|s| s.to_str()))
-                .unwrap_or("<unknown>")
-                .to_string();
-
-            // Collect inputs total size (best-effort)
-            let mut inputs_size_bytes: u64 = 0;
-            for p in &inputs {
-                if let Ok(meta) = tokio::fs::metadata(p).await {
-                    inputs_size_bytes = inputs_size_bytes.saturating_add(meta.len());
-                }
-            }
 
             let next_idx = this.next_idx();
             let out_path = this
                 .temp_batch_dir
                 .join(path::run_filename(&this.instance_sanitized, next_idx));
 
-            let start = std::time::Instant::now();
             let merge_ctx = merge::MergeContext {
                 inputs,
                 output: out_path.clone(),
@@ -386,57 +356,17 @@ impl ChunkWriter for ParquetChunkWriter {
                 instance: this.instance.clone(),
                 batch_ts: this.batch_ts,
             };
-            merge_ctx.merge_once_delete_inputs_on_success().await?;
-            let duration_ms = start.elapsed().as_millis() as u64;
-
-            // Compute output size and throughput
-            let out_size_bytes = tokio::fs::metadata(&out_path)
+            merge_ctx
+                .merge_once_delete_inputs_on_success()
                 .await
-                .map(|m| m.len())
-                .unwrap_or(0);
-            let mb_per_sec: f64 = if duration_ms == 0 {
-                0.0
-            } else {
-                (out_size_bytes as f64) / (duration_ms as f64 / 1000.0) / 1_048_576.0
-            };
+                .context("merge parquets failed")?;
 
             // Add new output back to candidates and resort
             this.candidates.push(out_path);
             sort_candidates(&mut this.candidates);
-
-            debug!(
-                operation = "parquet_rolling_merge_done",
-                instance = %this.instance,
-                fan_in = fan_in,
-                min_segment = %min_segment,
-                max_segment = %max_segment,
-                next_idx = next_idx,
-                remaining_candidates = this.candidates.len(),
-                duration_ms = duration_ms,
-                output_size_bytes = out_size_bytes,
-                throughput_mb_per_sec = mb_per_sec,
-                "Completed rolling merge round"
-            );
         }
 
         // Final merge to <instance>.parquet using final compression
-        debug!(
-            operation = "parquet_final_merge_start",
-            instance = %this.instance,
-            fan_in = fan_in,
-            inputs_count = this.candidates.len(),
-            output = %this.final_path.display(),
-            "Starting final merge for instance"
-        );
-
-        // Pre-calc inputs size before moving candidates
-        let mut inputs_size_bytes: u64 = 0;
-        for p in &this.candidates {
-            if let Ok(meta) = tokio::fs::metadata(p).await {
-                inputs_size_bytes = inputs_size_bytes.saturating_add(meta.len());
-            }
-        }
-
         let merge_ctx = merge::MergeContext {
             inputs: this.candidates,
             output: this.final_path.clone(),
@@ -446,30 +376,16 @@ impl ChunkWriter for ParquetChunkWriter {
             batch_ts: this.batch_ts,
         };
 
-        let start = std::time::Instant::now();
-        // Drop self fields early to free memory before the blocking merge, but keep needed clones above
-        merge_ctx.merge_once_delete_inputs_on_success().await?;
-        let duration_ms = start.elapsed().as_millis() as u64;
-        let out_size_bytes = tokio::fs::metadata(&this.final_path)
-            .await
-            .map(|m| m.len())
-            .unwrap_or(0);
-        let mb_per_sec: f64 = if duration_ms == 0 {
-            0.0
-        } else {
-            (out_size_bytes as f64) / (duration_ms as f64 / 1000.0) / 1_048_576.0
-        };
-
-        info!(
-            operation = "parquet_final_merge_done",
-            instance = %this.instance,
-            inputs_size_bytes = inputs_size_bytes,
-            output_size_bytes = out_size_bytes,
-            duration_ms = duration_ms,
-            throughput_mb_per_sec = mb_per_sec,
-            output = %this.final_path.display(),
-            "Completed final merge for instance"
-        );
+        if let Err(e) = merge_ctx.merge_once_delete_inputs_on_success().await {
+            error!(
+                operation = "parquet_final_merge_failed",
+                instance = %this.instance,
+                output = %this.final_path.display(),
+                error = %e,
+                "Final merge failed"
+            );
+            return Err(e);
+        }
 
         Ok(())
     }

@@ -69,7 +69,7 @@
     - [x] 取按 idx 升序的最小 `fan_in` 个候选为集合 S；
     - [x] 生成 `out = <instance>.<idx:06>.run`（由 `issuer` 发号）；
     - [x] 调用 `MergeContext` 将 S 合并到 `out`（使用 `intermediate_compression`），成功后将 `out` 加回 `candidates` 并移除 S；
-    - [x] 重复直到候选数 ≤ fan_in；最后一次合并输出 `<instance>.parquet`（使用最终 `compression`）。
+    - [x] 重复直到候选数 ≤ fan-in；最后一次合并输出 `<instance>.parquet`（使用最终 `compression`）。
   - [x] 日志：按规范输出 `operation`、`fan_in`、选取的最小/最大 idx、`next_idx`、耗时与速率。
 
 ### 验证步骤
@@ -102,13 +102,13 @@
 完善关键日志与错误处理，确保合并失败不会误删输入。
 
 ### 实现步骤
-- [ ] 按日志规范输出：`operation` 字段放首位，随后为上下文字段，描述字符串结尾（遵循项目日志规范记忆）。
-- [ ] `MergeContext`：仅在成功 close 输出后删除输入；错误路径保留输入并透出明确错误上下文（实例、输入数量、输出路径、压缩参数）。
-- [ ] `ParquetChunkWriter`：在 finalize 编排期间对每轮合并输出耗时、速率、候选数量变化进行记录。
+- [x] 按日志规范输出：`operation` 字段放首位，随后为上下文字段，描述字符串结尾（遵循项目日志规范记忆）。
+- [x] `MergeContext`：仅在成功 close 输出后删除输入；错误路径保留输入并透出明确错误上下文（实例、输入数量、输出路径、压缩参数）。
+- [x] `ParquetChunkWriter`：在 finalize 编排期间对每轮合并输出耗时、速率、候选数量变化进行记录。
 
 ### 验证步骤
-- [ ] 人工注入失败（例如输出路径不可写或磁盘满）：确认 `MergeContext` 未删除输入，并输出可定位的错误日志；
-- [ ] 正常路径结束后，目录下无 `.run` 残留且有 `<instance>.parquet`。
+- [x] 人工注入失败（例如输出路径不可写或磁盘满）：确认 `MergeContext` 未删除输入，并输出可定位的错误日志；
+- [x] 正常路径结束后，目录下无 `.run` 残留且有 `<instance>.parquet`。
 
 ---
 

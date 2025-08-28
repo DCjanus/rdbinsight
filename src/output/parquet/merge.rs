@@ -13,132 +13,114 @@ use parquet::{
     arrow::{ArrowWriter, arrow_reader::ParquetRecordBatchReaderBuilder},
     file::properties::WriterProperties,
 };
-use tracing::info;
+use tracing::debug;
 
 use crate::{
     config::ParquetCompression,
     helper::AnyResult,
-    output::parquet::{path, schema},
+    output::parquet::schema,
 };
 
-/// Merge context containing all information needed for k-way merge
+/// Merge context for a single merge execution (k-way merge, delete inputs on success)
 pub struct MergeContext {
+    pub inputs: Vec<PathBuf>,
+    pub output: PathBuf,
+    pub compression: ParquetCompression,
     pub cluster: String,
     pub instance: String,
     pub batch_ts: time::OffsetDateTime,
-    pub temp_batch_dir: PathBuf,
-    pub final_path: PathBuf,
-    pub instance_sanitized: String,
-    pub final_compression: ParquetCompression,
-    pub run_count: usize,
 }
 
 impl MergeContext {
-    /// Perform k-way merge to combine run segments into final Parquet file
-    pub async fn merge_run_segments_into_final(&self) -> AnyResult<()> {
-        if self.run_count == 0 {
-            return self.handle_no_segments_case().await;
-        }
-
-        let segments = self.build_segment_paths();
-
-        info!(
-            operation = "parquet_instance_merge_started",
+    /// Execute one merge: read `inputs`, write to `output`. On success, delete all `inputs`.
+    pub async fn merge_once_delete_inputs_on_success(self) -> AnyResult<()> {
+        let input_count = self.inputs.len();
+        debug!(
+            operation = "parquet_merge_started",
             cluster = %self.cluster,
             instance = %self.instance,
-            run_count = self.run_count,
-            compression = ?self.final_compression,
-            "Starting in-instance k-way merge"
+            input_count = input_count,
+            output = %self.output.display(),
+            compression = ?self.compression,
+            "Starting single k-way merge"
         );
 
-        let merge_params = MergeParams::new(self, segments.clone());
+        if self.inputs.is_empty() {
+            self.create_empty_output().await?;
+            debug!(
+                operation = "parquet_merge_completed",
+                cluster = %self.cluster,
+                instance = %self.instance,
+                output = %self.output.display(),
+                duration_ms = 0u64,
+                "Completed merge with empty inputs"
+            );
+            return Ok(());
+        }
+
+        // Prepare params for blocking merge
+        let params = MergeParams {
+            cluster: self.cluster.clone(),
+            instance: self.instance.clone(),
+            batch_ts: self.batch_ts,
+            final_path: self.output.clone(),
+            final_compression: self.compression,
+            segments: self.inputs.clone(),
+        };
 
         let start = std::time::Instant::now();
-        let result = tokio::task::spawn_blocking(move || merge_params.perform_merge())
+        let result = tokio::task::spawn_blocking(move || params.perform_merge())
             .await
             .map_err(|e| anyhow!("Failed to join merge task: {e}"))?;
-
         result?;
         let duration_ms = start.elapsed().as_millis() as u64;
-        self.cleanup_segments(segments).await?;
-        self.log_completion(duration_ms);
 
+        // Delete inputs only after successful close of output
+        for seg in self.inputs {
+            let _ = tokio::fs::remove_file(&seg).await;
+        }
+
+        debug!(
+            operation = "parquet_merge_completed",
+            cluster = %self.cluster,
+            instance = %self.instance,
+            output = %self.output.display(),
+            duration_ms = duration_ms,
+            "Merged inputs into output parquet file"
+        );
         Ok(())
     }
 
-    /// Handle the case where no run segments exist: create an empty final parquet file
-    async fn handle_no_segments_case(&self) -> AnyResult<()> {
-        // Create empty parquet file with schema and sorting columns
-        let final_path = &self.final_path;
+    async fn create_empty_output(&self) -> AnyResult<()> {
         let schema_arc = Arc::new(schema::create_redis_record_schema());
         let sorting_columns = schema::create_db_key_sorting_columns(&schema_arc)
             .map_err(|e| anyhow!("Failed to create sorting columns: {e}"))?;
 
-        let mut props_builder = match self.final_compression {
-            ParquetCompression::Zstd => WriterProperties::builder().set_compression(
-                parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()),
-            ),
-            ParquetCompression::Snappy => {
-                WriterProperties::builder().set_compression(parquet::basic::Compression::SNAPPY)
-            }
+        let mut props_builder = match self.compression {
+            ParquetCompression::Zstd => WriterProperties::builder()
+                .set_compression(parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default())),
+            ParquetCompression::Snappy =>
+                WriterProperties::builder().set_compression(parquet::basic::Compression::SNAPPY),
             ParquetCompression::None => WriterProperties::builder()
                 .set_compression(parquet::basic::Compression::UNCOMPRESSED),
-            ParquetCompression::Lz4 => {
-                WriterProperties::builder().set_compression(parquet::basic::Compression::LZ4)
-            }
+            ParquetCompression::Lz4 =>
+                WriterProperties::builder().set_compression(parquet::basic::Compression::LZ4),
         };
         props_builder = props_builder.set_sorting_columns(Some(sorting_columns));
         let props = props_builder.build();
 
-        let file = std::fs::File::create(final_path).with_context(|| {
+        let file = std::fs::File::create(&self.output).with_context(|| {
             format!(
-                "Failed to create empty final parquet file: {}",
-                final_path.display()
+                "Failed to create empty parquet file: {}",
+                self.output.display()
             )
         })?;
         let writer = ArrowWriter::try_new(file, schema_arc, Some(props))
             .map_err(|e| anyhow!("Failed to create ArrowWriter for empty file: {e}"))?;
         writer
             .close()
-            .map_err(|e| anyhow!("Failed to close empty final parquet writer: {e}"))?;
-
-        info!(
-            operation = "parquet_instance_empty_final_created",
-            instance = %self.instance,
-            final_path = %self.final_path.display(),
-            "Created empty final parquet file (no run segments)"
-        );
-
+            .map_err(|e| anyhow!("Failed to close empty parquet writer: {e}"))?;
         Ok(())
-    }
-
-    /// Build paths for all run segment files
-    fn build_segment_paths(&self) -> Vec<PathBuf> {
-        (0..self.run_count)
-            .map(|idx| {
-                self.temp_batch_dir
-                    .join(path::run_filename(&self.instance_sanitized, idx as u64))
-            })
-            .collect()
-    }
-
-    /// Clean up run segment files
-    async fn cleanup_segments(&self, segments: Vec<PathBuf>) -> AnyResult<()> {
-        for seg in segments {
-            let _ = tokio::fs::remove_file(&seg).await;
-        }
-        Ok(())
-    }
-
-    /// Log merge completion
-    fn log_completion(&self, duration_ms: u64) {
-        info!(
-            operation = "parquet_instance_merge_completed",
-            instance = %self.instance,
-            final_path = %self.final_path.display(),
-            duration_ms = duration_ms,
-            "Merged run segments into final parquet file"
-        );
     }
 }
 
@@ -153,17 +135,6 @@ struct MergeParams {
 }
 
 impl MergeParams {
-    fn new(ctx: &MergeContext, segments: Vec<PathBuf>) -> Self {
-        Self {
-            cluster: ctx.cluster.clone(),
-            instance: ctx.instance.clone(),
-            batch_ts: ctx.batch_ts,
-            final_path: ctx.final_path.clone(),
-            final_compression: ctx.final_compression,
-            segments,
-        }
-    }
-
     /// Perform the actual merge operation
     fn perform_merge(self) -> AnyResult<()> {
         let merger = RunMerger::new(self)?;

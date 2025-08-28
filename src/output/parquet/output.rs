@@ -306,21 +306,24 @@ impl ChunkWriter for ParquetChunkWriter {
             this.flush_run_segment().await?;
         }
 
-        // Build merge context and perform in-instance k-way merge of run segments into final parquet file
+        // Build list of inputs (existing .run files produced for this instance)
+        let inputs: Vec<PathBuf> = (0..this.run_index)
+            .map(|idx| this.temp_batch_dir.join(path::run_filename(&this.instance_sanitized, idx as u64)))
+            .collect();
+
+        // Choose output as final parquet
         let merge_ctx = merge::MergeContext {
+            inputs,
+            output: this.final_path.clone(),
+            compression: this.final_compression,
             cluster: this.cluster.clone(),
             instance: this.instance.clone(),
             batch_ts: this.batch_ts,
-            temp_batch_dir: this.temp_batch_dir.clone(),
-            final_path: this.final_path.clone(),
-            instance_sanitized: this.instance_sanitized.clone(),
-            final_compression: this.final_compression,
-            run_count: this.run_index,
         };
 
         drop(this);
 
-        merge_ctx.merge_run_segments_into_final().await?;
+        merge_ctx.merge_once_delete_inputs_on_success().await?;
 
         Ok(())
     }

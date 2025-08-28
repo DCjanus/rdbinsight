@@ -31,23 +31,23 @@
 `MergeContext` 接受一组输入与一个输出，完成一次 k（≤F）路归并；合并成功后删除本次输入。
 
 ### 实现步骤
-- [ ] 重构 `src/output/parquet/merge.rs`：
-  - [ ] 定义新的 `MergeContext { inputs: Vec<PathBuf>, output: PathBuf, compression: ParquetCompression, ... }` 构造方式；
-  - [ ] 提供 `merge_once_delete_inputs_on_success(self) -> AnyResult<()>`：
-    - [ ] 使用最小堆进行 k 路归并，读取 `inputs`，写入 `output`；
-    - [ ] `ArrowWriter::WriterProperties` 设置完整 `sorting_columns = schema::create_db_key_sorting_columns`；
-    - [ ] 合并完成并成功 close 后，删除 `inputs`；失败则不删除；
-    - [ ] 保持在 `spawn_blocking` 中执行合并，避免阻塞 async runtime；
-  - [ ] 保留/复用现有 `RunCursor`、`OutputBuilders` 与堆逻辑；必要时抽取共用方法；
-  - [ ] 移除/废弃旧的“全量一次性合并”入口（基于 run_count 的路径）。
+- [x] 重构 `src/output/parquet/merge.rs`：
+  - [x] 定义新的 `MergeContext { inputs: Vec<PathBuf>, output: PathBuf, compression: ParquetCompression, ... }` 构造方式；
+  - [x] 提供 `merge_once_delete_inputs_on_success(self) -> AnyResult<()>`：
+    - [x] 使用最小堆进行 k 路归并，读取 `inputs`，写入 `output`；
+    - [x] `ArrowWriter::WriterProperties` 设置完整 `sorting_columns = schema::create_db_key_sorting_columns`；
+    - [x] 合并完成并成功 close 后，删除 `inputs`；失败则不删除；
+    - [x] 保持在 `spawn_blocking` 中执行合并，避免阻塞 async runtime；
+  - [x] 保留/复用现有 `RunCursor`、`OutputBuilders` 与堆逻辑；必要时抽取共用方法；
+  - [x] 移除/废弃旧的“全量一次性合并”入口（基于 run_count 的路径）。
 
 ### 验证步骤
-- [ ] 为 `merge.rs` 增补单元测试（可使用小型内存构造或测试夹具）：
-  - [ ] 构造 2~3 个小型 `.run` 输入，调用 `merge_once_delete_inputs_on_success` 输出到新的 `.run` 或 `.parquet`，验证：
-    - [ ] 输出存在且 `(cluster,batch,instance,db,key)` 全局有序；
-    - [ ] 输出元数据包含完整 `sorting_columns`；
-    - [ ] 输入文件在成功后被删除；
-  - [ ] 失败路径（模拟写入失败）时，输入不会被删除（可通过注入错误或临时路径权限控制实现）。
+- [x] 为 `merge.rs` 增补单元测试（可使用小型内存构造或测试夹具）：
+  - [x] 构造 2~3 个小型 `.run` 输入，调用 `merge_once_delete_inputs_on_success` 输出到新的 `.run` 或 `.parquet`，验证：
+    - [x] 输出存在且 `(cluster,batch,instance,db,key)` 全局有序；
+    - [x] 输出元数据包含完整 `sorting_columns`；
+    - [x] 输入文件在成功后被删除；
+  - [x] 失败路径（模拟写入失败）时，输入不会被删除（可通过注入错误或临时路径权限控制实现）。
 
 ---
 

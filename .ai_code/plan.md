@@ -7,147 +7,126 @@
 
 ---
 
-## 阶段一：配置与 CLI 接入（最小可用参数）
+## 阶段一：路径与命名更新（.run 扩展名，6 位零填充）
 
-本阶段仅做必要参数与默认值的接入，不引入无关配置；并发复用 `DumpArgs.concurrency`。
+将 Run 分段与滚动产物统一命名为 `<instance>.<idx:06>.run`（内容为 Parquet），最终文件为 `<instance>.parquet`。
 
 ### 实现步骤
-- [x] 为 Parquet 输出增加运行规模控制参数：`run_rows`（默认 100000，测试可下调以强制生成多 Run）。
-- [x] 为最终文件增加压缩参数：`compression`（默认 zstd）。
-- [x] 为 Run 分段增加压缩参数：`intermediate_compression`（默认 lz4）。
-- [x] 在现有 CLI 中为 into-parquet 分支接入上述参数（名称与文档与设计一致）。
-- [x] 确认并复用 `DumpArgs.concurrency` 作为实例级并发度来源（排序与 dump 共享协程）。
+- [ ] 更新 `src/output/parquet/path.rs`：
+  - [ ] 新增/调整生成 run 文件名的函数：`run_filename(instance_sanitized: &str, idx: u64) -> PathBuf`，返回 `<instance>.<idx:06>.run`；
+  - [ ] 保留/更新最终文件名函数，保证 `<instance>.parquet` 不变；
+  - [ ] 路径相关日志使用统一的 helper 输出。
+- [ ] 更新 `src/output/parquet/output.rs`：
+  - [ ] `ParquetChunkWriter::flush_run_segment` 改为使用新的 `run_filename`，写出 `.run`（内容为 Parquet），并设置完整 `sorting_columns`；
+  - [ ] 移除对旧的 `*.000N.parquet` 命名的依赖。
 
 ### 验证步骤
-- [x] 编译与 Lint：`cargo clippy --all-targets --all-features -- -D warnings` 通过。
-- [x] 运行：`cargo run --bin rdbinsight -- dump ... into-parquet --help` 能正确显示新参数与默认值。
-- [x] 配置反序列化与默认值单测通过（新增/调整 tests）。
+- [ ] 编译与 Lint：`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo build` 通过。
+- [ ] 人工运行一次最小化 dump（或单元测试中的模拟）后检查临时目录，确认生成的文件名符合 `<instance>.<idx:06>.run` 约定，最终文件仍为 `<instance>.parquet`。
 
 ---
 
-## 阶段二：路径布局与批次级临时目录
+## 阶段二：MergeContext 重构为“一次合并”的执行器
 
-引入 Hadoop 分区风格目录与批次级临时目录，最终以目录级 rename 完成“全有或全无”。
+`MergeContext` 接受一组输入与一个输出，完成一次 k（≤F）路归并；合并成功后删除本次输入。
 
 ### 实现步骤
-- [x] 更新 `output/parquet/path.rs`：
-  - [x] 临时根：`<output_root>/cluster=<cluster>/_tmp_batch=<batch>/`
-  - [x] 最终根：`<output_root>/cluster=<cluster>/batch=<batch>/`
-  - [x] 规范实例分段 Run 文件命名：`<instance>.0001.parquet`、`<instance>.0002.parquet`...
-  - [x] 规范实例最终文件命名：`<instance>.parquet`。
-  - [x] 提供批次“最终化”函数：将 `_tmp_batch=<batch>` 一次性 rename 为 `batch=<batch>`。
-- [x] 日志中输出新路径与关键操作（创建临时目录、最终化）。
+- [ ] 重构 `src/output/parquet/merge.rs`：
+  - [ ] 定义新的 `MergeContext { inputs: Vec<PathBuf>, output: PathBuf, compression: ParquetCompression, ... }` 构造方式；
+  - [ ] 提供 `merge_once_delete_inputs_on_success(self) -> AnyResult<()>`：
+    - [ ] 使用最小堆进行 k 路归并，读取 `inputs`，写入 `output`；
+    - [ ] `ArrowWriter::WriterProperties` 设置完整 `sorting_columns = schema::create_db_key_sorting_columns`；
+    - [ ] 合并完成并成功 close 后，删除 `inputs`；失败则不删除；
+    - [ ] 保持在 `spawn_blocking` 中执行合并，避免阻塞 async runtime；
+  - [ ] 保留/复用现有 `RunCursor`、`OutputBuilders` 与堆逻辑；必要时抽取共用方法；
+  - [ ] 移除/废弃旧的“全量一次性合并”入口（基于 run_count 的路径）。
 
 ### 验证步骤
-- [x] 编译与 Lint 通过。
-- [x] 新增/调整针对路径格式的单测：确保目录与文件路径符合预期（特别是最终化逻辑）。
+- [ ] 为 `merge.rs` 增补单元测试（可使用小型内存构造或测试夹具）：
+  - [ ] 构造 2~3 个小型 `.run` 输入，调用 `merge_once_delete_inputs_on_success` 输出到新的 `.run` 或 `.parquet`，验证：
+    - [ ] 输出存在且 `(cluster,batch,instance,db,key)` 全局有序；
+    - [ ] 输出元数据包含完整 `sorting_columns`；
+    - [ ] 输入文件在成功后被删除；
+  - [ ] 失败路径（模拟写入失败）时，输入不会被删除（可通过注入错误或临时路径权限控制实现）。
 
 ---
 
-## 阶段三：Run 生成（增量有序缓冲 + 分段落盘）
+## 阶段三：编排器（ParquetChunkWriter）引入“发号器 + 滚动 F 路合并”
 
-将 dump 输出在内存聚合到“行数上限”的 Run，采用 BTree 增量有序缓冲摊平排序成本，按 (db, key) 顺序写出分段文件（使用 `intermediate_compression`）。
+`ParquetChunkWriter` 负责：产生 `.run` 文件、维护候选集合、在 `finalize_instance` 阶段按 fan-in 进行滚动合并，直到仅剩一个输出（最终为 `<instance>.parquet`）。
 
 ### 实现步骤
-- [x] 在 Parquet 输出模块中新增“Run 缓冲器”（按实例维护）：
-  - [x] 使用 `BTreeMap<(db, key), Record>` 作为增量有序结构（以 O(log n) 插入；基于 RDB 语义假设不会产生重复 (db, key)）。
-  - [x] 接收记录（沿用现有 Record/Arrow 路径），每条插入 BTree；达到 `run_rows` 上限后触发落盘；
-  - [x] 落盘时按 BTree 的 in-order 迭代 key，输出为 `<instance>.000N.parquet`（使用 `intermediate_compression`）。
-  - [x] 设置 WriterProperties.sorting_columns = [(db ASC), (key ASC)]，在分段文件的 Parquet 元数据中标明排序键。
-  - [x] 清空缓冲并递增 N。
-- [x] 实例结束时，如有未满 Run 的尾块，同样按有序迭代落盘，并设置相同的 sorting_columns 元数据。
-- [x] 统一 tracing：记录每个 Run 的行数/耗时/输出大小/压缩方式，并输出插入/落盘的速率以观察是否存在 CPU 尖刺。
+- [ ] 在 `ParquetChunkWriter` 中新增：
+  - [ ] `issuer: u64` 发号器，从 0 开始单调递增；
+  - [ ] `candidates: Vec<PathBuf>` 用于记录本实例产生的所有 `.run` 路径；
+- [ ] `flush_run_segment`：
+  - [ ] 使用 `issuer` 生成 `out = <instance>.<idx:06>.run`，写出（内容 Parquet）后将 `out` 推入 `candidates`；
+  - [ ] 仍使用 `intermediate_compression` 与完整 `sorting_columns`；
+- [ ] `finalize_instance`：
+  - [ ] 计算 `fan_in = merge_fan_in`（从配置/CLI 注入）；
+  - [ ] 若 `candidates.len() <= fan_in`：调用 `MergeContext` 将全部候选合并输出为 `<instance>.parquet`；
+  - [ ] 否则循环：
+    - [ ] 取按 idx 升序的最小 `fan_in` 个候选为集合 S；
+    - [ ] 生成 `out = <instance>.<idx:06>.run`（由 `issuer` 发号）；
+    - [ ] 调用 `MergeContext` 将 S 合并到 `out`（使用 `intermediate_compression`），成功后将 `out` 加回 `candidates` 并移除 S；
+    - [ ] 重复直到候选数 ≤ fan_in；最后一次合并输出 `<instance>.parquet`（使用最终 `compression`）。
+  - [ ] 日志：按规范输出 `operation`、`fan_in`、选取的最小/最大 idx、`next_idx`、耗时与速率。
 
 ### 验证步骤
-- [x] 将 `run_rows` 在测试中下调为很小值（如 10~50），强制形成 ≥2 个 Run，检查分段文件存在与行数正确。
-- [x] 读取分段 Parquet，验证 (db, key) 局部有序（跨 Run 的全局有序在下一阶段验证）。
-- [x] 检查分段文件 Parquet 元数据包含 sorting_columns 且为 (db, key) 升序。
+- [ ] 增补集成测试：设置较小的 `run_rows` 强制生成多个 `.run`，设置 `merge_fan_in=3`，验证：
+  - [ ] 滚动合并过程结束后，实例目录仅剩 `<instance>.parquet`（无 `.run` 残留）；
+  - [ ] 最终文件 `(cluster,batch,instance,db,key)` 有序且 `sorting_columns` 完整；
+  - [ ] 运行日志包含 fan-in 与 idx 信息（人工检查或基于测试日志捕获）。
 
 ---
 
-## 阶段四：实例内 k 路归并（合并为单一文件）
+## 阶段四：配置与 CLI 参数接入（merge_fan_in）
 
-将该实例的所有分段文件按 (db, key) 做 k 路归并，生成单一 `<instance>.parquet`（使用最终 `compression`）。
+加入 `merge_fan_in` 参数（默认 64），用于控制滚动合并的最大 fan-in。
 
 ### 实现步骤
-- [x] 实现基于最小堆的多路归并迭代器（或“锦标赛树” selection tree）：
-  - [x] 数据结构：
-    - [x] 每个 Run 的“批游标”（BatchCursor）：持有当前 RecordBatch、当前行索引、源文件句柄；
-    - [x] 最小堆（`BinaryHeap` with `Reverse` 或自建 tournament tree），键为 `(db, key)` 与来源 run_id；
-    - [x] 输出批构建器：按列的 Arrow Array Builders，达到目标行数后形成 RecordBatch 写出。
-  - [x] 算法：
-    - [x] 初始化：从每个 Run 读取首个 RecordBatch，将首行放入堆，携带 run_id 与行位置；
-    - [x] 循环：弹出堆顶（最小 `(db, key)`），将该行追加到输出构建器；然后推动对应 Run 的游标到下一行；若当前批用尽，则拉取该 Run 的下一 RecordBatch；若该 Run 结束，从堆中移除；
-    - [x] Flush：输出构建器达到阈值（例如 64K 行）或所有 Run 结束时，生成 RecordBatch 写入 AsyncArrowWriter；
-    - [x] 终止：所有 Run 耗尽。
-  - [x] Writer：
-    - [x] 使用最终 `compression` 写出 `<instance>.parquet`；
-    - [x] 设置 WriterProperties.sorting_columns = [(db ASC), (key ASC)]；
-- [x] 归并结束后删除该实例的 `*.000N.parquet`。
+- [ ] 扩展配置结构体与 CLI：
+  - [ ] 在 `config.rs` 与 `src/bin/rdbinsight.rs` 的 into-parquet 分支接入 `merge_fan_in`；
+  - [ ] 将该参数传递至 `ParquetOutput` 与 `ParquetChunkWriter`；
+- [ ] 更新帮助信息与默认值展示；
+- [ ] 日志打印 `merge_fan_in` 生效值。
 
 ### 验证步骤
-- [x] 在测试中将 `run_rows` 下调以确保触发多 Run 情况，归并后读取 `<instance>.parquet`，验证全局 (db, key) 有序。
-- [x] 验证最终文件压缩算法为 `compression`、分段文件压缩算法为 `intermediate_compression`。
-- [x] 验证最终文件 Parquet 元数据包含 sorting_columns 且为 (db, key) 升序。
-- [x] 压测：构造高 k（如 200+）的 Run 数量，验证 fan-in 多轮归并路径正确性与资源峰值受控。
+- [ ] `cargo run --bin rdbinsight -- dump ... into-parquet --help` 能看到 `merge_fan_in`；
+- [ ] 指定不同 `merge_fan_in` 值时，日志中展示的选取规模与行为符合预期。
 
 ---
 
-## 阶段五：与 dump 流程集成与并发控制
+## 阶段五：可观测性与清理保证
 
-确保排序过程与 dump 共享协程、并使用 `DumpArgs.concurrency` 控制实例级并发，避免额外 CPU 竞争。
+完善关键日志与错误处理，确保合并失败不会误删输入。
 
 ### 实现步骤
-- [x] 在当前 Parquet 输出 Writer 生命周期中插入 Run 生成与实例归并流程；
-- [x] 串联与 `DumpArgs.concurrency`：确保实例任务数量上限与 dump 相同；
-- [x] 在所有实例完成后，调用“批次最终化”完成目录 rename。
+- [ ] 按日志规范输出：`operation` 字段放首位，随后为上下文字段，描述字符串结尾（遵循项目日志规范记忆）。
+- [ ] `MergeContext`：仅在成功 close 输出后删除输入；错误路径保留输入并透出明确错误上下文（实例、输入数量、输出路径、压缩参数）。
+- [ ] `ParquetChunkWriter`：在 finalize 编排期间对每轮合并输出耗时、速率、候选数量变化进行记录。
 
 ### 验证步骤
-- [x] 在本地/CI 环境执行端到端 dump（多实例）流程，观察 CPU 与并发度符合预期（无额外独立线程池/阻塞 IO）。
-- [x] 验证最终目录为 `cluster=<cluster>/batch=<batch>/`，且每实例仅有一个 `<instance>.parquet`。
+- [ ] 人工注入失败（例如输出路径不可写或磁盘满）：确认 `MergeContext` 未删除输入，并输出可定位的错误日志；
+- [ ] 正常路径结束后，目录下无 `.run` 残留且有 `<instance>.parquet`。
 
 ---
 
-## 阶段六：可观测性与健壮性
-
-补充必要的日志、错误处理与清理逻辑，确保失败后可重试。
+## 阶段六：测试完善与文档同步
 
 ### 实现步骤
-- [x] 为关键阶段增加 tracing（run_gen/merge/finalize）与统计（行数、大小、耗时）。
-- [ ] 失败清理：异常时保留 `_tmp_batch=<batch>` 目录（便于排查）；允许整体清理后重跑。
-- [x] 错误信息包含上下文（实例名、分段序号、路径、压缩参数）。
+- [ ] 更新/新增测试：
+  - [ ] 路径与命名测试：校验 `.run` 的 6 位零填充与最终文件名；
+  - [ ] 滚动合并正确性测试：多 `.run`、`merge_fan_in` 不同取值；
+  - [ ] Parquet 元数据测试：`sorting_columns` 为完整列集；
+- [ ] 更新 README 与 README.zh_CN 对 Parquet 目录布局与 `merge_fan_in` 参数的简要说明（与英文保持同步）。
 
 ### 验证步骤
-- [x] 人工注入故障（写入失败/读出失败），确认错误日志可定位问题，且不会产生部分可见的最终目录。
-
----
-
-## 阶段七：测试与文档
-
-调整/新增测试覆盖新的路径布局与排序行为，补充 README/变更日志的要点。
-
-### 实现步骤
-- [ ] 更新现有 Parquet 相关测试以适配新路径（Hadoop 风格目录与最终化语义）。
-- [ ] 新增：
-  - [ ] Run 切分与落盘测试（将 `run_rows` 调小以强制生成多个 Run）。
-  - [ ] 实例内多路归并正确性测试（依赖多 Run 场景）。
-  - [ ] 压缩算法组合（最终 zstd、分段 lz4）测试；
-  - [ ] 多实例端到端测试（含并发）。
-  - [ ] Parquet 元数据校验：分段与最终文件的 sorting_columns 均为 (db, key) 升序。
-- [ ] 更新 README.zh_CN/README：说明新的 Parquet 目录布局与参数（简要）。
-
-### 验证步骤
-- [ ] 执行 `cargo test --all` 通过。
-- [ ] 手工对比旧版本与新版本的 dump 时长/CPU/磁盘使用（非必须，作为补充观察）。
+- [ ] 运行全部测试：`just test`（或 `cargo test --all`）通过；
+- [ ] 文档术语与 CLI 帮助一致，示例路径命名与实现一致。
 
 ---
 
 ## 里程碑与范围说明
-- 本次范围仅实现“实例级外部归并排序 + 批次级最终化（目录重命名）”。
-- 不包含：从 Parquet 生成报告、跨实例全局合并产物、`run-bytes` 硬上限（需 allocator）。
-- 参数回顾：
-  - `DumpArgs.concurrency`（并发来源，共享协程）；
-  - `run_rows`（默认 100000，可在测试中调小以覆盖多 Run 场景）；
-  - `compression`（最终，默认 zstd）；
-  - `intermediate_compression`（Run，默认 lz4）。
-- 实现要点：Run 采用 BTree 增量有序缓冲（避免一次性排序导致 CPU 尖刺），实例内通过 k 路归并生成最终文件；所有输出文件通过 WriterProperties 的 sorting_columns 明确声明 (db, key) 排序键，以便下游引擎感知；基于 RDB 语义假设不会产生重复 (db, key)。
+- 仅实现：`.run` 命名的滚动 F 路合并、`merge_fan_in` 参数接入、`MergeContext` 作为“一次合并”的执行器并负责成功后的输入删除。
+- 不包含：断点续传、目录扫描恢复、`.tmp` 中间名、P0 读取批次/输出批次调优（可后续评估）。

@@ -4,7 +4,7 @@ use anyhow::{Context, anyhow};
 use itertools::Itertools;
 use parquet::{arrow::async_writer::AsyncArrowWriter, file::properties::WriterProperties};
 use tokio::fs::File;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::{
     config::ParquetCompression,
@@ -406,16 +406,7 @@ impl ChunkWriter for ParquetChunkWriter {
             batch_ts: this.batch_ts,
         };
 
-        if let Err(e) = merge_ctx.merge_once_delete_inputs_on_success().await {
-            error!(
-                operation = "parquet_final_merge_failed",
-                instance = %this.instance,
-                output = %this.final_path.display(),
-                error = %e,
-                "Final merge failed"
-            );
-            return Err(e);
-        }
+        merge_ctx.merge_once_delete_inputs_on_success().await?;
 
         Ok(())
     }

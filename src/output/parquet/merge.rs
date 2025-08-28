@@ -13,7 +13,6 @@ use parquet::{
     arrow::{ArrowWriter, arrow_reader::ParquetRecordBatchReaderBuilder},
     file::properties::WriterProperties,
 };
-use tracing::error;
 
 use crate::{config::ParquetCompression, helper::AnyResult, output::parquet::schema};
 
@@ -44,7 +43,7 @@ impl MergeContext {
         let final_compression = self.compression;
         let segments = self.inputs.clone();
 
-        let join_result = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             // Writer
             let final_file = std::fs::File::create(&final_path).with_context(|| {
                 format!("Failed to create final parquet file: {}", final_path.display())
@@ -142,39 +141,7 @@ impl MergeContext {
                 output = self.output.display(),
                 compression = self.compression,
             )
-        });
-
-        let result = match join_result {
-            Ok(inner) => inner,
-            Err(e) => {
-                error!(
-                    operation = "parquet_merge_failed",
-                    cluster = %self.cluster,
-                    instance = %self.instance,
-                    input_count = input_count,
-                    output = %self.output.display(),
-                    compression = ?self.compression,
-                    error = %e,
-                    "Merge thread join failed"
-                );
-                return Err(e);
-            }
-        };
-
-        if let Err(e) = result {
-            error!(
-                operation = "parquet_merge_failed",
-                cluster = %self.cluster,
-                instance = %self.instance,
-                input_count = input_count,
-                output = %self.output.display(),
-                compression = ?self.compression,
-                error = %e,
-                "Merge execution returned error"
-            );
-            // Do not delete inputs on error
-            return Err(e);
-        }
+        })??;
 
         // Delete inputs only after successful close of output
         for seg in self.inputs {

@@ -20,8 +20,6 @@ pub struct ParquetOutput {
     intermediate_compression: ParquetCompression,
     cluster: String,
     batch_ts: time::OffsetDateTime,
-    #[deprecated(note = "merge_fan_in is deprecated and will be removed in a future release")]
-    merge_fan_in: usize,
 }
 
 impl ParquetOutput {
@@ -30,16 +28,9 @@ impl ParquetOutput {
         compression: ParquetCompression,
         run_rows: usize,
         intermediate_compression: ParquetCompression,
-        merge_fan_in: usize,
         cluster: String,
         batch_ts: time::OffsetDateTime,
     ) -> Self {
-        // Emit a deprecation warning for observability
-        tracing::warn!(
-            operation = "merge_fan_in_deprecated",
-            merge_fan_in = merge_fan_in,
-            "merge_fan_in is deprecated and will be removed in a future release"
-        );
         Self {
             base_dir,
             compression,
@@ -47,7 +38,6 @@ impl ParquetOutput {
             intermediate_compression,
             cluster,
             batch_ts,
-            merge_fan_in,
         }
     }
 
@@ -103,7 +93,6 @@ impl Output for ParquetOutput {
             self.compression,
             self.run_rows,
             self.intermediate_compression,
-            self.merge_fan_in,
         )
         .await
         .with_context(|| format!("Failed to create Parquet writer for instance: {instance}"))?;
@@ -115,7 +104,6 @@ impl Output for ParquetOutput {
             instance_sanitized = %sanitized_instance,
             run_rows = self.run_rows,
             intermediate_compression = ?self.intermediate_compression,
-            merge_fan_in = self.merge_fan_in,
             "Initialized Parquet run generation for instance"
         );
 
@@ -176,7 +164,6 @@ pub struct ParquetChunkWriter {
     final_compression: ParquetCompression,
     issuer: u64,
     candidates: Vec<PathBuf>,
-    merge_fan_in: usize,
 }
 
 impl ParquetChunkWriter {
@@ -191,7 +178,7 @@ impl ParquetChunkWriter {
         compression: ParquetCompression,
         run_rows: usize,
         intermediate_compression: ParquetCompression,
-        merge_fan_in: usize,
+        
     ) -> AnyResult<Self> {
         Ok(Self {
             instance,
@@ -206,7 +193,6 @@ impl ParquetChunkWriter {
             final_compression: compression,
             issuer: 0,
             candidates: Vec::new(),
-            merge_fan_in,
         })
     }
 
@@ -271,91 +257,8 @@ impl ChunkWriter for ParquetChunkWriter {
             this.flush_run_segment().await?;
         }
 
-        // Stage 3 orchestration: rolling F-way merge until one output remains
-        let fan_in: usize = this.merge_fan_in;
-
-        // If there is no candidate (no data), create an empty final parquet
-        if this.candidates.is_empty() {
-            let merge_ctx = merge::MergeContext {
-                inputs: Vec::new(),
-                output: this.final_path.clone(),
-                compression: this.final_compression,
-                cluster: this.cluster.clone(),
-                instance: this.instance.clone(),
-                batch_ts: this.batch_ts,
-            };
-            merge_ctx.merge_once_delete_inputs_on_success().await?;
-            return Ok(());
-        }
-
-        // Helper to sort candidates by lexicographic order (6-digit zero-padded idx ensures correct order)
-        let sort_candidates = |cands: &mut Vec<PathBuf>| {
-            cands.sort();
-        };
-
-        // Rolling merges for intermediate outputs until candidates <= fan_in
-        sort_candidates(&mut this.candidates);
-        while this.candidates.len() > fan_in {
-            // Take the smallest fan_in candidates
-            let mut inputs: Vec<PathBuf> = Vec::with_capacity(fan_in);
-            for _ in 0..fan_in {
-                inputs.push(this.candidates.remove(0));
-            }
-
-            let next_idx = this.next_idx();
-            let out_path = this
-                .temp_batch_dir
-                .join(path::run_filename(&this.instance_sanitized, next_idx));
-
-            let min_file = inputs
-                .first()
-                .and_then(|x| x.file_name())
-                .and_then(|x| x.to_str())
-                .ok_or_else(|| anyhow!("no input files"))?
-                .to_string();
-            let max_file = inputs
-                .last()
-                .and_then(|x| x.file_name())
-                .and_then(|x| x.to_str())
-                .ok_or_else(|| anyhow!("no input files"))?
-                .to_string();
-            let out_file = out_path
-                .file_name()
-                .and_then(|x| x.to_str())
-                .ok_or_else(|| anyhow!("no output file"))?
-                .to_string();
-            let begin = std::time::Instant::now();
-
-            let merge_ctx = merge::MergeContext {
-                inputs,
-                output: out_path.clone(),
-                compression: this.intermediate_compression,
-                cluster: this.cluster.clone(),
-                instance: this.instance.clone(),
-                batch_ts: this.batch_ts,
-            };
-            merge_ctx
-                .merge_once_delete_inputs_on_success()
-                .await
-                .context("merge parquets failed")?;
-
-            let cost = begin.elapsed();
-            info!(
-                operation = "parquet_rolling_merge_done",
-                instance = %this.instance,
-                fan_in = fan_in,
-                min_segment = %min_file,
-                max_segment = %max_file,
-                output_segment = %out_file,
-                cost =? cost,
-            );
-
-            // Add new output back to candidates and resort
-            this.candidates.push(out_path);
-            sort_candidates(&mut this.candidates);
-        }
-
-        // Final merge to <instance>.parquet using final compression
+        // Ensure deterministic order and perform a single merge into the final Parquet.
+        this.candidates.sort();
         let merge_ctx = merge::MergeContext {
             inputs: this.candidates,
             output: this.final_path.clone(),
@@ -365,7 +268,16 @@ impl ChunkWriter for ParquetChunkWriter {
             batch_ts: this.batch_ts,
         };
 
-        merge_ctx.merge_once_delete_inputs_on_success().await?;
+        tokio::task::spawn_blocking(move || {
+            merge_ctx.merge_run_lz4_once_delete_inputs_on_success()
+        })
+        .await
+        .with_context(|| {
+            anyhow!(
+                "Failed to join final merge task for instance {}",
+                this.instance
+            )
+        })??;
 
         Ok(())
     }

@@ -31,126 +31,9 @@ pub struct MergeContext {
 }
 
 impl MergeContext {
-    /// Execute one merge: read `inputs`, write to `output`. On success, delete all `inputs`.
-    pub async fn merge_once_delete_inputs_on_success(self) -> AnyResult<()> {
-        let _input_count = self.inputs.len();
-
-        if self.inputs.is_empty() {
-            self.create_empty_output().await?;
-            return Ok(());
-        }
-
-        let cluster = self.cluster.clone();
-        let instance = self.instance.clone();
-        let batch_ts = self.batch_ts;
-        let final_path = self.output.clone();
-        let final_compression = self.compression;
-        let segments = self.inputs.clone();
-
-        tokio::task::spawn_blocking(move || {
-            // Writer
-            let final_file = std::fs::File::create(&final_path)
-                .with_context(|| anyhow!("Failed to create final parquet file: {}", final_path.display()))?;
-
-            let schema_arc = Arc::new(schema::create_redis_record_schema());
-            let sorting_columns = schema::create_db_key_sorting_columns(&schema_arc)
-                .map_err(|e| anyhow!("Failed to create sorting columns: {e}"))?;
-
-            let mut props_builder = match final_compression {
-                ParquetCompression::Zstd => WriterProperties::builder().set_compression(
-                    parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()),
-                ),
-                ParquetCompression::Snappy => {
-                    WriterProperties::builder().set_compression(parquet::basic::Compression::SNAPPY)
-                }
-                ParquetCompression::None => WriterProperties::builder()
-                    .set_compression(parquet::basic::Compression::UNCOMPRESSED),
-                ParquetCompression::Lz4 => {
-                    WriterProperties::builder().set_compression(parquet::basic::Compression::LZ4)
-                }
-            };
-            props_builder = props_builder.set_sorting_columns(Some(sorting_columns));
-            props_builder = props_builder.set_max_row_group_size(8192);
-            let props = props_builder.build();
-
-            let mut writer = ArrowWriter::try_new(final_file, schema_arc.clone(), Some(props))
-                .map_err(|e| anyhow!("Failed to create ArrowWriter: {e}"))?;
-
-            // Readers -> cursors
-            let mut cursors: Vec<RunCursor> = Vec::with_capacity(segments.len());
-            for path in &segments {
-                let mut cursor = RunCursor::new(path)?;
-                if cursor.ensure_batch()? {
-                    cursors.push(cursor);
-                }
-            }
-
-            // Heap merge state
-            let field_indices = ColumnIndices::new()?;
-            let mut builders = OutputBuilders::with_capacity(8 * 1024);
-            let mut heap: BinaryHeap<Reverse<HeapItem>> = BinaryHeap::new();
-
-            // Initialize heap
-            for (idx, cursor) in cursors.iter_mut().enumerate() {
-                let (db, key) = cursor.peek_key(&field_indices)?;
-                heap.push(Reverse(HeapItem { db, key, run_idx: idx }));
-            }
-
-            // Merge loop
-            while let Some(item) = heap.pop() {
-                let cursor = &mut cursors[item.0.run_idx];
-                cursor.append_current_row(
-                    &cluster,
-                    &instance,
-                    batch_ts,
-                    &field_indices,
-                    &mut builders,
-                )?;
-                builders.rows += 1;
-
-                if cursor.ensure_batch()? && cursor.has_more_rows() {
-                    let (db, key) = cursor.peek_key(&field_indices)?;
-                    heap.push(Reverse(HeapItem { db, key, run_idx: item.0.run_idx }));
-                }
-
-                if builders.is_full() {
-                    let batch = builders.finish_to_batch()?;
-                    writer
-                        .write(&batch)
-                        .map_err(|e| anyhow!("Failed to write merged batch: {e}"))?;
-                }
-            }
-
-            if !builders.is_empty() {
-                let batch = builders.finish_to_batch()?;
-                writer
-                    .write(&batch)
-                    .map_err(|e| anyhow!("Failed to write final merged batch: {e}"))?;
-            }
-
-            writer
-                .close()
-                .map_err(|e| anyhow!("Failed to close final parquet writer: {e}"))?;
-
-            Ok::<_, anyhow::Error>(())
-        })
-        .await
-        .with_context(|| anyhow!(
-            "Failed to join merge task (cluster={}, instance={}, inputs={}, output={}, compression={:?})",
-            self.cluster,
-            self.instance,
-            _input_count,
-            self.output.display(),
-            self.compression
-        ))??;
-
-        // Delete inputs only after successful close of output
-        for seg in self.inputs {
-            let _ = tokio::fs::remove_file(&seg).await;
-        }
-
-        Ok(())
-    }
+    // `merge_once_delete_inputs_on_success` removed: parquet run files are no longer used.
+    // Use `merge_run_lz4_once_delete_inputs_on_success` (synchronous) instead and call it
+    // from an async context with `tokio::task::spawn_blocking`.
 
     /// Synchronous merge for a set of `.run.lz4` inputs into a final Parquet file.
     /// This performs k-way merge by opening each run with `RunReader`, keeping one
@@ -292,11 +175,6 @@ impl MergeContext {
             .close()
             .map_err(|e| anyhow!("Failed to close empty parquet writer: {e}"))?;
         Ok(())
-    }
-
-    async fn create_empty_output(&self) -> AnyResult<()> {
-        // Delegate to synchronous helper for now (keeps previous behavior).
-        self.create_empty_output_sync()
     }
 
     // Helper: construct ArrowWriter with sorting columns and properties

@@ -229,11 +229,7 @@ struct ParquetOutputArgs {
     #[arg(long, value_enum, default_value_t = ParquetCompression::Lz4)]
     intermediate_compression: ParquetCompression,
 
-    /// Maximum fan-in for rolling merges (DEPRECATED; not used in current LZ4 run workflow)
-    /// This flag is kept for backward compatibility and will be removed in a later release.
-    #[deprecated(note = "merge_fan_in is deprecated; internal FD protection is automatic")]
-    #[arg(long, default_value_t = 1024)]
-    merge_fan_in: usize,
+    // `merge_fan_in` flag removed: internal FD protection is automatic
 }
 
 #[derive(Parser)]
@@ -439,7 +435,6 @@ fn dump_command_to_config(
                 parquet_args.compression,
                 parquet_args.run_rows,
                 parquet_args.intermediate_compression,
-                parquet_args.merge_fan_in,
             )?;
             OutputConfig::Parquet(parquet_config)
         }

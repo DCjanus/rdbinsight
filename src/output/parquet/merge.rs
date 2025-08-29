@@ -20,7 +20,6 @@ use crate::{
     output::parquet::{mapper::records_to_columns, run_lz4::RunReader, schema},
 };
 
-/// Merge context for a single merge execution (k-way merge, delete inputs on success)
 pub struct MergeContext {
     pub inputs: Vec<PathBuf>,
     pub output: PathBuf,
@@ -31,6 +30,17 @@ pub struct MergeContext {
 }
 
 impl MergeContext {
+    fn make_heap_item_from_record(rec: &crate::record::Record, run_idx: usize) -> HeapItem {
+        let key_bytes = match &rec.key {
+            crate::parser::core::raw::RDBStr::Str(bytes) => bytes.to_vec(),
+            crate::parser::core::raw::RDBStr::Int(v) => v.to_string().into_bytes(),
+        };
+        HeapItem {
+            db: rec.db as i64,
+            key: key_bytes,
+            run_idx,
+        }
+    }
     pub fn merge(self) -> AnyResult<()> {
         let _input_count = self.inputs.len();
 
@@ -39,7 +49,6 @@ impl MergeContext {
             return Ok(());
         }
 
-        // Writer
         let final_path = self.output.clone();
         let final_compression = self.compression;
         let cluster = self.cluster.clone();
@@ -55,53 +64,36 @@ impl MergeContext {
 
         let mut writer = Self::create_arrow_writer_for(final_compression, final_file)?;
 
-        // Open run readers and initialize heap
         let (mut readers, mut current_records) = Self::open_run_readers(&self.inputs)?;
 
         let mut heap: BinaryHeap<Reverse<HeapItem>> = BinaryHeap::new();
+
         for (idx, opt_rec) in current_records.iter().enumerate() {
             if let Some(rec) = opt_rec {
-                let key_bytes = match &rec.key {
-                    crate::parser::core::raw::RDBStr::Str(bytes) => bytes.to_vec(),
-                    crate::parser::core::raw::RDBStr::Int(v) => v.to_string().into_bytes(),
-                };
-                heap.push(Reverse(HeapItem {
-                    db: rec.db as i64,
-                    key: key_bytes,
-                    run_idx: idx,
-                }));
+                heap.push(Reverse(Self::make_heap_item_from_record(rec, idx)));
             }
         }
 
         let mut batch_buf: Vec<crate::record::Record> = Vec::with_capacity(8 * 1024);
         let batch_capacity = 8 * 1024;
 
-        // Merge loop
         while let Some(item) = heap.pop() {
             let run_idx = item.0.run_idx;
-            // take current record
+
             let record = current_records[run_idx]
                 .as_ref()
                 .expect("current record should be present");
-
             batch_buf.push(record.clone());
 
             match readers[run_idx].read_next() {
                 Ok(Some(next_rec)) => {
                     current_records[run_idx] = Some(next_rec);
-                    let key_bytes = match &current_records[run_idx].as_ref().unwrap().key {
-                        crate::parser::core::raw::RDBStr::Str(bytes) => bytes.to_vec(),
-                        crate::parser::core::raw::RDBStr::Int(v) => v.to_string().into_bytes(),
-                    };
-                    heap.push(Reverse(HeapItem {
-                        db: current_records[run_idx].as_ref().unwrap().db as i64,
-                        key: key_bytes,
+                    heap.push(Reverse(Self::make_heap_item_from_record(
+                        current_records[run_idx].as_ref().unwrap(),
                         run_idx,
-                    }));
+                    )));
                 }
-                Ok(None) => {
-                    current_records[run_idx] = None;
-                }
+                Ok(None) => current_records[run_idx] = None,
                 Err(e) => {
                     return Err(e).with_context(|| anyhow!("Failed to read from run {}", run_idx));
                 }
@@ -120,7 +112,6 @@ impl MergeContext {
             .close()
             .map_err(|e| anyhow!("Failed to close final parquet writer: {e}"))?;
 
-        // Delete inputs only after successful close of output
         for seg in self.inputs {
             let _ = std::fs::remove_file(&seg);
         }
@@ -172,7 +163,6 @@ impl MergeContext {
         Ok(writer)
     }
 
-    // Helper: open run readers and read first record for each
     fn open_run_readers(
         inputs: &[PathBuf],
     ) -> AnyResult<(Vec<RunReader>, Vec<Option<crate::record::Record>>)> {
@@ -210,8 +200,6 @@ impl MergeContext {
         Ok(())
     }
 }
-
-/// Heap item for min-heap sorting
 #[derive(Eq, PartialEq, Ord, PartialOrd)]
 pub struct HeapItem {
     pub db: i64,
@@ -219,7 +207,6 @@ pub struct HeapItem {
     pub run_idx: usize,
 }
 
-/// Run segment cursor for reading individual run segments
 pub struct RunCursor {
     reader: parquet::arrow::arrow_reader::ParquetRecordBatchReader,
     current: Option<RecordBatch>,
@@ -306,14 +293,12 @@ impl RunCursor {
     ) -> AnyResult<()> {
         let batch = self.current.as_ref().expect("batch should be present");
 
-        // Constant columns
         builders.cluster.append_value(cluster);
         builders
             .batch
             .append_value(batch_ts.unix_timestamp_nanos() as i64);
         builders.instance.append_value(instance);
 
-        // db (required)
         let db_array = batch
             .column(indices.db)
             .as_any()
@@ -321,7 +306,6 @@ impl RunCursor {
             .context("Failed to downcast db column to Int64Array")?;
         builders.db.append_value(db_array.value(self.row));
 
-        // key (required)
         let key_array = batch
             .column(indices.key)
             .as_any()
@@ -329,7 +313,6 @@ impl RunCursor {
             .context("Failed to downcast key column to BinaryArray")?;
         builders.key.append_value(key_array.value(self.row));
 
-        // type (required Utf8)
         let type_array = batch
             .column(indices.r#type)
             .as_any()
@@ -337,7 +320,6 @@ impl RunCursor {
             .context("Failed to downcast type column to StringArray")?;
         builders.r#type.append_value(type_array.value(self.row));
 
-        // member_count (required i64)
         let mc_array = batch
             .column(indices.member_count)
             .as_any()
@@ -345,7 +327,6 @@ impl RunCursor {
             .context("Failed to downcast member_count to Int64Array")?;
         builders.member_count.append_value(mc_array.value(self.row));
 
-        // rdb_size (required i64)
         let size_array = batch
             .column(indices.rdb_size)
             .as_any()
@@ -353,7 +334,6 @@ impl RunCursor {
             .context("Failed to downcast rdb_size to Int64Array")?;
         builders.rdb_size.append_value(size_array.value(self.row));
 
-        // encoding (required Utf8)
         let enc_array = batch
             .column(indices.encoding)
             .as_any()
@@ -361,7 +341,6 @@ impl RunCursor {
             .context("Failed to downcast encoding to StringArray")?;
         builders.encoding.append_value(enc_array.value(self.row));
 
-        // expire_at (nullable ts ms)
         let expire_array = batch
             .column(indices.expire_at)
             .as_any()
@@ -375,7 +354,6 @@ impl RunCursor {
                 .append_value(expire_array.value(self.row));
         }
 
-        // idle_seconds (nullable i64)
         let idle_array = batch
             .column(indices.idle_seconds)
             .as_any()
@@ -389,7 +367,6 @@ impl RunCursor {
                 .append_value(idle_array.value(self.row));
         }
 
-        // freq (nullable i32)
         let freq_array = batch
             .column(indices.freq)
             .as_any()
@@ -401,7 +378,6 @@ impl RunCursor {
             builders.freq.append_value(freq_array.value(self.row));
         }
 
-        // codis_slot (nullable i32)
         let codis_array = batch
             .column(indices.codis_slot)
             .as_any()
@@ -415,7 +391,6 @@ impl RunCursor {
                 .append_value(codis_array.value(self.row));
         }
 
-        // redis_slot (nullable i32)
         let redis_array = batch
             .column(indices.redis_slot)
             .as_any()
@@ -429,13 +404,10 @@ impl RunCursor {
                 .append_value(redis_array.value(self.row));
         }
 
-        // Advance to next row
         self.row += 1;
         Ok(())
     }
 }
-
-/// Column indices caching all column positions to avoid repeated lookups
 #[derive(Clone, Copy)]
 pub struct ColumnIndices {
     pub db: usize,

@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use anyhow::{anyhow, bail};
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     helper::AnyResult,
@@ -61,7 +62,7 @@ pub fn read_rdb_len(input: &[u8]) -> AnyResult<(&[u8], RDBLen)> {
     }
 }
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq)]
+#[derive(Clone, Hash, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RDBStr {
     Str(Bytes), /* XXX: tricky way to avoid lifetime issue, might be slow than &[u8], but easy to use */
     Int(u64),

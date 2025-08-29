@@ -12,17 +12,17 @@
 为 LZ4 流式 run 与 bincode 序列化准备依赖，并为数据结构添加序列化派生。
 
 ### 实现步骤
-- [ ] 使用命令添加依赖（避免手工改 `Cargo.toml`）：
-  - [ ] `cargo add serde --features derive`
-  - [ ] `cargo add bincode`
-  - [ ] `cargo add lz4_flex`
-  - [ ] `cargo add crc32fast`
-- [ ] 为 `src/record.rs` 中的 `Record`、相关枚举与 `src/parser/core/raw.rs` 中的 `RDBStr` 添加 `Serialize`/`Deserialize` 派生。
-- [ ] 确认不引入不必要的 `Clone`/`Copy`；遵循现有命名与风格（日志/注释用英文）。
+- [x] 使用命令添加依赖（避免手工改 `Cargo.toml`）：
+  - [x] `cargo add serde --features derive`
+  - [x] `cargo add bincode`
+  - [x] `cargo add lz4_flex`
+  - [x] `cargo add crc32fast`
+- [x] 为 `src/record.rs` 中的 `Record`、相关枚举与 `src/parser/core/raw.rs` 中的 `RDBStr` 添加 `Serialize`/`Deserialize` 派生。
+- [x] 确认不引入不必要的 `Clone`/`Copy`；遵循现有命名与风格（日志/注释用英文）。
 
 ### 验证步骤
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo build` 通过。
-- [ ] 简单创建/序列化/反序列化一个 `Record`（单元测试），验证 serde 派生生效。
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo build` 通过。
+- [x] 简单创建/序列化/反序列化一个 `Record`（单元测试），验证 serde 派生生效。
 
 ---
 

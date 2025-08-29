@@ -4,6 +4,7 @@ use std::{
 };
 
 use futures_util::Stream;
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
 use typed_builder::TypedBuilder;
 
@@ -22,7 +23,9 @@ use crate::{
 };
 
 /// Redis data type variants
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+
 pub enum RecordType {
     String,
     List,
@@ -34,7 +37,9 @@ pub enum RecordType {
 }
 
 /// Encoding information for different Redis data types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+
 pub enum RecordEncoding {
     String(StringEncoding),
     List(ListEncoding),
@@ -46,7 +51,7 @@ pub enum RecordEncoding {
 }
 
 /// A complete Redis key record with all necessary metadata
-#[derive(Debug, Clone, TypedBuilder)]
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
 pub struct Record {
     /// Database number (0-15 in standard Redis)
     pub db: u64,

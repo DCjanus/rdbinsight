@@ -16,7 +16,7 @@ fmt:
 	cargo +nightly fmt --all
 
 fix: fmt
-	cargo fix --allow-dirty --allow-staged
+	cargo +nightly fix --allow-dirty --allow-staged
 
 before_commit:
     just fix

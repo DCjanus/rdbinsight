@@ -314,6 +314,7 @@ impl OutputConfig {
                 let output = crate::output::parquet::output::ParquetOutput::new(
                     parquet_config.dir.clone(),
                     parquet_config.compression,
+                    parquet_config.max_run_rows,
                     cluster,
                     batch_ts,
                 );
@@ -327,18 +328,31 @@ impl OutputConfig {
 pub struct ParquetConfig {
     pub dir: PathBuf,
     pub compression: ParquetCompression,
+    pub max_run_rows: usize,
 }
 
 impl ParquetConfig {
     /// Create a new ParquetConfig
-    pub fn new(dir: PathBuf, compression: ParquetCompression) -> AnyResult<Self> {
-        Ok(Self { dir, compression })
+    pub fn new(
+        dir: PathBuf,
+        compression: ParquetCompression,
+        max_run_rows: usize,
+    ) -> AnyResult<Self> {
+        Ok(Self {
+            dir,
+            compression,
+            max_run_rows,
+        })
     }
 
     /// Validate the Parquet configuration
     pub fn validate(&self) -> AnyResult<()> {
         ensure!(!self.dir.is_file(), "Parquet directory cannot be a file");
-
+        ensure!(
+            self.max_run_rows > 0,
+            "max_run_rows must be greater than 0, got: {}",
+            self.max_run_rows
+        );
         Ok(())
     }
 }
@@ -349,6 +363,7 @@ pub enum ParquetCompression {
     Zstd,
     Snappy,
     None,
+    Lz4,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

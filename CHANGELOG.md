@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Breaking
+- Parquet adopts Hadoop-style layout with batch-level atomic finalize: `_tmp_batch=<batch>` → `batch=<batch>`.
+
+### Features
+- Parquet: Per-instance external merge sort; one final file per instance sorted by `(db, key)`.
+- Parquet: Configurable compression for runs (LZ4) and final files (ZSTD).
+
 ## [0.1.0-rc.3]
 
 ### Breaking

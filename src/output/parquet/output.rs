@@ -1,23 +1,22 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, anyhow};
-use arrow::record_batch::RecordBatch;
-use parquet::{arrow::async_writer::AsyncArrowWriter, file::properties::WriterProperties};
-use tokio::fs::File;
-use tracing::info;
+use itertools::Itertools;
+use tracing::{debug, info};
 
 use crate::{
     config::ParquetCompression,
     helper::AnyResult,
     output::{
         ChunkWriter, ChunkWriterEnum, Output,
-        parquet::{mapper, path},
+        parquet::{merge, path},
     },
 };
 
 pub struct ParquetOutput {
     base_dir: PathBuf,
     compression: ParquetCompression,
+    max_run_rows: usize,
     cluster: String,
     batch_ts: time::OffsetDateTime,
 }
@@ -26,26 +25,32 @@ impl ParquetOutput {
     pub fn new(
         base_dir: PathBuf,
         compression: ParquetCompression,
+        max_run_rows: usize,
         cluster: String,
         batch_ts: time::OffsetDateTime,
     ) -> Self {
         Self {
             base_dir,
             compression,
+            max_run_rows,
+
             cluster,
             batch_ts,
         }
     }
 
     fn temp_batch_dir(&self) -> PathBuf {
-        let batch_dir_name = path::format_batch_dir(self.batch_ts);
-        let temp_batch_dir_name = path::make_tmp_batch_dir(&batch_dir_name);
-        self.base_dir.join(&self.cluster).join(temp_batch_dir_name)
+        let batch_slug = path::format_batch_dir(self.batch_ts);
+        let cluster_dir = path::cluster_dir_name(&self.cluster);
+        let temp_batch_dir_name = path::temp_batch_dir_name(&batch_slug);
+        self.base_dir.join(cluster_dir).join(temp_batch_dir_name)
     }
 
     fn final_batch_dir(&self) -> PathBuf {
-        let batch_dir_name = path::format_batch_dir(self.batch_ts);
-        self.base_dir.join(&self.cluster).join(batch_dir_name)
+        let batch_slug = path::format_batch_dir(self.batch_ts);
+        let cluster_dir = path::cluster_dir_name(&self.cluster);
+        let final_batch_dir_name = path::final_batch_dir_name(&batch_slug);
+        self.base_dir.join(cluster_dir).join(final_batch_dir_name)
     }
 }
 
@@ -72,22 +77,32 @@ impl Output for ParquetOutput {
 
     async fn create_writer(&self, instance: &str) -> AnyResult<ChunkWriterEnum> {
         let sanitized_instance = path::sanitize_instance_filename(instance);
-        let temp_filename = format!("{sanitized_instance}.parquet.tmp");
-        let final_filename = format!("{sanitized_instance}.parquet");
+        let final_filename = path::final_instance_filename(&sanitized_instance);
 
-        let temp_path = self.temp_batch_dir().join(temp_filename);
         let final_path = self.temp_batch_dir().join(final_filename);
 
         let writer = ParquetChunkWriter::new(
             instance.to_string(),
+            sanitized_instance.clone(),
             self.cluster.clone(),
             self.batch_ts,
-            temp_path,
+            self.temp_batch_dir(),
             final_path,
             self.compression,
+            self.max_run_rows,
         )
         .await
         .with_context(|| format!("Failed to create Parquet writer for instance: {instance}"))?;
+
+        debug!(
+            operation = "parquet_run_gen_started",
+            cluster = %self.cluster,
+            instance = %instance,
+            instance_sanitized = %sanitized_instance,
+            max_run_rows = self.max_run_rows,
+
+            "Initialized Parquet run generation for instance"
+        );
 
         Ok(ChunkWriterEnum::Parquet(Box::new(writer)))
     }
@@ -96,112 +111,122 @@ impl Output for ParquetOutput {
         let temp_batch_dir = self.temp_batch_dir();
         let final_batch_dir = self.final_batch_dir();
 
-        tokio::fs::rename(&temp_batch_dir, &final_batch_dir)
-			.await
-			.with_context(|| {
-				format!(
-					"Failed to rename batch directory from {} to {} (ensure no other process is accessing these files)",
-					temp_batch_dir.display(),
-					final_batch_dir.display()
-				)
-			})?;
+        let start: std::time::Instant = std::time::Instant::now();
+        path::finalize_batch_dir(&temp_batch_dir, &final_batch_dir).await?;
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        info!(
+            operation = "parquet_batch_finalize",
+            cluster = %self.cluster,
+            temp_batch_dir = %temp_batch_dir.display(),
+            final_batch_dir = %final_batch_dir.display(),
+            rename_duration_ms = duration_ms,
+            "Finalized batch directory via atomic rename"
+        );
         Ok(())
     }
 }
 
-const MICRO_BATCH_ROWS: usize = 8192;
+use crate::parser::core::raw::RDBStr;
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+struct SortKey {
+    db: i64,
+    key: Vec<u8>,
+}
+
+impl SortKey {
+    fn from_record(record: &crate::record::Record) -> Self {
+        let key_bytes = match &record.key {
+            RDBStr::Str(bytes) => bytes.to_vec(),
+            RDBStr::Int(int_val) => int_val.to_string().into_bytes(),
+        };
+        Self {
+            db: record.db as i64,
+            key: key_bytes,
+        }
+    }
+}
 
 pub struct ParquetChunkWriter {
-    writer: Option<AsyncArrowWriter<File>>,
     instance: String,
+    instance_sanitized: String,
     cluster: String,
     batch_ts: time::OffsetDateTime,
-    temp_path: PathBuf,
+    temp_batch_dir: PathBuf,
     final_path: PathBuf,
-    buffered_records: Vec<crate::record::Record>,
+    max_run_rows: usize,
+
+    run_buffer: std::collections::BTreeMap<SortKey, crate::record::Record>,
+    final_compression: ParquetCompression,
+    issuer: u64,
+    candidates: Vec<PathBuf>,
 }
 
 impl ParquetChunkWriter {
+    #[allow(clippy::too_many_arguments)]
     async fn new(
         instance: String,
+        instance_sanitized: String,
         cluster: String,
         batch_ts: time::OffsetDateTime,
-        temp_path: PathBuf,
+        temp_batch_dir: PathBuf,
         final_path: PathBuf,
         compression: ParquetCompression,
+        max_run_rows: usize,
     ) -> AnyResult<Self> {
-        let file = File::create(&temp_path).await.with_context(|| {
-            format!(
-                "Failed to create temp parquet file: {}",
-                temp_path.display()
-            )
-        })?;
-
-        let schema = std::sync::Arc::new(super::schema::create_redis_record_schema());
-
-        let props = match compression {
-            ParquetCompression::Zstd => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::ZSTD(
-                    parquet::basic::ZstdLevel::default(),
-                ))
-                .build(),
-            ParquetCompression::Snappy => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::SNAPPY)
-                .build(),
-            ParquetCompression::None => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::UNCOMPRESSED)
-                .build(),
-        };
-
-        let writer = AsyncArrowWriter::try_new(file, schema, Some(props))
-            .map_err(|e| anyhow!("Failed to create async arrow writer: {e}"))?;
-
         Ok(Self {
-            writer: Some(writer),
             instance,
+            instance_sanitized,
             cluster,
             batch_ts,
-            temp_path,
+            temp_batch_dir,
             final_path,
-            buffered_records: Vec::with_capacity(MICRO_BATCH_ROWS),
+            max_run_rows,
+
+            run_buffer: std::collections::BTreeMap::new(),
+            final_compression: compression,
+            issuer: 0,
+            candidates: Vec::new(),
         })
     }
 
-    async fn write_batch(&mut self, batch: RecordBatch) -> AnyResult<()> {
-        self.writer
-            .as_mut()
-            .expect("unexpected error: writer not initialized")
-            .write(&batch)
-            .await
-            .with_context(|| {
-                anyhow!(
-                    "Failed to write batch to parquet file {temp_path} for instance: {instance}",
-                    temp_path = self.temp_path.display(),
-                    instance = self.instance
-                )
-            })?;
-        Ok(())
+    fn next_idx(&mut self) -> u64 {
+        let current = self.issuer;
+        self.issuer += 1;
+        current
     }
 
-    async fn flush_buffer(&mut self) -> AnyResult<()> {
-        if self.buffered_records.is_empty() {
+    async fn flush_run_segment(&mut self) -> AnyResult<()> {
+        if self.run_buffer.is_empty() {
             return Ok(());
         }
-        let records_count = self.buffered_records.len();
-        let instance = self.instance.clone();
-        let record_batch = mapper::records_to_columns(
-            &self.cluster,
-            self.batch_ts,
-            &self.instance,
-            &self.buffered_records,
-        )
-        .with_context(|| {
-            anyhow!(
-                "Failed to convert {records_count} buffered records to columns for instance: {instance}"
-            )
-        })?;
-        self.buffered_records.clear();
-        self.write_batch(record_batch).await?;
+
+        let idx = self.next_idx();
+        let segment_path = self
+            .temp_batch_dir
+            .join(path::run_filename(&self.instance_sanitized, idx));
+
+        // Collect records and write them as an LZ4 streaming run file using bincode + crc32.
+        let records = self.run_buffer.values().cloned().collect_vec();
+        self.run_buffer.clear();
+
+        // Write run file in a blocking task to avoid blocking the async runtime.
+        super::run_lz4::write_run_file_blocking(segment_path.clone(), records.clone())
+            .await
+            .with_context(|| format!("Failed to write run lz4 file: {}", segment_path.display()))?;
+
+        // Track candidate for rolling merge
+        self.candidates.push(segment_path.clone());
+
+        debug!(
+            operation = "parquet_run_lz4_flush_finished",
+            instance = %self.instance,
+            segment = %segment_path.file_name().and_then(|s| s.to_str()).unwrap_or("<unknown>"),
+            rows = records.len(),
+            "Flushed run lz4 segment"
+        );
+
         Ok(())
     }
 }
@@ -209,9 +234,12 @@ impl ParquetChunkWriter {
 #[async_trait::async_trait]
 impl ChunkWriter for ParquetChunkWriter {
     async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()> {
-        self.buffered_records.push(record);
-        if self.buffered_records.len() >= MICRO_BATCH_ROWS {
-            self.flush_buffer().await?;
+        // Feed run buffer (sorted by (db, key))
+        let key = SortKey::from_record(&record);
+        // On duplicate keys, newer record overwrites previous one. This should be rare/non-existent in typical RDB dumps.
+        self.run_buffer.insert(key, record);
+        if self.run_buffer.len() >= self.max_run_rows {
+            self.flush_run_segment().await?;
         }
         Ok(())
     }
@@ -219,30 +247,31 @@ impl ChunkWriter for ParquetChunkWriter {
     async fn finalize_instance(self) -> AnyResult<()> {
         let mut this = self;
 
-        if !this.buffered_records.is_empty() {
-            this.flush_buffer().await?;
+        // Flush tail run segment if any
+        if !this.run_buffer.is_empty() {
+            this.flush_run_segment().await?;
         }
 
-        if let Some(writer) = this.writer {
-            writer.close().await.with_context(|| {
-                format!(
-                    "Failed to close parquet writer for file {temp_path} for instance: {instance}",
-                    temp_path = this.temp_path.display(),
-                    instance = this.instance
-                )
-            })?;
-        }
+        // Ensure deterministic order and perform a single merge into the final Parquet.
+        this.candidates.sort();
+        let merge_ctx = merge::MergeContext {
+            inputs: this.candidates,
+            output: this.final_path.clone(),
+            compression: this.final_compression,
+            cluster: this.cluster.clone(),
+            instance: this.instance.clone(),
+            batch_ts: this.batch_ts,
+        };
 
-        tokio::fs::rename(&this.temp_path, &this.final_path)
+        tokio::task::spawn_blocking(move || merge_ctx.merge())
             .await
             .with_context(|| {
-                format!(
-                    "Failed to rename parquet file from {} to {} for instance: {}",
-                    this.temp_path.display(),
-                    this.final_path.display(),
+                anyhow!(
+                    "Failed to join final merge task for instance {}",
                     this.instance
                 )
-            })?;
+            })??;
+
         Ok(())
     }
 }

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use time::{OffsetDateTime, UtcOffset};
@@ -23,12 +23,42 @@ pub fn make_tmp_batch_dir(name: &str) -> String {
     format!("tmp_{name}")
 }
 
+/// Hadoop-style directory component for cluster
+/// e.g. cluster=my_cluster
+pub fn cluster_dir_name(cluster: &str) -> String {
+    format!("cluster={cluster}")
+}
+
+/// Hadoop-style directory component for final batch directory
+/// e.g. batch=2025-08-14_12-34-56.123Z
+pub fn final_batch_dir_name(batch_slug: &str) -> String {
+    format!("batch={batch_slug}")
+}
+
+/// Hadoop-style directory component for temporary batch directory
+/// e.g. _tmp_batch=2025-08-14_12-34-56.123Z
+pub fn temp_batch_dir_name(batch_slug: &str) -> String {
+    format!("_tmp_batch={batch_slug}")
+}
+
 /// Sanitize instance filename for filesystem compatibility
 /// Handles domains and hostnames with ports
 pub fn sanitize_instance_filename(instance: &str) -> String {
     instance
         .replace(':', "-") // Port separator: host:6379 -> host-6379
         .replace(' ', "_") // Spaces in hostnames
+}
+
+/// Construct run segment filename for an instance with 6-digit zero padding
+/// e.g. <instance>.000000.run for the first run
+pub fn run_filename(instance_sanitized: &str, idx: u64) -> PathBuf {
+    PathBuf::from(format!("{instance_sanitized}.{idx:06}.run.lz4"))
+}
+
+/// Construct final instance parquet filename
+/// e.g. <instance>.parquet
+pub fn final_instance_filename(instance_sanitized: &str) -> String {
+    format!("{instance_sanitized}.parquet")
 }
 
 /// Ensure a directory exists, creating it and all parent directories if necessary
@@ -51,6 +81,23 @@ pub async fn ensure_dir(path: &Path) -> Result<()> {
         path = %path.display(),
         "Directory created successfully"
     );
+
+    Ok(())
+}
+
+/// Atomically finalize a batch directory by renaming the temporary batch dir to the final batch dir
+pub async fn finalize_batch_dir(temp_batch_dir: &Path, final_batch_dir: &Path) -> Result<()> {
+    use anyhow::Context;
+
+    tokio::fs::rename(temp_batch_dir, final_batch_dir)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to rename batch directory from {} to {} (ensure no other process is accessing these files)",
+                temp_batch_dir.display(),
+                final_batch_dir.display()
+            )
+        })?;
 
     Ok(())
 }
@@ -80,6 +127,19 @@ mod tests {
     }
 
     #[test]
+    fn test_hadoop_style_dir_names() {
+        let cluster = cluster_dir_name("prod");
+        assert_eq!(cluster, "cluster=prod");
+
+        let slug = "2025-08-14_12-34-56.123Z";
+        assert_eq!(final_batch_dir_name(slug), "batch=2025-08-14_12-34-56.123Z");
+        assert_eq!(
+            temp_batch_dir_name(slug),
+            "_tmp_batch=2025-08-14_12-34-56.123Z"
+        );
+    }
+
+    #[test]
     fn test_sanitize_instance_filename() {
         // Test IP with port
         let result = sanitize_instance_filename("127.0.0.1:6379");
@@ -104,6 +164,20 @@ mod tests {
         // Test with no special characters
         let result = sanitize_instance_filename("localhost");
         assert_eq!(result, "localhost");
+    }
+
+    #[test]
+    fn test_run_and_final_filenames() {
+        let inst = "node-1-6379";
+        assert_eq!(
+            run_filename(inst, 0),
+            PathBuf::from("node-1-6379.000000.run.lz4")
+        );
+        assert_eq!(
+            run_filename(inst, 42),
+            PathBuf::from("node-1-6379.000042.run.lz4")
+        );
+        assert_eq!(final_instance_filename(inst), "node-1-6379.parquet");
     }
 
     #[tokio::test]

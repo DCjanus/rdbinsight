@@ -43,8 +43,6 @@ redis = { version = "0.32.4", features = [
 ] }
 redis-protocol = { version = "6.0.0", features = ["codec"] }
 reqwest = { version = "0.12.22", features = ["json"] }
-
-# MessagePack serialization for parquet file metadata summary
 rmp-serde = "1.1.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_bytes = "0.11.17"

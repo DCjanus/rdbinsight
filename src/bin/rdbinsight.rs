@@ -222,8 +222,8 @@ struct ParquetOutputArgs {
     compression: ParquetCompression,
 
     /// Max rows per run segment before flushing to disk
-    #[arg(long, default_value_t = 1024 * 128)]
-    run_rows: usize,
+    #[arg(long = "max_run_rows", default_value_t = 1024 * 128)]
+    max_run_rows: usize,
 }
 
 #[derive(Parser)]
@@ -427,7 +427,7 @@ fn dump_command_to_config(
             let parquet_config = ParquetConfig::new(
                 parquet_args.dir,
                 parquet_args.compression,
-                parquet_args.run_rows,
+                parquet_args.max_run_rows,
             )?;
             OutputConfig::Parquet(parquet_config)
         }

@@ -16,7 +16,7 @@ use crate::{
 pub struct ParquetOutput {
     base_dir: PathBuf,
     compression: ParquetCompression,
-    run_rows: usize,
+    max_run_rows: usize,
     cluster: String,
     batch_ts: time::OffsetDateTime,
 }
@@ -25,14 +25,14 @@ impl ParquetOutput {
     pub fn new(
         base_dir: PathBuf,
         compression: ParquetCompression,
-        run_rows: usize,
+        max_run_rows: usize,
         cluster: String,
         batch_ts: time::OffsetDateTime,
     ) -> Self {
         Self {
             base_dir,
             compression,
-            run_rows,
+            max_run_rows,
 
             cluster,
             batch_ts,
@@ -89,7 +89,7 @@ impl Output for ParquetOutput {
             self.temp_batch_dir(),
             final_path,
             self.compression,
-            self.run_rows,
+            self.max_run_rows,
         )
         .await
         .with_context(|| format!("Failed to create Parquet writer for instance: {instance}"))?;
@@ -99,7 +99,7 @@ impl Output for ParquetOutput {
             cluster = %self.cluster,
             instance = %instance,
             instance_sanitized = %sanitized_instance,
-            run_rows = self.run_rows,
+            max_run_rows = self.max_run_rows,
 
             "Initialized Parquet run generation for instance"
         );
@@ -155,7 +155,7 @@ pub struct ParquetChunkWriter {
     batch_ts: time::OffsetDateTime,
     temp_batch_dir: PathBuf,
     final_path: PathBuf,
-    run_rows: usize,
+    max_run_rows: usize,
 
     run_buffer: std::collections::BTreeMap<SortKey, crate::record::Record>,
     final_compression: ParquetCompression,
@@ -173,7 +173,7 @@ impl ParquetChunkWriter {
         temp_batch_dir: PathBuf,
         final_path: PathBuf,
         compression: ParquetCompression,
-        run_rows: usize,
+        max_run_rows: usize,
     ) -> AnyResult<Self> {
         Ok(Self {
             instance,
@@ -182,7 +182,7 @@ impl ParquetChunkWriter {
             batch_ts,
             temp_batch_dir,
             final_path,
-            run_rows,
+            max_run_rows,
 
             run_buffer: std::collections::BTreeMap::new(),
             final_compression: compression,
@@ -238,7 +238,7 @@ impl ChunkWriter for ParquetChunkWriter {
         let key = SortKey::from_record(&record);
         // On duplicate keys, newer record overwrites previous one. This should be rare/non-existent in typical RDB dumps.
         self.run_buffer.insert(key, record);
-        if self.run_buffer.len() >= self.run_rows {
+        if self.run_buffer.len() >= self.max_run_rows {
             self.flush_run_segment().await?;
         }
         Ok(())

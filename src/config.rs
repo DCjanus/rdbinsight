@@ -333,7 +333,11 @@ pub struct ParquetConfig {
 
 impl ParquetConfig {
     /// Create a new ParquetConfig
-    pub fn new(dir: PathBuf, compression: ParquetCompression, max_run_rows: usize) -> AnyResult<Self> {
+    pub fn new(
+        dir: PathBuf,
+        compression: ParquetCompression,
+        max_run_rows: usize,
+    ) -> AnyResult<Self> {
         Ok(Self {
             dir,
             compression,

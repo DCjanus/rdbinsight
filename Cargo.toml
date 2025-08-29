@@ -22,7 +22,6 @@ clickhouse = { git = "https://github.com/ClickHouse/clickhouse-rs.git", features
     "time",
 ] } # relay on https://github.com/ClickHouse/clickhouse-rs/pull/250, not included in v0.13.3
 crc = "3.3.0"
-crc32fast = "1.5.0"
 futures-util = "0.3.31"
 hex = "0.4.3"
 http = "1.3.1"

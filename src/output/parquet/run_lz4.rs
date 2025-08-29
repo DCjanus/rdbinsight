@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use bincode::config::standard;
-use crc32fast::Hasher as Crc32Hasher;
+use crc::{CRC_32_ISO_HDLC, Crc};
 use lz4_flex::frame::FrameEncoder;
 use tracing::debug;
 
@@ -29,9 +29,7 @@ where I: IntoIterator<Item = Record> {
         let payload = bincode::serde::encode_to_vec(&record, standard())?;
         let len = payload.len();
 
-        let mut hasher = Crc32Hasher::new();
-        hasher.update(&payload);
-        let crc = hasher.finalize();
+        let crc = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&payload);
 
         encoder.write_all(&(len as u32).to_be_bytes())?;
         encoder.write_all(&payload)?;
@@ -114,7 +112,7 @@ impl RunReader {
         let crc_read = u32::from_be_bytes(crc_buf);
 
         // Validate CRC
-        let crc_calc = crc32fast::hash(&payload);
+        let crc_calc = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&payload);
         if crc_calc != crc_read {
             return Err(anyhow!(
                 "CRC mismatch for {} at offset {}: expected {}, got {}",

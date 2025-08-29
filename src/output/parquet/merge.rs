@@ -36,10 +36,64 @@ struct Summary {
     pub per_db: HashMap<u64, KeysStatistics>,
     pub per_type: HashMap<RecordType, KeysStatistics>,
     pub top_keys_full: Vec<crate::record::Record>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub codis_slots: Option<Vec<u16>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub redis_slots: Option<Vec<u16>>,
+    pub codis_slots: HashSet<u16>,
+    pub redis_slots: HashSet<u16>,
+    pub top_keys: Vec<crate::record::Record>,
+}
+
+#[allow(dead_code)]
+impl Summary {
+    pub fn new(cluster: String, batch_unix_nanos: i64, instance: String) -> Self {
+        Summary {
+            cluster,
+            batch_unix_nanos,
+            instance,
+            total_key_count: 0,
+            total_size_bytes: 0,
+            per_db: HashMap::new(),
+            per_type: HashMap::new(),
+            top_keys_full: Vec::new(),
+            codis_slots: HashSet::new(),
+            redis_slots: HashSet::new(),
+            top_keys: Vec::new(),
+        }
+    }
+
+    pub fn update_from_record(&mut self, record: &crate::record::Record) {
+        self.total_key_count = self.total_key_count.saturating_add(1);
+        self.total_size_bytes = self.total_size_bytes.saturating_add(record.rdb_size);
+        let db_entry = self.per_db.entry(record.db).or_default();
+        db_entry.key_count = db_entry.key_count.saturating_add(1);
+        db_entry.total_size = db_entry.total_size.saturating_add(record.rdb_size);
+        let type_entry = self.per_type.entry(record.r#type).or_default();
+        type_entry.key_count = type_entry.key_count.saturating_add(1);
+        type_entry.total_size = type_entry.total_size.saturating_add(record.rdb_size);
+        if let Some(s) = record.codis_slot {
+            self.codis_slots.insert(s);
+        }
+        if let Some(s) = record.redis_slot {
+            self.redis_slots.insert(s);
+        }
+
+        self.update_top_keys(record);
+    }
+
+    fn update_top_keys(&mut self, new: &crate::record::Record) {
+        const COUNT: usize = 100;
+
+        if self
+            .top_keys
+            .last()
+            .map(|old| old.rdb_size >= new.rdb_size)
+            .unwrap_or_default()
+        {
+            return;
+        }
+
+        self.top_keys.push(new.clone());
+        self.top_keys.sort_by_key(|r| Reverse(r.rdb_size));
+        self.top_keys.truncate(COUNT);
+    }
 }
 
 pub struct MergeContext {
@@ -86,15 +140,11 @@ impl MergeContext {
 
         let mut writer = Self::create_arrow_writer_for(final_compression, final_file)?;
 
-        // summary accumulation structures
-        let mut total_key_count: u64 = 0;
-        let mut total_size_bytes: u64 = 0;
-        let mut per_db_map: HashMap<u64, KeysStatistics> = HashMap::new();
-        let mut per_type_map: HashMap<RecordType, KeysStatistics> = HashMap::new();
-        let mut top_records: Vec<crate::record::Record> = Vec::new();
-        let mut top_heap: BinaryHeap<Reverse<(u64, usize)>> = BinaryHeap::new();
-        let mut codis_slots_set: HashSet<u16> = HashSet::new();
-        let mut redis_slots_set: HashSet<u16> = HashSet::new();
+        let mut summary = Summary::new(
+            cluster.clone(),
+            batch_ts.unix_timestamp_nanos() as i64,
+            instance.clone(),
+        );
 
         let (mut readers, mut current_records) = Self::open_run_readers(&self.inputs)?;
 
@@ -106,8 +156,8 @@ impl MergeContext {
             }
         }
 
-        let mut batch_buf: Vec<crate::record::Record> = Vec::with_capacity(8 * 1024);
-        let batch_capacity = 8 * 1024;
+        const BATCH_CAPACITY: usize = 8 * 1024;
+        let mut batch_buf: Vec<crate::record::Record> = Vec::with_capacity(BATCH_CAPACITY);
 
         while let Some(item) = heap.pop() {
             let run_idx = item.0.run_idx;
@@ -116,30 +166,7 @@ impl MergeContext {
                 .as_ref()
                 .expect("current record should be present");
 
-            total_key_count = total_key_count.saturating_add(1);
-            total_size_bytes = total_size_bytes.saturating_add(record.rdb_size);
-            let db_entry = per_db_map.entry(record.db).or_default();
-            db_entry.key_count = db_entry.key_count.saturating_add(1);
-            db_entry.total_size = db_entry.total_size.saturating_add(record.rdb_size);
-            let type_entry = per_type_map.entry(record.r#type).or_default();
-            type_entry.key_count = type_entry.key_count.saturating_add(1);
-            type_entry.total_size = type_entry.total_size.saturating_add(record.rdb_size);
-
-            // maintain top-100 by rdb_size
-            let idx_in_top = top_records.len();
-            top_records.push(record.clone());
-            top_heap.push(Reverse((record.rdb_size, idx_in_top)));
-            if top_heap.len() > 100 {
-                top_heap.pop();
-            }
-
-            if let Some(s) = record.codis_slot {
-                codis_slots_set.insert(s);
-            }
-            if let Some(s) = record.redis_slot {
-                redis_slots_set.insert(s);
-            }
-
+            summary.update_from_record(record);
             batch_buf.push(record.clone());
 
             match readers[run_idx].read_next() {
@@ -156,7 +183,7 @@ impl MergeContext {
                 }
             }
 
-            if batch_buf.len() >= batch_capacity {
+            if batch_buf.len() >= BATCH_CAPACITY {
                 Self::flush_batch_buf(&mut writer, &cluster, batch_ts, &instance, &mut batch_buf)?;
             }
         }
@@ -164,41 +191,6 @@ impl MergeContext {
         if !batch_buf.is_empty() {
             Self::flush_batch_buf(&mut writer, &cluster, batch_ts, &instance, &mut batch_buf)?;
         }
-
-        // collect top keys into vec sorted desc by size
-        let mut top_vec: Vec<crate::record::Record> = top_heap
-            .into_iter()
-            .map(|rev| top_records[rev.0.1].clone())
-            .collect();
-        top_vec.sort_by(|a, b| b.rdb_size.cmp(&a.rdb_size));
-
-        let codis_slots = if codis_slots_set.is_empty() {
-            None
-        } else {
-            let mut v: Vec<u16> = codis_slots_set.into_iter().collect();
-            v.sort();
-            Some(v)
-        };
-        let redis_slots = if redis_slots_set.is_empty() {
-            None
-        } else {
-            let mut v: Vec<u16> = redis_slots_set.into_iter().collect();
-            v.sort();
-            Some(v)
-        };
-
-        let summary = Summary {
-            cluster: cluster.clone(),
-            batch_unix_nanos: batch_ts.unix_timestamp_nanos() as i64,
-            instance: instance.clone(),
-            total_key_count,
-            total_size_bytes,
-            per_db: per_db_map,
-            per_type: per_type_map,
-            top_keys_full: top_vec,
-            codis_slots,
-            redis_slots,
-        };
 
         let msgpack = rmp_serde::to_vec_named(&summary).context("Failed to serialize summary")?;
         let b64 = base64::engine::general_purpose::STANDARD.encode(&msgpack);

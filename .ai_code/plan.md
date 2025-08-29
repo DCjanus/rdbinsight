@@ -39,8 +39,8 @@
   - [x] 保留 `merge_fan_in` 参数作为内部 FD 保护的上限（可设置较大默认，如 1024），帮助文案说明“内部可能分批归并”。
 
 ### 验证步骤
-- [ ] `cargo build` 通过。
-- [ ] `--help` 展示的默认值与描述符合预期；run 文件名生成函数返回 `.run.lz4`。
+- [x] `cargo build` 通过。
+- [x] `--help` 展示的默认值与描述符合预期；run 文件名生成函数返回 `.run.lz4`。
 
 ---
 
@@ -49,19 +49,19 @@
 实现同步 I/O 的流式 run 写入器，在 `spawn_blocking` 中运行。
 
 ### 实现步骤
-- [ ] 新增模块（建议）：`src/output/parquet/run_lz4.rs`
-  - [ ] `RunWriter`：基于 `std::fs::File` + `std::io::BufWriter` + `lz4_flex::frame::FrameEncoder`。
-  - [ ] 暴露 `write_record(&mut self, record: &Record) -> Result<()>`，内部：
-    - [ ] `bincode` 序列化为 `payload`；
-    - [ ] 计算 `crc32fast::hash(&payload)`；
-    - [ ] 写入 `len_be_u32 | payload | crc32_be_u32`。
-  - [ ] `finish(self) -> Result<()>`：关闭 `FrameEncoder` 并 flush 底层 writer。
-- [ ] 日志：按规范输出 `operation` 首位，关闭时记录写入的条目数与耗时。
+- [x] 新增模块（建议）：`src/output/parquet/run_lz4.rs`
+  - [x] `RunWriter`：基于 `std::fs::File` + `std::io::BufWriter` + `lz4_flex::frame::FrameEncoder`。
+  - [x] 暴露 `write_record(&mut self, record: &Record) -> Result<()>`，内部：
+    - [x] `bincode` 序列化为 `payload`；
+    - [x] 计算 `crc32fast::hash(&payload)`；
+    - [x] 写入 `len_be_u32 | payload | crc32_be_u32`。
+  - [x] `finish(self) -> Result<()>`：关闭 `FrameEncoder` 并 flush 底层 writer。
+- [x] 日志：按规范输出 `operation` 首位，关闭时记录写入的条目数与耗时。
 - [ ] 在 `tokio::task::spawn_blocking` 中封装对 `RunWriter` 的使用入口，避免阻塞 async runtime。
 
 ### 验证步骤
-- [ ] 单元测试：写入少量 `Record` 到临时文件（非异步），仅验证文件可创建与 `finish` 正常返回。
-- [ ] `cargo clippy` 与 `cargo test` 通过。
+- [x] 单元测试：写入少量 `Record` 到临时文件（非异步），仅验证文件可创建与 `finish` 正常返回。
+- [x] `cargo clippy` 与 `cargo test` 通过。
 
 ---
 

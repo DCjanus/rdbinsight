@@ -14,7 +14,7 @@ async_async_io = "0.2.3"
 axum = "0.8.4"
 backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.22.1"
-bincode = "1"
+bincode = { version = "2.0.1", features = ["serde"] }
 bytes = { version = "1.10.1", features = ["serde"] }
 clap = { version = "4.5.0", features = ["derive", "env"] }
 clap_complete = "4.5.56"

@@ -31,12 +31,12 @@
 规范中间 run 扩展名并更新默认阈值。
 
 ### 实现步骤
-- [ ] 更新 `src/output/parquet/path.rs`：
-  - [ ] 新增/调整 `run_filename(instance_sanitized: &str, idx: u64) -> PathBuf`，返回 `<instance>.<idx:06>.run.lz4`。
-  - [ ] 保留最终文件名 `<instance>.parquet` 逻辑不变。
-- [ ] 更新 `src/config.rs` 与 CLI（`src/bin/rdbinsight.rs`）默认值与帮助：
-  - [ ] 将 `run_rows` 默认值改为 `65536`。
-  - [ ] 保留 `merge_fan_in` 参数作为内部 FD 保护的上限（可设置较大默认，如 1024），帮助文案说明“内部可能分批归并”。
+- [x] 更新 `src/output/parquet/path.rs`：
+  - [x] 新增/调整 `run_filename(instance_sanitized: &str, idx: u64) -> PathBuf`，返回 `<instance>.<idx:06>.run.lz4`。
+  - [x] 保留最终文件名 `<instance>.parquet` 逻辑不变。
+- [x] 更新 `src/config.rs` 与 CLI（`src/bin/rdbinsight.rs`）默认值与帮助：
+  - [x] 将 `run_rows` 默认值改为 `65536`。
+  - [x] 保留 `merge_fan_in` 参数作为内部 FD 保护的上限（可设置较大默认，如 1024），帮助文案说明“内部可能分批归并”。
 
 ### 验证步骤
 - [ ] `cargo build` 通过。

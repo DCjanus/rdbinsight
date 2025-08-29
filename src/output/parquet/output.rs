@@ -22,6 +22,7 @@ pub struct ParquetOutput {
     intermediate_compression: ParquetCompression,
     cluster: String,
     batch_ts: time::OffsetDateTime,
+    #[deprecated(note = "merge_fan_in is deprecated and will be removed in a future release")]
     merge_fan_in: usize,
 }
 
@@ -35,6 +36,12 @@ impl ParquetOutput {
         cluster: String,
         batch_ts: time::OffsetDateTime,
     ) -> Self {
+        // Emit a deprecation warning for observability
+        tracing::warn!(
+            operation = "merge_fan_in_deprecated",
+            merge_fan_in = merge_fan_in,
+            "merge_fan_in is deprecated and will be removed in a future release"
+        );
         Self {
             base_dir,
             compression,

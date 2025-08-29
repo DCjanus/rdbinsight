@@ -52,7 +52,7 @@ pub fn sanitize_instance_filename(instance: &str) -> String {
 /// Construct run segment filename for an instance with 6-digit zero padding
 /// e.g. <instance>.000000.run for the first run
 pub fn run_filename(instance_sanitized: &str, idx: u64) -> PathBuf {
-    PathBuf::from(format!("{instance_sanitized}.{idx:06}.run"))
+    PathBuf::from(format!("{instance_sanitized}.{idx:06}.run.lz4"))
 }
 
 /// Construct final instance parquet filename
@@ -171,11 +171,11 @@ mod tests {
         let inst = "node-1-6379";
         assert_eq!(
             run_filename(inst, 0),
-            PathBuf::from("node-1-6379.000000.run")
+            PathBuf::from("node-1-6379.000000.run.lz4")
         );
         assert_eq!(
             run_filename(inst, 42),
-            PathBuf::from("node-1-6379.000042.run")
+            PathBuf::from("node-1-6379.000042.run.lz4")
         );
         assert_eq!(final_instance_filename(inst), "node-1-6379.parquet");
     }

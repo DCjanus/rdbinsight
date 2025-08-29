@@ -222,16 +222,17 @@ struct ParquetOutputArgs {
     compression: ParquetCompression,
 
     /// Max rows per run segment before flushing to disk
-    /// MVP uses row-based limit; set small in tests to force multiple runs
-    #[arg(long, default_value_t = 100_000)]
+    #[arg(long, default_value_t = 65536)]
     run_rows: usize,
 
     /// Compression algorithm for intermediate run segments
     #[arg(long, value_enum, default_value_t = ParquetCompression::Lz4)]
     intermediate_compression: ParquetCompression,
 
-    /// Maximum fan-in for rolling merges
-    #[arg(long, default_value_t = 32)]
+    /// Maximum fan-in for rolling merges (DEPRECATED; not used in current LZ4 run workflow)
+    /// This flag is kept for backward compatibility and will be removed in a later release.
+    #[deprecated(note = "merge_fan_in is deprecated; internal FD protection is automatic")]
+    #[arg(long, default_value_t = 1024)]
     merge_fan_in: usize,
 }
 

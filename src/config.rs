@@ -332,6 +332,7 @@ pub struct ParquetConfig {
     pub compression: ParquetCompression,
     pub run_rows: usize,
     pub intermediate_compression: ParquetCompression,
+    #[deprecated(note = "merge_fan_in is deprecated and will be removed in a future release")]
     pub merge_fan_in: usize,
 }
 

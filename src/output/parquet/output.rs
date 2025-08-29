@@ -2,8 +2,6 @@ use std::path::PathBuf;
 
 use anyhow::{Context, anyhow};
 use itertools::Itertools;
-use parquet::{arrow::async_writer::AsyncArrowWriter, file::properties::WriterProperties};
-use tokio::fs::File;
 use tracing::{debug, info};
 
 use crate::{
@@ -11,7 +9,7 @@ use crate::{
     helper::AnyResult,
     output::{
         ChunkWriter, ChunkWriterEnum, Output,
-        parquet::{mapper, merge, path},
+        parquet::{merge, path},
     },
 };
 
@@ -228,70 +226,24 @@ impl ParquetChunkWriter {
             .temp_batch_dir
             .join(path::run_filename(&self.instance_sanitized, idx));
 
-        let file = File::create(&segment_path).await.with_context(|| {
-            format!(
-                "Failed to create run segment parquet file: {}",
-                segment_path.display()
-            )
-        })?;
-
-        let schema = std::sync::Arc::new(super::schema::create_redis_record_schema());
-        let sorting_columns = super::schema::create_db_key_sorting_columns(&schema)
-            .map_err(|e| anyhow!("Failed to resolve sorting columns: {e}"))?;
-
-        let props = {
-            let mut builder =
-                match self.intermediate_compression {
-                    ParquetCompression::Zstd => WriterProperties::builder().set_compression(
-                        parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()),
-                    ),
-                    ParquetCompression::Snappy => WriterProperties::builder()
-                        .set_compression(parquet::basic::Compression::SNAPPY),
-                    ParquetCompression::None => WriterProperties::builder()
-                        .set_compression(parquet::basic::Compression::UNCOMPRESSED),
-                    ParquetCompression::Lz4 => WriterProperties::builder()
-                        .set_compression(parquet::basic::Compression::LZ4),
-                };
-            // Mark run segments as sorted by (db ASC, key ASC)
-            builder = builder.set_sorting_columns(Some(sorting_columns));
-            builder.build()
-        };
-
-        let mut run_writer = AsyncArrowWriter::try_new(file, schema, Some(props))
-            .map_err(|e| anyhow!("Failed to create async arrow run writer: {e}"))?;
-
+        // Collect records and write them as an LZ4 streaming run file using bincode + crc32.
         let records = self.run_buffer.values().cloned().collect_vec();
         self.run_buffer.clear();
 
-        for chunk in records.chunks(8192) {
-            let batch =
-                mapper::records_to_columns(&self.cluster, self.batch_ts, &self.instance, chunk)
-                    .context("failed to convert run records to columns")?;
-            run_writer.write(&batch).await.with_context(|| {
-                anyhow!(
-                    "Failed to write run segment parquet file: {}",
-                    segment_path.display()
-                )
-            })?;
-        }
-
-        run_writer.close().await.with_context(|| {
-            format!(
-                "Failed to close run segment parquet writer for file: {}",
-                segment_path.display()
-            )
-        })?;
+        // Write run file in a blocking task to avoid blocking the async runtime.
+        super::run_lz4::write_run_file_blocking(segment_path.clone(), records.clone())
+            .await
+            .with_context(|| format!("Failed to write run lz4 file: {}", segment_path.display()))?;
 
         // Track candidate for rolling merge
         self.candidates.push(segment_path.clone());
 
         debug!(
-            operation = "parquet_run_flushed",
+            operation = "parquet_run_lz4_flush_finished",
             instance = %self.instance,
             segment = %segment_path.file_name().and_then(|s| s.to_str()).unwrap_or("<unknown>"),
             rows = records.len(),
-            compression = ?self.intermediate_compression,
-            "Flushed sorted run segment"
+            "Flushed run lz4 segment"
         );
 
         Ok(())

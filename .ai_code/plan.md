@@ -70,19 +70,19 @@
 实现同步 I/O 的 run 读取器，逐条返回 `Record`。
 
 ### 实现步骤
-- [ ] 在 `run_lz4.rs` 增加：
-  - [ ] `RunReader`：基于 `std::fs::File` + `std::io::BufReader`（建议 128–256 KiB）+ `lz4_flex::frame::FrameDecoder`。
-  - [ ] `read_next(&mut self) -> Result<Option<Record>>`：
-    - [ ] 读取大端 u32 长度、读取 payload、读取大端 CRC32；
-    - [ ] 计算 CRC32 校验并对比；
-    - [ ] 使用 `bincode` 反序列化为 `Record`。
-- [ ] 错误处理：CRC 不匹配/EOF/反序列化错误分别返回明确错误信息（包含文件路径与偏移）。
+- [x] 在 `run_lz4.rs` 增加：
+  - [x] `RunReader`：基于 `std::fs::File` + `std::io::BufReader`（建议 128–256 KiB）+ `lz4_flex::frame::FrameDecoder`。
+  - [x] `read_next(&mut self) -> Result<Option<Record>>`：
+    - [x] 读取大端 u32 长度、读取 payload、读取大端 CRC32；
+    - [x] 计算 CRC32 校验并对比；
+    - [x] 使用 `bincode` 反序列化为 `Record`。
+- [x] 错误处理：CRC 不匹配/EOF/反序列化错误分别返回明确错误信息（包含文件路径与偏移）。
 
 ### 验证步骤
-- [ ] 单元测试：
-  - [ ] Writer 与 Reader 的往返：多条记录 roundtrip 等价。
-  - [ ] 破坏 CRC 一字节，Reader 报错且包含上下文。
-- [ ] `cargo test` 通过。
+- [x] 单元测试：
+  - [x] Writer 与 Reader 的往返：多条记录 roundtrip 等价。
+  - [x] 破坏 CRC 一字节，Reader 报错且包含上下文。
+- [x] `cargo test` 通过。
 
 ---
 

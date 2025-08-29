@@ -50,8 +50,6 @@ where I: IntoIterator<Item = Record> {
     Ok(())
 }
 
-// Placeholder for RunReader to be implemented in next phase
-#[allow(dead_code)]
 pub struct RunReader {
     decoder: lz4_flex::frame::FrameDecoder<BufReader<File>>,
     path: std::path::PathBuf,

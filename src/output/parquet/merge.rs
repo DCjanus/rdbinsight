@@ -1,13 +1,6 @@
 use std::{cmp::Reverse, collections::BinaryHeap, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, anyhow};
-use arrow::{
-    array::{
-        Array, BinaryBuilder, Int32Builder, Int64Builder, StringBuilder,
-        TimestampMillisecondBuilder, TimestampNanosecondBuilder,
-    },
-    record_batch::RecordBatch,
-};
 use parquet::{arrow::ArrowWriter, file::properties::WriterProperties};
 
 use crate::{
@@ -203,125 +196,9 @@ pub struct HeapItem {
     pub run_idx: usize,
 }
 
-#[derive(Clone, Copy)]
-pub struct ColumnIndices {
-    pub db: usize,
-    pub key: usize,
-    pub r#type: usize,
-    pub member_count: usize,
-    pub rdb_size: usize,
-    pub encoding: usize,
-    pub expire_at: usize,
-    pub idle_seconds: usize,
-    pub freq: usize,
-    pub codis_slot: usize,
-    pub redis_slot: usize,
-}
+// ColumnIndices removed — no longer needed
 
-impl ColumnIndices {
-    pub fn new() -> AnyResult<Self> {
-        let schema = Arc::new(schema::create_redis_record_schema());
-
-        Ok(Self {
-            db: schema::find_field_index(&schema, "db").unwrap(),
-            key: schema::find_field_index(&schema, "key").unwrap(),
-            r#type: schema::find_field_index(&schema, "type").unwrap(),
-            member_count: schema::find_field_index(&schema, "member_count").unwrap(),
-            rdb_size: schema::find_field_index(&schema, "rdb_size").unwrap(),
-            encoding: schema::find_field_index(&schema, "encoding").unwrap(),
-            expire_at: schema::find_field_index(&schema, "expire_at").unwrap(),
-            idle_seconds: schema::find_field_index(&schema, "idle_seconds").unwrap(),
-            freq: schema::find_field_index(&schema, "freq").unwrap(),
-            codis_slot: schema::find_field_index(&schema, "codis_slot").unwrap(),
-            redis_slot: schema::find_field_index(&schema, "redis_slot").unwrap(),
-        })
-    }
-}
-
-/// Output builders for constructing Arrow RecordBatch
-pub struct OutputBuilders {
-    pub cluster: StringBuilder,
-    pub batch: TimestampNanosecondBuilder,
-    pub instance: StringBuilder,
-    pub db: Int64Builder,
-    pub key: BinaryBuilder,
-    pub r#type: StringBuilder,
-    pub member_count: Int64Builder,
-    pub rdb_size: Int64Builder,
-    pub encoding: StringBuilder,
-    pub expire_at: TimestampMillisecondBuilder,
-    pub idle_seconds: Int64Builder,
-    pub freq: Int32Builder,
-    pub codis_slot: Int32Builder,
-    pub redis_slot: Int32Builder,
-    pub capacity: usize,
-    pub rows: usize,
-}
-
-impl OutputBuilders {
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            cluster: StringBuilder::with_capacity(capacity, capacity * 8),
-            batch: TimestampNanosecondBuilder::with_capacity(capacity),
-            instance: StringBuilder::with_capacity(capacity, capacity * 8),
-            db: Int64Builder::with_capacity(capacity),
-            key: BinaryBuilder::with_capacity(capacity, capacity * 16),
-            r#type: StringBuilder::with_capacity(capacity, capacity * 6),
-            member_count: Int64Builder::with_capacity(capacity),
-            rdb_size: Int64Builder::with_capacity(capacity),
-            encoding: StringBuilder::with_capacity(capacity, capacity * 6),
-            expire_at: TimestampMillisecondBuilder::with_capacity(capacity),
-            idle_seconds: Int64Builder::with_capacity(capacity),
-            freq: Int32Builder::with_capacity(capacity),
-            codis_slot: Int32Builder::with_capacity(capacity),
-            redis_slot: Int32Builder::with_capacity(capacity),
-            capacity,
-            rows: 0,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.rows
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.rows == 0
-    }
-
-    pub fn is_full(&self) -> bool {
-        self.len() >= self.capacity
-    }
-
-    pub fn finish_to_batch(&mut self) -> AnyResult<RecordBatch> {
-        let schema = Arc::new(schema::create_redis_record_schema());
-        let arrays: Vec<Arc<dyn Array>> = vec![
-            Arc::new(self.cluster.finish()),
-            Arc::new(self.batch.finish().with_timezone("UTC")),
-            Arc::new(self.instance.finish()),
-            Arc::new(self.db.finish()),
-            Arc::new(self.key.finish()),
-            Arc::new(self.r#type.finish()),
-            Arc::new(self.member_count.finish()),
-            Arc::new(self.rdb_size.finish()),
-            Arc::new(self.encoding.finish()),
-            Arc::new(self.expire_at.finish().with_timezone("UTC")),
-            Arc::new(self.idle_seconds.finish()),
-            Arc::new(self.freq.finish()),
-            Arc::new(self.codis_slot.finish()),
-            Arc::new(self.redis_slot.finish()),
-        ];
-        let batch = RecordBatch::try_new(schema, arrays)?;
-
-        // Reset builders for reuse
-        self.reset();
-        Ok(batch)
-    }
-
-    pub fn reset(&mut self) {
-        // Reinitialize all builders
-        *self = Self::with_capacity(self.capacity);
-    }
-}
+// OutputBuilders removed — no longer needed
 
 #[cfg(test)]
 mod tests {
@@ -394,47 +271,7 @@ mod tests {
         assert_eq!(popped.0.key, b"key3");
     }
 
-    #[test]
-    fn test_column_indices_new() {
-        // Test ColumnIndices creation
-        let indices = ColumnIndices::new().unwrap();
+    // ColumnIndices tests removed
 
-        // Verify all required fields have valid indices
-        assert!(indices.db < 20); // Reasonable upper limit for column count
-        assert!(indices.key < 20);
-        assert!(indices.r#type < 20);
-        assert!(indices.member_count < 20);
-        assert!(indices.rdb_size < 20);
-        assert!(indices.encoding < 20);
-        assert!(indices.expire_at < 20);
-        assert!(indices.idle_seconds < 20);
-        assert!(indices.freq < 20);
-        assert!(indices.codis_slot < 20);
-        assert!(indices.redis_slot < 20);
-    }
-
-    #[test]
-    fn test_output_builders_capacity() {
-        let capacity = 1000;
-        let builders = OutputBuilders::with_capacity(capacity);
-
-        assert_eq!(builders.capacity, capacity);
-        assert_eq!(builders.len(), 0);
-        assert!(!builders.is_full());
-    }
-
-    #[test]
-    fn test_output_builders_is_full() {
-        let capacity = 10;
-        let mut builders = OutputBuilders::with_capacity(capacity);
-
-        // Initial state should not be full and should be empty
-        assert!(!builders.is_full());
-        assert!(builders.is_empty());
-
-        // Manually set rows to reach capacity
-        builders.rows = capacity;
-        assert!(builders.is_full());
-        assert!(!builders.is_empty());
-    }
+    // OutputBuilders tests removed
 }

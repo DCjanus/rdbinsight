@@ -117,3 +117,4 @@ ORDER BY key_cnt DESC;
 
 - [ ] 使用 testcontainers 构建 Redis Cluster 集成测试，验证集群场景下的数据解析准确性；
 - [ ] 使用 testcontainers 创建 Codis 集群测试环境（基于 `pikadb/codis:v3.5.5` 镜像），确保 Codis 兼容性；
+- [ ] 使用 DuckDB 实现当 Parquet 元数据缺失或版本不兼容时的降级报告生成逻辑（作为后备方案）。

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use anyhow::Result;
 use bytes::Bytes;
 use crc::{CRC_32_ISO_HDLC, Crc};
-use rdbinsight::report::querier::{
+use rdbinsight::report::model::{
     BigKey, ClusterIssues, DbAggregate, InstanceAggregate, PrefixAggregate, ReportData,
     TopKeyRecord, TypeAggregate,
 };

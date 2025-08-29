@@ -73,7 +73,6 @@ impl MergeContext {
             }
         }
 
-        let _field_indices = ColumnIndices::new()?; // unused for run_lz4 append but keep for parity
         let mut batch_buf: Vec<crate::record::Record> = Vec::with_capacity(8 * 1024);
         let batch_capacity = 8 * 1024;
 
@@ -85,10 +84,8 @@ impl MergeContext {
                 .as_ref()
                 .expect("current record should be present");
 
-            // Buffer record for batch conversion
             batch_buf.push(record.clone());
 
-            // advance this reader
             match readers[run_idx].read_next() {
                 Ok(Some(next_rec)) => {
                     current_records[run_idx] = Some(next_rec);
@@ -145,7 +142,6 @@ impl MergeContext {
         Ok(())
     }
 
-    // Helper: construct ArrowWriter with sorting columns and properties
     fn create_arrow_writer_for(
         compression: ParquetCompression,
         file: std::fs::File,
@@ -195,7 +191,6 @@ impl MergeContext {
         Ok((readers, current_records))
     }
 
-    // Helper: convert buffered records into RecordBatch and write
     fn flush_batch_buf(
         writer: &mut ArrowWriter<std::fs::File>,
         cluster: &str,

@@ -281,36 +281,8 @@ struct GenCompletionArgs {
     shell: Option<Shell>,
 }
 
-// Try to release freed heap memory back to the OS. `malloc_trim` is available on
-// Linux/glibc; for other platforms this is a no-op.
-#[cfg(target_os = "linux")]
-fn do_malloc_trim() {
-    unsafe extern "C" {
-        fn malloc_trim(pad: usize) -> i32;
-    }
-
-    // SAFETY: calling external C function; ignore return value
-    unsafe {
-        let _ = malloc_trim(0);
-    }
-    info!("Attempted to release freed heap memory back to the OS");
-}
-
-#[cfg(not(target_os = "linux"))]
-fn do_malloc_trim() {}
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    std::thread::Builder::new()
-        .name("malloc_trim_bg".to_string())
-        .spawn(|| {
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                do_malloc_trim();
-            }
-        })
-        .expect("Failed to spawn malloc_trim background thread");
-
     let main_cli = MainCli::parse();
 
     let default_directive = if main_cli.verbose { "debug" } else { "info" };

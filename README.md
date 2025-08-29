@@ -120,3 +120,4 @@ The query-based workflow removes the need for Redis-side commands, and similar t
 
 - [ ] Use testcontainers to build Redis Cluster integration tests and verify parsing accuracy in cluster scenarios.
 - [ ] Use testcontainers to create a Codis cluster test environment (based on the `pikadb/codis:v3.5.5` image) to ensure compatibility.
+- [ ] Implement DuckDB-based fallback report generation for Parquet when metadata is missing or version is incompatible.

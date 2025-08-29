@@ -272,6 +272,28 @@ impl ChunkWriter for ParquetChunkWriter {
                 )
             })??;
 
+        // Attempt to release freed heap memory back to the OS on supported platforms.
+        // This is beneficial after large merges to reduce resident set size.
+        do_malloc_trim();
+
         Ok(())
     }
 }
+
+// Try to release freed heap memory back to the OS. `malloc_trim` is available on
+// Linux/glibc; for other platforms this is a no-op.
+#[cfg(target_os = "linux")]
+fn do_malloc_trim() {
+    unsafe extern "C" {
+        fn malloc_trim(pad: usize) -> i32;
+    }
+
+    // SAFETY: calling external C function; ignore return value
+    unsafe {
+        let _ = malloc_trim(0);
+    }
+    info!("Attempted to release freed heap memory back to the OS");
+}
+
+#[cfg(not(target_os = "linux"))]
+fn do_malloc_trim() {}

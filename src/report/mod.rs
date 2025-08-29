@@ -5,6 +5,7 @@ use clickhouse::Row;
 use serde::Deserialize;
 use time::OffsetDateTime;
 
+pub mod model;
 pub mod querier;
 
 use querier::ClickHouseQuerier;
@@ -34,7 +35,7 @@ impl ReportGenerator {
         })
     }
 
-    pub async fn generate_data(&self) -> Result<querier::ReportData> {
+    pub async fn generate_data(&self) -> Result<model::ReportData> {
         tracing::info!(
             operation = "report_generation_start",
             cluster = %self.cluster,

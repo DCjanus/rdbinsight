@@ -10,14 +10,14 @@
 ## 阶段一：抽象统一接口与数据模型上移
 
 ### 实现步骤
-- [ ] 新建 `src/report/model.rs`，将 `ReportData` 及相关结构（`DbAggregate`、`TypeAggregate`、`InstanceAggregate`、`TopKeyRecord`、`PrefixAggregate`、`ClusterIssues`、`BigKey`）迁移至该模块（保持序列化字段与现有模板一致）。
-- [ ] 新建 trait `ReportDataProvider`（单一方法 `async fn generate_report_data(&self) -> AnyResult<ReportData>`）。
-- [ ] 迁移 `report::querier` 中对 `ReportData` 的引用到 `report::model`。
-- [ ] 修改 `ReportGenerator` 使其依赖 `ReportDataProvider`，保留模板注入与输出逻辑不变。
+- [x] 新建 `src/report/model.rs`，将 `ReportData` 及相关结构（`DbAggregate`、`TypeAggregate`、`InstanceAggregate`、`TopKeyRecord`、`PrefixAggregate`、`ClusterIssues`、`BigKey`）迁移至该模块（保持序列化字段与现有模板一致）。
+- [x] 新建 trait `ReportDataProvider`（单一方法 `async fn generate_report_data(&self) -> AnyResult<ReportData>`）。
+- [x] 迁移 `report::querier` 中对 `ReportData` 的引用到 `report::model`。
+- [x] 修改 `ReportGenerator` 使其依赖 `ReportDataProvider`，保留模板注入与输出逻辑不变。
 
 ### 验证步骤
-- [ ] 编译通过，无 clippy/lint 新增告警。
-- [ ] 现有 ClickHouse 报告路径的单元/集成测试仍然通过（如有）。
+- [x] 编译通过，无 clippy/lint 新增告警。
+- [x] 现有 ClickHouse 报告路径的单元/集成测试仍然通过（如有）。
 
 ---
 

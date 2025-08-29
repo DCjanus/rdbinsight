@@ -24,8 +24,7 @@
   - 设计目的：将常用聚合与 Top 信息预先存入 Parquet 文件的 key-value metadata，显著降低报告生成时的扫描与解码量。
   - 版本与兼容：
     - 写入键：`rdbinsight.meta.version = "1"`（字符串形式），遇到非 "1" 版本或缺失时，报告生成直接报错并退出，提示用户使用由本工具生成的 Parquet（后续如支持降级/回退再扩展）。
-    - 编码声明键：`rdbinsight.meta.encoding = "msgpack"`（后续如变更编码可递增或更换值）。
-    - 元数据主体键：`rdbinsight.meta.summary.b64`（MessagePack 二进制经 Base64 编码后的 UTF-8 字符串）。
+    - 元数据主体键：`rdbinsight.meta.summary.b64_msgpack`（MessagePack 二进制经 Base64 编码后的 UTF-8 字符串）。
   - 元数据结构（每个实例文件内，按 MessagePack 编码）：
     - `cluster`: String（冗余存储）
     - `batch_unix_nanos`: i64（UTC，Unix 纪元纳秒，用于批次标识与一致性校验）
@@ -103,7 +102,7 @@
     - 借助元数据避免对非必要列与非必要文件范围的扫描；先用元数据统计进行行组剪枝，仅选取候选 row groups；主扫描仅 `{ key, rdb_size }`，通过 Row Filter 按 db 过滤，无需读取 `db` 列；动态前缀使用固定阈值过滤无需维护额外堆结构。
 
 - 版本管理与错误处理
-  - 读取报告时严格校验 `rdbinsight.meta.version == "1"` 与 `rdbinsight.meta.encoding == "msgpack"` 且存在 `rdbinsight.meta.summary.b64`；不满足则报错并退出（当前版本不做降级回退）。
+  - 读取报告时严格校验 `rdbinsight.meta.version == "1"` 且存在 `rdbinsight.meta.summary.b64_msgpack`；不满足则报错并退出（当前版本不做降级回退）。
   - 同时强校验 Parquet 文件包含 Page/Column/Offset Index 及 `db` 列的 row-group/page 级 min/max 统计；缺失则报错退出。
   - 如后续扩展元数据结构，版本递增；读取端按版本做严格匹配。
   - 未来可能的降级路径（暂不实现）：在缺失元数据或版本不匹配时，使用通用 OLAP 引擎（如 DuckDB）执行等价扫描逻辑作为回退。

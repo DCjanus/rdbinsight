@@ -23,7 +23,7 @@ use crate::{
 };
 
 /// Redis data type variants
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordType {
     String,

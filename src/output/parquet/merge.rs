@@ -31,21 +31,11 @@ pub struct MergeContext {
 }
 
 impl MergeContext {
-    // `merge_once_delete_inputs_on_success` removed: parquet run files are no longer used.
-    // Use `merge_run_lz4_once_delete_inputs_on_success` (synchronous) instead and call it
-    // from an async context with `tokio::task::spawn_blocking`.
-
-    /// Synchronous merge for a set of `.run.lz4` inputs into a final Parquet file.
-    /// This performs k-way merge by opening each run with `RunReader`, keeping one
-    /// record per run in memory, and streaming merged rows into an `ArrowWriter`.
-    /// On success, all input run files are deleted. Callers should run this inside
-    /// `tokio::task::spawn_blocking` to avoid blocking async runtime.
-    pub fn merge_run_lz4_once_delete_inputs_on_success(self) -> AnyResult<()> {
+    pub fn merge(self) -> AnyResult<()> {
         let _input_count = self.inputs.len();
 
         if self.inputs.is_empty() {
-            // Reuse existing helper to create an empty Parquet output synchronously
-            self.create_empty_output_sync()?;
+            self.create_empty_output()?;
             return Ok(());
         }
 
@@ -141,29 +131,7 @@ impl MergeContext {
         Ok(())
     }
 
-    // Synchronous helper to create an empty Parquet file. This encapsulates the
-    // logic so both async and sync merge paths can reuse the same implementation.
-    fn create_empty_output_sync(&self) -> AnyResult<()> {
-        let schema_arc = Arc::new(schema::create_redis_record_schema());
-        let sorting_columns = schema::create_db_key_sorting_columns(&schema_arc)
-            .map_err(|e| anyhow!("Failed to create sorting columns: {e}"))?;
-
-        let mut props_builder = match self.compression {
-            ParquetCompression::Zstd => WriterProperties::builder().set_compression(
-                parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()),
-            ),
-            ParquetCompression::Snappy => {
-                WriterProperties::builder().set_compression(parquet::basic::Compression::SNAPPY)
-            }
-            ParquetCompression::None => WriterProperties::builder()
-                .set_compression(parquet::basic::Compression::UNCOMPRESSED),
-            ParquetCompression::Lz4 => {
-                WriterProperties::builder().set_compression(parquet::basic::Compression::LZ4)
-            }
-        };
-        props_builder = props_builder.set_sorting_columns(Some(sorting_columns));
-        let props = props_builder.build();
-
+    fn create_empty_output(&self) -> AnyResult<()> {
         let file = std::fs::File::create(&self.output).with_context(|| {
             anyhow!(
                 "Failed to create empty parquet file: {}",

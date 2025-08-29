@@ -315,7 +315,6 @@ impl OutputConfig {
                     parquet_config.dir.clone(),
                     parquet_config.compression,
                     parquet_config.run_rows,
-                    parquet_config.intermediate_compression,
                     cluster,
                     batch_ts,
                 );
@@ -330,22 +329,15 @@ pub struct ParquetConfig {
     pub dir: PathBuf,
     pub compression: ParquetCompression,
     pub run_rows: usize,
-    pub intermediate_compression: ParquetCompression,
 }
 
 impl ParquetConfig {
     /// Create a new ParquetConfig
-    pub fn new(
-        dir: PathBuf,
-        compression: ParquetCompression,
-        run_rows: usize,
-        intermediate_compression: ParquetCompression,
-    ) -> AnyResult<Self> {
+    pub fn new(dir: PathBuf, compression: ParquetCompression, run_rows: usize) -> AnyResult<Self> {
         Ok(Self {
             dir,
             compression,
             run_rows,
-            intermediate_compression,
         })
     }
 
@@ -357,8 +349,6 @@ impl ParquetConfig {
             "run_rows must be greater than 0, got: {}",
             self.run_rows
         );
-        // `merge_fan_in` removed: no validation required for it anymore
-
         Ok(())
     }
 }

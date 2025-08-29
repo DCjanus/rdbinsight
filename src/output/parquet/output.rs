@@ -17,7 +17,6 @@ pub struct ParquetOutput {
     base_dir: PathBuf,
     compression: ParquetCompression,
     run_rows: usize,
-    intermediate_compression: ParquetCompression,
     cluster: String,
     batch_ts: time::OffsetDateTime,
 }
@@ -27,7 +26,7 @@ impl ParquetOutput {
         base_dir: PathBuf,
         compression: ParquetCompression,
         run_rows: usize,
-        intermediate_compression: ParquetCompression,
+
         cluster: String,
         batch_ts: time::OffsetDateTime,
     ) -> Self {
@@ -35,7 +34,7 @@ impl ParquetOutput {
             base_dir,
             compression,
             run_rows,
-            intermediate_compression,
+
             cluster,
             batch_ts,
         }
@@ -92,7 +91,6 @@ impl Output for ParquetOutput {
             final_path,
             self.compression,
             self.run_rows,
-            self.intermediate_compression,
         )
         .await
         .with_context(|| format!("Failed to create Parquet writer for instance: {instance}"))?;
@@ -103,7 +101,7 @@ impl Output for ParquetOutput {
             instance = %instance,
             instance_sanitized = %sanitized_instance,
             run_rows = self.run_rows,
-            intermediate_compression = ?self.intermediate_compression,
+
             "Initialized Parquet run generation for instance"
         );
 
@@ -159,7 +157,7 @@ pub struct ParquetChunkWriter {
     temp_batch_dir: PathBuf,
     final_path: PathBuf,
     run_rows: usize,
-    intermediate_compression: ParquetCompression,
+
     run_buffer: std::collections::BTreeMap<SortKey, crate::record::Record>,
     final_compression: ParquetCompression,
     issuer: u64,
@@ -177,8 +175,6 @@ impl ParquetChunkWriter {
         final_path: PathBuf,
         compression: ParquetCompression,
         run_rows: usize,
-        intermediate_compression: ParquetCompression,
-        
     ) -> AnyResult<Self> {
         Ok(Self {
             instance,
@@ -188,7 +184,7 @@ impl ParquetChunkWriter {
             temp_batch_dir,
             final_path,
             run_rows,
-            intermediate_compression,
+
             run_buffer: std::collections::BTreeMap::new(),
             final_compression: compression,
             issuer: 0,
@@ -268,16 +264,14 @@ impl ChunkWriter for ParquetChunkWriter {
             batch_ts: this.batch_ts,
         };
 
-        tokio::task::spawn_blocking(move || {
-            merge_ctx.merge_run_lz4_once_delete_inputs_on_success()
-        })
-        .await
-        .with_context(|| {
-            anyhow!(
-                "Failed to join final merge task for instance {}",
-                this.instance
-            )
-        })??;
+        tokio::task::spawn_blocking(move || merge_ctx.merge())
+            .await
+            .with_context(|| {
+                anyhow!(
+                    "Failed to join final merge task for instance {}",
+                    this.instance
+                )
+            })??;
 
         Ok(())
     }

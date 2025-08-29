@@ -224,12 +224,6 @@ struct ParquetOutputArgs {
     /// Max rows per run segment before flushing to disk
     #[arg(long, default_value_t = 65536)]
     run_rows: usize,
-
-    /// Compression algorithm for intermediate run segments
-    #[arg(long, value_enum, default_value_t = ParquetCompression::Lz4)]
-    intermediate_compression: ParquetCompression,
-
-    // `merge_fan_in` flag removed: internal FD protection is automatic
 }
 
 #[derive(Parser)]
@@ -434,7 +428,6 @@ fn dump_command_to_config(
                 parquet_args.dir,
                 parquet_args.compression,
                 parquet_args.run_rows,
-                parquet_args.intermediate_compression,
             )?;
             OutputConfig::Parquet(parquet_config)
         }

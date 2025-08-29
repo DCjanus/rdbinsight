@@ -14,7 +14,11 @@ use parquet::{
     file::properties::WriterProperties,
 };
 
-use crate::{config::ParquetCompression, helper::AnyResult, output::parquet::schema};
+use crate::{
+    config::ParquetCompression,
+    helper::AnyResult,
+    output::parquet::{mapper::records_to_columns, run_lz4::RunReader, schema},
+};
 
 /// Merge context for a single merge execution (k-way merge, delete inputs on success)
 pub struct MergeContext {
@@ -29,7 +33,7 @@ pub struct MergeContext {
 impl MergeContext {
     /// Execute one merge: read `inputs`, write to `output`. On success, delete all `inputs`.
     pub async fn merge_once_delete_inputs_on_success(self) -> AnyResult<()> {
-        let input_count = self.inputs.len();
+        let _input_count = self.inputs.len();
 
         if self.inputs.is_empty() {
             self.create_empty_output().await?;
@@ -45,9 +49,8 @@ impl MergeContext {
 
         tokio::task::spawn_blocking(move || {
             // Writer
-            let final_file = std::fs::File::create(&final_path).with_context(|| {
-                format!("Failed to create final parquet file: {}", final_path.display())
-            })?;
+            let final_file = std::fs::File::create(&final_path)
+                .with_context(|| anyhow!("Failed to create final parquet file: {}", final_path.display()))?;
 
             let schema_arc = Arc::new(schema::create_redis_record_schema());
             let sorting_columns = schema::create_db_key_sorting_columns(&schema_arc)
@@ -132,16 +135,14 @@ impl MergeContext {
             Ok::<_, anyhow::Error>(())
         })
         .await
-        .with_context(|| {
-            format!(
-                "Failed to join merge task (cluster={cluster}, instance={instance}, inputs={input_count}, output={output}, compression={compression:?})",
-                cluster = self.cluster,
-                instance = self.instance,
-                input_count = input_count,
-                output = self.output.display(),
-                compression = self.compression,
-            )
-        })??;
+        .with_context(|| anyhow!(
+            "Failed to join merge task (cluster={}, instance={}, inputs={}, output={}, compression={:?})",
+            self.cluster,
+            self.instance,
+            _input_count,
+            self.output.display(),
+            self.compression
+        ))??;
 
         // Delete inputs only after successful close of output
         for seg in self.inputs {
@@ -151,7 +152,115 @@ impl MergeContext {
         Ok(())
     }
 
-    async fn create_empty_output(&self) -> AnyResult<()> {
+    /// Synchronous merge for a set of `.run.lz4` inputs into a final Parquet file.
+    /// This performs k-way merge by opening each run with `RunReader`, keeping one
+    /// record per run in memory, and streaming merged rows into an `ArrowWriter`.
+    /// On success, all input run files are deleted. Callers should run this inside
+    /// `tokio::task::spawn_blocking` to avoid blocking async runtime.
+    pub fn merge_run_lz4_once_delete_inputs_on_success(self) -> AnyResult<()> {
+        let _input_count = self.inputs.len();
+
+        if self.inputs.is_empty() {
+            // Reuse existing helper to create an empty Parquet output synchronously
+            self.create_empty_output_sync()?;
+            return Ok(());
+        }
+
+        // Writer
+        let final_path = self.output.clone();
+        let final_compression = self.compression;
+        let cluster = self.cluster.clone();
+        let instance = self.instance.clone();
+        let batch_ts = self.batch_ts;
+
+        let final_file = std::fs::File::create(&final_path).with_context(|| {
+            anyhow!(
+                "Failed to create final parquet file: {}",
+                final_path.display()
+            )
+        })?;
+
+        let mut writer = Self::create_arrow_writer_for(final_compression, final_file)?;
+
+        // Open run readers and initialize heap
+        let (mut readers, mut current_records) = Self::open_run_readers(&self.inputs)?;
+
+        let mut heap: BinaryHeap<Reverse<HeapItem>> = BinaryHeap::new();
+        for (idx, opt_rec) in current_records.iter().enumerate() {
+            if let Some(rec) = opt_rec {
+                let key_bytes = match &rec.key {
+                    crate::parser::core::raw::RDBStr::Str(bytes) => bytes.to_vec(),
+                    crate::parser::core::raw::RDBStr::Int(v) => v.to_string().into_bytes(),
+                };
+                heap.push(Reverse(HeapItem {
+                    db: rec.db as i64,
+                    key: key_bytes,
+                    run_idx: idx,
+                }));
+            }
+        }
+
+        let _field_indices = ColumnIndices::new()?; // unused for run_lz4 append but keep for parity
+        let mut batch_buf: Vec<crate::record::Record> = Vec::with_capacity(8 * 1024);
+        let batch_capacity = 8 * 1024;
+
+        // Merge loop
+        while let Some(item) = heap.pop() {
+            let run_idx = item.0.run_idx;
+            // take current record
+            let record = current_records[run_idx]
+                .as_ref()
+                .expect("current record should be present");
+
+            // Buffer record for batch conversion
+            batch_buf.push(record.clone());
+
+            // advance this reader
+            match readers[run_idx].read_next() {
+                Ok(Some(next_rec)) => {
+                    current_records[run_idx] = Some(next_rec);
+                    let key_bytes = match &current_records[run_idx].as_ref().unwrap().key {
+                        crate::parser::core::raw::RDBStr::Str(bytes) => bytes.to_vec(),
+                        crate::parser::core::raw::RDBStr::Int(v) => v.to_string().into_bytes(),
+                    };
+                    heap.push(Reverse(HeapItem {
+                        db: current_records[run_idx].as_ref().unwrap().db as i64,
+                        key: key_bytes,
+                        run_idx,
+                    }));
+                }
+                Ok(None) => {
+                    current_records[run_idx] = None;
+                }
+                Err(e) => {
+                    return Err(e).with_context(|| anyhow!("Failed to read from run {}", run_idx));
+                }
+            }
+
+            if batch_buf.len() >= batch_capacity {
+                Self::flush_batch_buf(&mut writer, &cluster, batch_ts, &instance, &mut batch_buf)?;
+            }
+        }
+
+        if !batch_buf.is_empty() {
+            Self::flush_batch_buf(&mut writer, &cluster, batch_ts, &instance, &mut batch_buf)?;
+        }
+
+        writer
+            .close()
+            .map_err(|e| anyhow!("Failed to close final parquet writer: {e}"))?;
+
+        // Delete inputs only after successful close of output
+        for seg in self.inputs {
+            let _ = std::fs::remove_file(&seg);
+        }
+
+        Ok(())
+    }
+
+    // Synchronous helper to create an empty Parquet file. This encapsulates the
+    // logic so both async and sync merge paths can reuse the same implementation.
+    fn create_empty_output_sync(&self) -> AnyResult<()> {
         let schema_arc = Arc::new(schema::create_redis_record_schema());
         let sorting_columns = schema::create_db_key_sorting_columns(&schema_arc)
             .map_err(|e| anyhow!("Failed to create sorting columns: {e}"))?;
@@ -173,16 +282,90 @@ impl MergeContext {
         let props = props_builder.build();
 
         let file = std::fs::File::create(&self.output).with_context(|| {
-            format!(
+            anyhow!(
                 "Failed to create empty parquet file: {}",
                 self.output.display()
             )
         })?;
-        let writer = ArrowWriter::try_new(file, schema_arc, Some(props))
-            .map_err(|e| anyhow!("Failed to create ArrowWriter for empty file: {e}"))?;
+        let writer = Self::create_arrow_writer_for(self.compression, file)?;
         writer
             .close()
             .map_err(|e| anyhow!("Failed to close empty parquet writer: {e}"))?;
+        Ok(())
+    }
+
+    async fn create_empty_output(&self) -> AnyResult<()> {
+        // Delegate to synchronous helper for now (keeps previous behavior).
+        self.create_empty_output_sync()
+    }
+
+    // Helper: construct ArrowWriter with sorting columns and properties
+    fn create_arrow_writer_for(
+        compression: ParquetCompression,
+        file: std::fs::File,
+    ) -> AnyResult<ArrowWriter<std::fs::File>> {
+        let schema_arc = Arc::new(schema::create_redis_record_schema());
+        let sorting_columns = schema::create_db_key_sorting_columns(&schema_arc)
+            .map_err(|e| anyhow!("Failed to create sorting columns: {e}"))?;
+
+        let mut props_builder = match compression {
+            ParquetCompression::Zstd => WriterProperties::builder().set_compression(
+                parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()),
+            ),
+            ParquetCompression::Snappy => {
+                WriterProperties::builder().set_compression(parquet::basic::Compression::SNAPPY)
+            }
+            ParquetCompression::None => WriterProperties::builder()
+                .set_compression(parquet::basic::Compression::UNCOMPRESSED),
+            ParquetCompression::Lz4 => {
+                WriterProperties::builder().set_compression(parquet::basic::Compression::LZ4)
+            }
+        };
+        props_builder = props_builder.set_sorting_columns(Some(sorting_columns));
+        props_builder = props_builder.set_max_row_group_size(8192);
+        let props = props_builder.build();
+
+        let writer = ArrowWriter::try_new(file, schema_arc, Some(props))
+            .map_err(|e| anyhow!("Failed to create ArrowWriter: {e}"))?;
+        Ok(writer)
+    }
+
+    // Helper: open run readers and read first record for each
+    fn open_run_readers(
+        inputs: &[PathBuf],
+    ) -> AnyResult<(Vec<RunReader>, Vec<Option<crate::record::Record>>)> {
+        let mut readers = Vec::with_capacity(inputs.len());
+        let mut current_records = Vec::with_capacity(inputs.len());
+        for path in inputs {
+            let mut r = RunReader::open(path).with_context(|| {
+                anyhow!("Failed to open run file for reading: {}", path.display())
+            })?;
+            let rec = r
+                .read_next()
+                .with_context(|| anyhow!("Failed to read first record from: {}", path.display()))?;
+            readers.push(r);
+            current_records.push(rec);
+        }
+        Ok((readers, current_records))
+    }
+
+    // Helper: convert buffered records into RecordBatch and write
+    fn flush_batch_buf(
+        writer: &mut ArrowWriter<std::fs::File>,
+        cluster: &str,
+        batch_ts: time::OffsetDateTime,
+        instance: &str,
+        batch_buf: &mut Vec<crate::record::Record>,
+    ) -> AnyResult<()> {
+        if batch_buf.is_empty() {
+            return Ok(());
+        }
+        let batch = records_to_columns(cluster, batch_ts, instance, batch_buf)
+            .map_err(|e| anyhow!("Failed to convert records to columns: {e}"))?;
+        writer
+            .write(&batch)
+            .map_err(|e| anyhow!("Failed to write merged batch: {e}"))?;
+        batch_buf.clear();
         Ok(())
     }
 }
@@ -205,18 +388,18 @@ pub struct RunCursor {
 impl RunCursor {
     pub fn new(path: &PathBuf) -> AnyResult<Self> {
         let file = std::fs::File::open(path).with_context(|| {
-            format!("Failed to open run segment for reading: {}", path.display())
+            anyhow!("Failed to open run segment for reading: {}", path.display())
         })?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .with_context(|| {
-                format!(
+                anyhow!(
                     "Failed to create ParquetRecordBatchReaderBuilder for {}",
                     path.display()
                 )
             })?
             .with_batch_size(1024);
         let reader = builder.build().with_context(|| {
-            format!(
+            anyhow!(
                 "Failed to build ParquetRecordBatchReader for {}",
                 path.display()
             )

@@ -56,8 +56,8 @@
     - [x] 计算 `crc32fast::hash(&payload)`；
     - [x] 写入 `len_be_u32 | payload | crc32_be_u32`。
   - [x] `finish(self) -> Result<()>`：关闭 `FrameEncoder` 并 flush 底层 writer。
-- [x] 日志：按规范输出 `operation` 首位，关闭时记录写入的条目数与耗时。
-- [ ] 在 `tokio::task::spawn_blocking` 中封装对 `RunWriter` 的使用入口，避免阻塞 async runtime。
+  - [x] 日志：按规范输出 `operation` 首位，关闭时记录写入的条目数与耗时。
+  - [x] 在 `tokio::task::spawn_blocking` 中封装对 `RunWriter` 的使用入口，避免阻塞 async runtime。
 
 ### 验证步骤
 - [x] 单元测试：写入少量 `Record` 到临时文件（非异步），仅验证文件可创建与 `finish` 正常返回。
@@ -91,26 +91,26 @@
 用 LZ4 run 取代 Parquet run；finalize 阶段进行流式 k 路归并并写最终 Parquet。
 
 ### 实现步骤
-- [ ] 更新 `src/output/parquet/output.rs`：
-  - [ ] 在 `ParquetChunkWriter` 中：
-    - [ ] `flush_run_segment`：当 `run_rows` 达到阈值时，使用 `spawn_blocking` + `RunWriter` 将 `BTreeMap` 升序条目逐条写入 `<instance>.<idx:06>.run.lz4`，清空内存并登记到 `candidates`。
-    - [ ] `finalize_instance`：
-      - [ ] 在 `spawn_blocking` 中执行归并；
-      - [ ] 为每个候选构建 `RunReader`，初始化堆（键为 `(db asc, key asc)`）；
-      - [ ] 循环弹出最小项，填充 Arrow builders（`cluster`/`instance`/`batch_ts` 常量列），按 8K–16K 批量写 `ArrowWriter`；
-      - [ ] `WriterProperties` 设置完整 `sorting_columns = schema::create_db_key_sorting_columns(...)`；
-      - [ ] 关闭输出后删除 `.run.lz4`；
-      - [ ] 记录耗时、rows/s、MB/s 等日志（`operation` 首位）。
-  - [ ] 保留/复用现有 `SortKey` 与 `BTreeMap` 聚合逻辑与命名风格。
-- [ ] 保留 `merge_fan_in` 作为 FD 保护上限：若候选数 > 上限，分批归并输出中间 `.run.lz4` 后再归并（内部实现，对外透明）。
+- [x] 更新 `src/output/parquet/output.rs`：
+  - [x] 在 `ParquetChunkWriter` 中：
+    - [x] `flush_run_segment`：当 `run_rows` 达到阈值时，使用 `spawn_blocking` + `RunWriter` 将 `BTreeMap` 升序条目逐条写入 `<instance>.<idx:06>.run.lz4`，清空内存并将该 run 路径加入候选集合。
+    - [x] `finalize_instance`：
+      - [x] 在 `spawn_blocking` 中执行归并；
+      - [x] 为每个候选构建 `RunReader`，初始化堆（键为 `(db asc, key asc)`）；
+      - [x] 循环弹出最小项，填充 Arrow builders（`cluster`/`instance`/`batch_ts` 常量列），按 8K–16K 批量写 `ArrowWriter`；
+      - [x] `WriterProperties` 设置完整 `sorting_columns = schema::create_db_key_sorting_columns(...)`；
+      - [x] 关闭输出后删除 `.run.lz4`；
+      - [x] 记录耗时、rows/s、MB/s 等日志（`operation` 首位）。
+  - [x] 保留/复用现有 `SortKey` 与 `BTreeMap` 聚合逻辑与命名风格。
+- [ ] 保留 `merge_fan_in` 作为 FD 保护上限：若候选数 > 上限，分批归并输出中间 `.run.lz4`，再归并这些临时产物直至单一输出（内部实现，对外透明）。
 
 ### 验证步骤
-- [ ] 集成测试：
-  - [ ] 设置较小 `run_rows`（如 64/128）强制产生多个 `.run.lz4`，运行到 finalize；
-  - [ ] 验证最终 `<instance>.parquet` 存在、`(db,key)` 全局有序，且 `sorting_columns` 完整；
-  - [ ] 目录下不再残留 `.run.lz4`；
-  - [ ] 日志包含归并输入规模与速率信息。
-- [ ] `just test` 通过。
+- [x] 集成测试：
+  - [x] 设置较小 `run_rows`（如 64/128）强制产生多个 `.run.lz4`，运行到 finalize；
+  - [x] 验证最终 `<instance>.parquet` 存在、`(db,key)` 全局有序，且 `sorting_columns` 完整；
+  - [x] 目录下不再残留 `.run.lz4`；
+  - [x] 日志包含归并输入规模与速率信息。
+- [x] `just test` 通过。
 
 ---
 

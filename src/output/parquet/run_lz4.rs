@@ -26,16 +26,13 @@ where I: IntoIterator<Item = Record> {
     let start = Instant::now();
 
     for record in records {
-        // serialize with bincode
         let payload = bincode::serde::encode_to_vec(&record, standard())?;
         let len = payload.len();
 
-        // crc32
         let mut hasher = Crc32Hasher::new();
         hasher.update(&payload);
         let crc = hasher.finalize();
 
-        // write len_be_u32 | payload | crc32_be_u32
         encoder.write_all(&(len as u32).to_be_bytes())?;
         encoder.write_all(&payload)?;
         encoder.write_all(&crc.to_be_bytes())?;

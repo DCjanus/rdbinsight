@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, collections::BinaryHeap, path::PathBuf, sync::Arc};
+use std::{cmp::Reverse, collections::BinaryHeap, path::PathBuf, sync::{Arc, OnceLock}};
 
 use anyhow::{Context, anyhow};
 use arrow::{
@@ -28,6 +28,17 @@ pub struct MergeContext {
     pub cluster: String,
     pub instance: String,
     pub batch_ts: time::OffsetDateTime,
+}
+
+// Global semaphore to limit concurrent Parquet merge/write operations to 1.
+// Lazily initialize using `OnceLock` and provide an async helper to acquire a permit.
+static PARQUET_MERGE_SEM: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+
+/// Acquire an owned permit for the Parquet merge semaphore.
+/// Await this in async contexts before performing heavy Parquet merge/write.
+pub async fn acquire_merge_permit() -> tokio::sync::OwnedSemaphorePermit {
+    let sem = PARQUET_MERGE_SEM.get_or_init(|| tokio::sync::Semaphore::new(1));
+    sem.acquire_owned().await.expect("semaphore closed")
 }
 
 impl MergeContext {

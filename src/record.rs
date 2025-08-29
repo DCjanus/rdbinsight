@@ -25,7 +25,6 @@ use crate::{
 /// Redis data type variants
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-
 pub enum RecordType {
     String,
     List,
@@ -39,7 +38,6 @@ pub enum RecordType {
 /// Encoding information for different Redis data types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-
 pub enum RecordEncoding {
     String(StringEncoding),
     List(ListEncoding),

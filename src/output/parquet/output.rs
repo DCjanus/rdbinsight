@@ -26,7 +26,6 @@ impl ParquetOutput {
         base_dir: PathBuf,
         compression: ParquetCompression,
         run_rows: usize,
-
         cluster: String,
         batch_ts: time::OffsetDateTime,
     ) -> Self {

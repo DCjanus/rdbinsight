@@ -7,126 +7,154 @@
 
 ---
 
-## 阶段一：路径与命名更新（.run 扩展名，6 位零填充）
+## 阶段一：依赖与数据模型（serde 序列化）
 
-将 Run 分段与滚动产物统一命名为 `<instance>.<idx:06>.run`（内容为 Parquet），最终文件为 `<instance>.parquet`。
+为 LZ4 流式 run 与 bincode 序列化准备依赖，并为数据结构添加序列化派生。
 
 ### 实现步骤
-- [x] 更新 `src/output/parquet/path.rs`：
-  - [x] 新增/调整生成 run 文件名的函数：`run_filename(instance_sanitized: &str, idx: u64) -> PathBuf`，返回 `<instance>.<idx:06>.run`；
-  - [x] 保留/更新最终文件名函数，保证 `<instance>.parquet` 不变；
-  - [x] 路径相关日志使用统一的 helper 输出。
-- [x] 更新 `src/output/parquet/output.rs`：
-  - [x] `ParquetChunkWriter::flush_run_segment` 改为使用新的 `run_filename`，写出 `.run`（内容为 Parquet），并设置完整 `sorting_columns`；
-  - [x] 移除对旧的 `*.000N.parquet` 命名的依赖。
+- [ ] 使用命令添加依赖（避免手工改 `Cargo.toml`）：
+  - [ ] `cargo add serde --features derive`
+  - [ ] `cargo add bincode`
+  - [ ] `cargo add lz4_flex`
+  - [ ] `cargo add crc32fast`
+- [ ] 为 `src/record.rs` 中的 `Record`、相关枚举与 `src/parser/core/raw.rs` 中的 `RDBStr` 添加 `Serialize`/`Deserialize` 派生。
+- [ ] 确认不引入不必要的 `Clone`/`Copy`；遵循现有命名与风格（日志/注释用英文）。
 
 ### 验证步骤
-- [x] 编译与 Lint：`cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo build` 通过。
-- [x] 人工运行一次最小化 dump（或单元测试中的模拟）后检查临时目录，确认生成的文件名符合 `<instance>.<idx:06>.run` 约定，最终文件仍为 `<instance>.parquet`。
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` 通过；`cargo build` 通过。
+- [ ] 简单创建/序列化/反序列化一个 `Record`（单元测试），验证 serde 派生生效。
 
 ---
 
-## 阶段二：MergeContext 重构为“一次合并”的执行器
+## 阶段二：路径与配置更新（.run.lz4 与默认 run_rows=64K）
 
-`MergeContext` 接受一组输入与一个输出，完成一次 k（≤F）路归并；合并成功后删除本次输入。
+规范中间 run 扩展名并更新默认阈值。
 
 ### 实现步骤
-- [x] 重构 `src/output/parquet/merge.rs`：
-  - [x] 定义新的 `MergeContext { inputs: Vec<PathBuf>, output: PathBuf, compression: ParquetCompression, ... }` 构造方式；
-  - [x] 提供 `merge_once_delete_inputs_on_success(self) -> AnyResult<()>`：
-    - [x] 使用最小堆进行 k 路归并，读取 `inputs`，写入 `output`；
-    - [x] `ArrowWriter::WriterProperties` 设置完整 `sorting_columns = schema::create_db_key_sorting_columns`；
-    - [x] 合并完成并成功 close 后，删除 `inputs`；失败则不删除；
-    - [x] 保持在 `spawn_blocking` 中执行合并，避免阻塞 async runtime；
-  - [x] 保留/复用现有 `RunCursor`、`OutputBuilders` 与堆逻辑；必要时抽取共用方法；
-  - [x] 移除/废弃旧的“全量一次性合并”入口（基于 run_count 的路径）。
+- [ ] 更新 `src/output/parquet/path.rs`：
+  - [ ] 新增/调整 `run_filename(instance_sanitized: &str, idx: u64) -> PathBuf`，返回 `<instance>.<idx:06>.run.lz4`。
+  - [ ] 保留最终文件名 `<instance>.parquet` 逻辑不变。
+- [ ] 更新 `src/config.rs` 与 CLI（`src/bin/rdbinsight.rs`）默认值与帮助：
+  - [ ] 将 `run_rows` 默认值改为 `65536`。
+  - [ ] 保留 `merge_fan_in` 参数作为内部 FD 保护的上限（可设置较大默认，如 1024），帮助文案说明“内部可能分批归并”。
 
 ### 验证步骤
-- [x] 为 `merge.rs` 增补单元测试（可使用小型内存构造或测试夹具）：
-  - [x] 构造 2~3 个小型 `.run` 输入，调用 `merge_once_delete_inputs_on_success` 输出到新的 `.run` 或 `.parquet`，验证：
-    - [x] 输出存在且 `(cluster,batch,instance,db,key)` 全局有序；
-    - [x] 输出元数据包含完整 `sorting_columns`；
-    - [x] 输入文件在成功后被删除；
-  - [x] 失败路径（模拟写入失败）时，输入不会被删除（可通过注入错误或临时路径权限控制实现）。
+- [ ] `cargo build` 通过。
+- [ ] `--help` 展示的默认值与描述符合预期；run 文件名生成函数返回 `.run.lz4`。
 
 ---
 
-## 阶段三：编排器（ParquetChunkWriter）引入“发号器 + 滚动 F 路合并”
+## 阶段三：RunWriter（LZ4 Frame + bincode + CRC32）
 
-`ParquetChunkWriter` 负责：产生 `.run` 文件、维护候选集合、在 `finalize_instance` 阶段按 fan-in 进行滚动合并，直到仅剩一个输出（最终为 `<instance>.parquet`）。
+实现同步 I/O 的流式 run 写入器，在 `spawn_blocking` 中运行。
 
 ### 实现步骤
-- [x] 在 `ParquetChunkWriter` 中新增：
-  - [x] `issuer: u64` 发号器，从 0 开始单调递增；
-  - [x] `candidates: Vec<PathBuf>` 用于记录本实例产生的所有 `.run` 路径；
-- [x] `flush_run_segment`：
-  - [x] 使用 `issuer` 生成 `out = <instance>.<idx:06>.run`，写出（内容 Parquet）后将 `out` 推入 `candidates`；
-  - [x] 仍使用 `intermediate_compression` 与完整 `sorting_columns`；
-- [x] `finalize_instance`：
-  - [x] 计算 `fan_in = merge_fan_in`（从配置/CLI 注入）；
-  - [x] 若 `candidates.len() <= fan_in`：调用 `MergeContext` 将全部候选合并输出为 `<instance>.parquet`；
-  - [x] 否则循环：
-    - [x] 取按 idx 升序的最小 `fan_in` 个候选为集合 S；
-    - [x] 生成 `out = <instance>.<idx:06>.run`（由 `issuer` 发号）；
-    - [x] 调用 `MergeContext` 将 S 合并到 `out`（使用 `intermediate_compression`），成功后将 `out` 加回 `candidates` 并移除 S；
-    - [x] 重复直到候选数 ≤ fan-in；最后一次合并输出 `<instance>.parquet`（使用最终 `compression`）。
-  - [x] 日志：按规范输出 `operation`、`fan_in`、选取的最小/最大 idx、`next_idx`、耗时与速率。
+- [ ] 新增模块（建议）：`src/output/parquet/run_lz4.rs`
+  - [ ] `RunWriter`：基于 `std::fs::File` + `std::io::BufWriter` + `lz4_flex::frame::FrameEncoder`。
+  - [ ] 暴露 `write_record(&mut self, record: &Record) -> Result<()>`，内部：
+    - [ ] `bincode` 序列化为 `payload`；
+    - [ ] 计算 `crc32fast::hash(&payload)`；
+    - [ ] 写入 `len_be_u32 | payload | crc32_be_u32`。
+  - [ ] `finish(self) -> Result<()>`：关闭 `FrameEncoder` 并 flush 底层 writer。
+- [ ] 日志：按规范输出 `operation` 首位，关闭时记录写入的条目数与耗时。
+- [ ] 在 `tokio::task::spawn_blocking` 中封装对 `RunWriter` 的使用入口，避免阻塞 async runtime。
 
 ### 验证步骤
-- [x] 增补集成测试：设置较小的 `run_rows` 强制生成多个 `.run`，设置 `merge_fan_in=3`，验证：
-  - [x] 滚动合并过程结束后，实例目录仅剩 `<instance>.parquet`（无 `.run` 残留）；
-  - [x] 最终文件 `(cluster,batch,instance,db,key)` 有序且 `sorting_columns` 完整；
-  - [x] 运行日志包含 fan-in 与 idx 信息（人工检查或基于测试日志捕获）。
+- [ ] 单元测试：写入少量 `Record` 到临时文件（非异步），仅验证文件可创建与 `finish` 正常返回。
+- [ ] `cargo clippy` 与 `cargo test` 通过。
 
 ---
 
-## 阶段四：配置与 CLI 参数接入（merge_fan_in）
+## 阶段四：RunReader（BufReader + LZ4 Frame + bincode + CRC 校验）
 
-加入 `merge_fan_in` 参数（默认 64），用于控制滚动合并的最大 fan-in。
+实现同步 I/O 的 run 读取器，逐条返回 `Record`。
 
 ### 实现步骤
-- [x] 扩展配置结构体与 CLI：
-  - [x] 在 `config.rs` 与 `src/bin/rdbinsight.rs` 的 into-parquet 分支接入 `merge_fan_in`；
-  - [x] 将该参数传递至 `ParquetOutput` 与 `ParquetChunkWriter`；
-- [x] 更新帮助信息与默认值展示；
-- [x] 日志打印 `merge_fan_in` 生效值。
+- [ ] 在 `run_lz4.rs` 增加：
+  - [ ] `RunReader`：基于 `std::fs::File` + `std::io::BufReader`（建议 128–256 KiB）+ `lz4_flex::frame::FrameDecoder`。
+  - [ ] `read_next(&mut self) -> Result<Option<Record>>`：
+    - [ ] 读取大端 u32 长度、读取 payload、读取大端 CRC32；
+    - [ ] 计算 CRC32 校验并对比；
+    - [ ] 使用 `bincode` 反序列化为 `Record`。
+- [ ] 错误处理：CRC 不匹配/EOF/反序列化错误分别返回明确错误信息（包含文件路径与偏移）。
 
 ### 验证步骤
-- [x] `cargo run --bin rdbinsight -- dump ... into-parquet --help` 能看到 `merge_fan_in`；
-- [x] 指定不同 `merge_fan_in` 值时，日志中展示的选取规模与行为符合预期。
+- [ ] 单元测试：
+  - [ ] Writer 与 Reader 的往返：多条记录 roundtrip 等价。
+  - [ ] 破坏 CRC 一字节，Reader 报错且包含上下文。
+- [ ] `cargo test` 通过。
 
 ---
 
-## 阶段五：可观测性与清理保证
+## 阶段五：与 ParquetChunkWriter 集成（flush 与 finalize）
 
-完善关键日志与错误处理，确保合并失败不会误删输入。
+用 LZ4 run 取代 Parquet run；finalize 阶段进行流式 k 路归并并写最终 Parquet。
 
 ### 实现步骤
-- [x] 按日志规范输出：`operation` 字段放首位，随后为上下文字段，描述字符串结尾（遵循项目日志规范记忆）。
-- [x] `MergeContext`：仅在成功 close 输出后删除输入；错误路径保留输入并透出明确错误上下文（实例、输入数量、输出路径、压缩参数）。
-- [x] `ParquetChunkWriter`：在 finalize 编排期间对每轮合并输出耗时、速率、候选数量变化进行记录。
+- [ ] 更新 `src/output/parquet/output.rs`：
+  - [ ] 在 `ParquetChunkWriter` 中：
+    - [ ] `flush_run_segment`：当 `run_rows` 达到阈值时，使用 `spawn_blocking` + `RunWriter` 将 `BTreeMap` 升序条目逐条写入 `<instance>.<idx:06>.run.lz4`，清空内存并登记到 `candidates`。
+    - [ ] `finalize_instance`：
+      - [ ] 在 `spawn_blocking` 中执行归并；
+      - [ ] 为每个候选构建 `RunReader`，初始化堆（键为 `(db asc, key asc)`）；
+      - [ ] 循环弹出最小项，填充 Arrow builders（`cluster`/`instance`/`batch_ts` 常量列），按 8K–16K 批量写 `ArrowWriter`；
+      - [ ] `WriterProperties` 设置完整 `sorting_columns = schema::create_db_key_sorting_columns(...)`；
+      - [ ] 关闭输出后删除 `.run.lz4`；
+      - [ ] 记录耗时、rows/s、MB/s 等日志（`operation` 首位）。
+  - [ ] 保留/复用现有 `SortKey` 与 `BTreeMap` 聚合逻辑与命名风格。
+- [ ] 保留 `merge_fan_in` 作为 FD 保护上限：若候选数 > 上限，分批归并输出中间 `.run.lz4` 后再归并（内部实现，对外透明）。
 
 ### 验证步骤
-- [x] 人工注入失败（例如输出路径不可写或磁盘满）：确认 `MergeContext` 未删除输入，并输出可定位的错误日志；
-- [x] 正常路径结束后，目录下无 `.run` 残留且有 `<instance>.parquet`。
+- [ ] 集成测试：
+  - [ ] 设置较小 `run_rows`（如 64/128）强制产生多个 `.run.lz4`，运行到 finalize；
+  - [ ] 验证最终 `<instance>.parquet` 存在、`(db,key)` 全局有序，且 `sorting_columns` 完整；
+  - [ ] 目录下不再残留 `.run.lz4`；
+  - [ ] 日志包含归并输入规模与速率信息。
+- [ ] `just test` 通过。
 
 ---
 
-## 阶段六：测试完善与文档同步
+## 阶段六：FD 保护与极端规模回归
+
+在大量 run 的情况下，验证不会因 FD 限制或内存问题失败。
 
 ### 实现步骤
-- [ ] 更新/新增测试：
-  - [ ] 路径与命名测试：校验 `.run` 的 6 位零填充与最终文件名；
-  - [ ] 滚动合并正确性测试：多 `.run`、`merge_fan_in` 不同取值；
-  - [ ] Parquet 元数据测试：`sorting_columns` 为完整列集；
-- [ ] 更新 README 与 README.zh_CN 对 Parquet 目录布局与 `merge_fan_in` 参数的简要说明（与英文保持同步）。
+- [ ] 基于 `merge_fan_in` 或动态探测 `ulimit -n`，限制同时打开的 run 个数；
+- [ ] 超出上限时，将超量 run 分批归并为更少的中间 `.run.lz4`，直至可一次性归并为最终 Parquet。
+- [ ] 为分批归并路径补充日志与错误上下文。
 
 ### 验证步骤
-- [ ] 运行全部测试：`just test`（或 `cargo test --all`）通过；
-- [ ] 文档术语与 CLI 帮助一致，示例路径命名与实现一致。
+- [ ] 构造 200+ run（将 `run_rows` 设为极小），验证分批归并能够完成且不超出 FD 上限；
+- [ ] 最终产物与排序/元数据一致，`.run.lz4` 无残留。
+
+---
+
+## 阶段七：文档与 CLI 帮助同步
+
+### 实现步骤
+- [ ] 更新 README.md 与 README.zh_CN：
+  - [ ] 目录布局（`.run.lz4` 临时文件）与流程说明；
+  - [ ] 参数默认值（`run_rows=64K`、`merge_fan_in` 含义）；
+  - [ ] 链接 `lz4_flex` 文档参考：`https://docs.rs/lz4_flex/latest/lz4_flex/`。
+- [ ] 确保英文与中文版本同步更新（术语一致）。
+
+### 验证步骤
+- [ ] 人工校对两份 README 叙述一致且与 CLI 帮助一致。
+
+---
+
+## 阶段八：日志与可观测性完善
+
+### 实现步骤
+- [ ] 确保所有日志调用遵循规范：`operation` 字段首位，描述字符串置尾；
+- [ ] run 写入与归并记录关键维度：输入数量、行数、压缩后/前字节、耗时、rows/s、MB/s；
+- [ ] 错误路径保留输入文件并输出明确上下文（实例、路径、偏移、原因）。
+
+### 验证步骤
+- [ ] 通过测试与手工运行检查日志格式与关键信息是否齐全。
 
 ---
 
 ## 里程碑与范围说明
-- 仅实现：`.run` 命名的滚动 F 路合并、`merge_fan_in` 参数接入、`MergeContext` 作为“一次合并”的执行器并负责成功后的输入删除。
-- 不包含：断点续传、目录扫描恢复、`.tmp` 中间名、P0 读取批次/输出批次调优（可后续评估）。
+- 本次改造将中间 run 替换为 `.run.lz4` 流式格式；finalize 采用流式 k 路归并写最终 Parquet；默认 `run_rows=64K`；内部在 `spawn_blocking` 中以同步 I/O 实现，读端使用 `BufReader`，写端使用 `BufWriter`。
+- 不包含：断点续传、历史 run 兼容与恢复；如中断，请删除 `_tmp_batch=...` 目录并重跑。

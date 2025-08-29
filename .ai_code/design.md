@@ -1,148 +1,109 @@
 # 背景与思路
 
-当前报告的“前缀 ≥1%（用于火焰图）”依赖数据按键有序，以便在低内存下通过局部范围的最短公共前缀（LCP）快速收敛。ClickHouse 方案借助 MergeTree 的后台排序达成此目标；而 Parquet 输出缺乏排序能力，直接在未排序 Parquet 上计算显著前缀会导致高内存与高 CPU 成本。
+现有基于 Parquet 作为中间 run 的多路归并在实践中出现内存峰值不可控的问题：在归并阶段每路至少常驻一个 Arrow RecordBatch，列式解码的中间缓冲（列数组、bitmap、预取等）进一步放大常驻，导致 O(fan_in × batch_rows × 行宽) 的峰值内存。即便限制 fan-in、缩小 batch 也难以从根本上消除这类不可控占用。
 
-为在仅有 Parquet 的环境下也能稳定生成报告，整体方案聚焦于“实例粒度（per-instance）的外部归并排序”，并集成到 dump 流程中：
-- 对每个实例在 dump 过程中生成排序 Run 并立即落盘；
-- 在实例级完成后进行实例内归并，得到“按 (db, key) 有序”的最终文件；
-- 所有实例完成后，将批次级临时目录整体重命名为最终分区目录；
-- 并发度直接复用 `DumpArgs.concurrency`，排序与 dump 共享协程，避免额外 CPU 竞争。
+为解决该问题，本次将“中间 run 文件”替换为极简的 LZ4 流式格式，并在 finalize 阶段做“流式多路归并 → 最终 Parquet”。核心思想：
+- run 写入时流式压缩，记录逐条落盘，无列式批量内存；
+- 归并阶段每路仅常驻 1 条记录（Heap 的当前项），整体内存 ~ O(k)（k 为 run 数量），可显著降低峰值；
+- 最终产物仍为 Parquet，保留完整 sorting_columns 与既有目录结构和原子重命名的可见性；
+- 默认 run_rows（触发一次 flush 的 BTreeMap 条数）提升为 64K，以减少 run 个数与句柄开销。
 
-在实践中，当实例存在大量 Run（如 300+，每 run 10 万行），并发多实例同时归并时，内存会因“每个 run 同时常驻一个解码后的当前批次”而快速膨胀。为显著降低峰值内存，本次在既有方案上引入“分层归并（Hierarchical Merge，限制 fan-in）”，并配合两项 P0 内存优化（较小的读取批次、及时释放已完成 run 的当前批次）。
-
-注：本次范围仍不包含“从 Parquet 生成报告”的具体实现，该部分将作为后续迭代处理。
+压缩/解压采用 lz4_flex 的 Frame 接口以获得流式能力，参考文档：`https://docs.rs/lz4_flex/latest/lz4_flex/`。
 
 
 # 关键设计
 
-## 1. 总体流程与组件（集成到 dump）
-- ParquetSorter（内嵌于 Parquet 输出路径）
-  - 作用：在 dump 流水线内对每个实例执行外部归并排序，输出“实例内按 (db, key) 有序”的 Parquet。
-  - 阶段：
-    1) Run 生成（块级排序）：dump 产生的记录按实例聚合到内存块（按行数阈值），达到阈值后在内存中按 (db, key) 排序，写出临时有序分段文件（`<instance>.000N.parquet`）。
-    2) 实例内分层归并（限制 fan-in，滚动合并）：当该实例的 dump 结束时，若 run 数量 `k > F`（最大 fan-in），采用“最小 idx 优先、滚动 F 路合并”的方式逐步归并，直到仅剩一个文件。
-  - 并发：继续使用 `DumpArgs.concurrency` 控制实例级并发；同一实例内的合并过程串行执行，不额外引入新的并行度。
+## 1. 中间 run 文件格式（.run.lz4）
+- 扩展名：`.run.lz4`（与既有 Parquet `.run` 明确区分）。
+- 容器：LZ4 Frame（流式），使用 `FrameEncoder` 写、`FrameDecoder` 读（参考 lz4_flex 文档）。
+- 文件内容：一系列“记录块（record block）”顺序拼接，不含全局 header/索引（无需断点续传与兼容）。
+- 记录块结构：
+  - `len_be_u32`：payload 长度（大端 u32）。
+  - `payload`：使用 bincode（v1，serde 驱动）序列化的结构体（见下）。
+  - `crc32_be_u32`：CRC32（IEEE）校验，仅覆盖 `payload` 字节。
+- 序列化对象：直接对 `Record`（以及其依赖的 `RDBStr`、枚举等）`derive(Serialize, Deserialize)`，按 bincode 默认配置编码；无需对 `RDBStr::Int` 做特别处理。
+- 排序保证：单个 run 内所有记录按 `(db asc, key asc)` 严格有序。
 
-- 批次最终化（Batch Finalize）
-  - 当且仅当本批次所有实例文件均已生成 `<instance>.parquet` 后，执行一次性目录改名，将临时批次目录重命名为最终分区目录，实现“全有或全无”的可见性。
+## 2. 写 run（集成在 ParquetChunkWriter）
+- 仍在内存中维护 `BTreeMap<SortKey, Record>`（键为 `(db, key)`），累积至阈值触发 flush。
+- 默认阈值 `run_rows = 65536`（64K，可配）。
+- flush 流程：
+  - 申请自增 `idx`，输出路径：`<instance_sanitized>.<idx:06>.run.lz4`，位于本批次临时目录。
+  - 打开 `FrameEncoder`，遍历 `BTreeMap` 的升序条目，逐条：
+    - 使用 bincode 序列化为 `payload`；
+    - 计算 `crc32(payload)`；
+    - 依次写入 `len_be_u32 | payload | crc32_be_u32`；
+  - 成功后清空内存 `BTreeMap`，并将该 run 路径加入候选集合。
+- I/O 模式：在 `tokio::task::spawn_blocking` 中以同步 I/O 执行（`std::fs::File` + `BufWriter` + `FrameEncoder`），避免先聚合到 `Vec<u8>` 带来的瞬时内存峰值；对外接口保持 async，不阻塞 runtime。
+- run 本身不携带 Parquet 元数据（sorting_columns 仅在最终产物设置）。
 
-## 2. 数据与文件布局（Hadoop 分区风格 + 批次级临时目录）
-- 最终根目录：`<output_root>/cluster=<cluster>/batch=<batch>/`
-- 临时根目录（本批次）：`<output_root>/cluster=<cluster>/_tmp_batch=<batch>/`
-  - Run 分段文件（初始与滚动产物）：`<instance>.<idx:06>.run`（内容为 Parquet，`idx` 为零填充 6 位的单调递增整数，由发号器分配）。
-  - 实例最终文件：`<instance>.parquet`（当仅剩 1 个候选文件时直接写入/保留为最终文件）。
-- 压缩策略：
-  - Run 分段与滚动合并产物（`.run`）使用 `intermediate-compression`（默认 lz4），追求低 CPU 与快速周转；
-  - 最终 `<instance>.parquet` 使用 `compression`（默认 zstd）。
-- 最终化（Finalize）：
-  - `rename(<output_root>/cluster=<cluster>/_tmp_batch=<batch>/, <output_root>/cluster=<cluster>/batch=<batch>/)`；
-  - 失败时保留 `_tmp_batch=...` 目录便于排查与整体重试。
+## 3. finalize：流式多路归并到最终 Parquet
+- 输入：所有候选 `.run.lz4`；输出：最终 `<instance>.parquet`（位于 `_tmp_batch=` 目录下）。
+- 执行模型：整个归并过程在 `tokio::task::spawn_blocking` 中以同步 I/O 执行；读端使用 `FrameDecoder`，写端使用 `ArrowWriter`，避免阻塞 async runtime。
+- I/O 细节（读端）：每个输入文件以 `std::fs::File` 打开并通过 `std::io::BufReader` 包装后交给 `FrameDecoder`，减少系统调用与小块读放大；缓冲区建议 128–256 KiB。
+- 读端：
+  - 为每个输入构建 `FrameDecoder` 与 `RunCursor`：按块读取 `len|payload|crc`，校验后使用 bincode 反序列化为 `Record`，缓存“当前记录”。
+  - 仅当该路被从堆取出并前进时，才继续读取下一块；若 EOF，则该路从堆中移除。
+- 归并：
+  - 以 `(db asc, key asc)` 为键建立最小堆（`BinaryHeap<Reverse<HeapItem>>`）。
+  - 循环弹出最小项，将其转换/填充为 Arrow 行（常量列如 `cluster`、`instance`、`batch_ts` 由归并器统一填写），按 8K~16K 行批量写入 ArrowWriter。
+  - ArrowWriter 的 `WriterProperties` 设置完整 `sorting_columns = schema::create_db_key_sorting_columns(...)`，最终压缩算法使用用户配置（默认 zstd）。
+- 资源保护（FD 上限）：
+  - 对外“不限 fan_in”。若 run 数量超出进程可用文件描述符上限，则内部分批执行（例如每组打开 N 路归并生成临时 `.run.lz4`，再归并这些临时产物直至单一输出），该策略对外透明。
+- 成功关闭最终 Parquet 后，删除所有输入 `.run.lz4`。
 
-## 3. 排序键与元数据（按 schema::create_db_key_sorting_columns）
-- 排序键定义：遵循 `schema::create_db_key_sorting_columns` 的列顺序（例如 `cluster`、`batch`、`instance`、`db`、`key` 全部升序）。即便在单个实例文件内前三列完全一致，也仍将其包含在 `sorting_columns` 中以保持一致性与可读性。
-- 元数据：所有 Run 分段与滚动产物（`.run`，Parquet 内容）以及最终文件（`.parquet`）的 Parquet `sorting_columns` 均设置为上述完整列集合。
+## 4. 目录与命名
+- 临时与最终目录沿用既有 Hadoop 风格分区：
+  - 最终根：`<output_root>/cluster=<cluster>/batch=<batch>/`
+  - 临时根：`<output_root>/cluster=<cluster>/_tmp_batch=<batch>/`
+- 文件：
+  - run：`<instance_sanitized>.<idx:06>.run.lz4`
+  - 最终：`<instance_sanitized>.parquet`
+- 批次最终化：全部实例完成后，将 `_tmp_batch=` 原子重命名为 `batch=`。
 
-### 职责与接口（Orchestration 与 MergeContext）
-- ParquetChunkWriter（编排者）：
-  - 维护“发号器（idx issuer）”，单调递增，从 0 开始；
-  - dump 阶段：每次 flush Run 分段时消耗一个 idx，统一生成 `<instance>.<idx:06>.run`（Parquet 内容，方便 ls 区分）；
-  - finalize 阶段（滚动合并编排）：反复从候选集合中取最小 F 个输入，向发号器申请 `next_idx`，计算输出路径 `<instance>.<next_idx:06>.run`（或最终 `<instance>.parquet`），并调用 MergeContext 执行一次 F 路归并；MergeContext 成功返回后，将新输出加入候选；直到仅剩 1 个文件时输出为 `<instance>.parquet` 并结束。
-- MergeContext（执行者）：
-  - 输入：`inputs: Vec<PathBuf>`（`.run` 文件，Parquet 内容）、`output: PathBuf`（`.run` 或 `.parquet`）、压缩/批量/排序元数据等不变配置；
-  - 行为：以最小堆进行 k 路归并，将输入按 `(cluster,batch,instance,db,key)` 升序合并写入 `output`；
-  - 清理：在合并并成功关闭 `output` 后，删除本次合并所消耗的所有 `inputs`；如合并失败不删除，便于排查（本方案不做断点续传）。
+## 5. 参数与默认值
+- `run_rows`：64K（65536；达到即触发一次 flush），可通过 CLI/配置调整。
+- 最终 Parquet `compression`：默认 zstd；中间 run 的压缩固定为 LZ4（frame）。
+- 可选内部限流：根据 ulimit 估算可并行打开的 run 数，超出时自动分批归并（对外不暴露为显式参数）。
 
-## 4. 关键算法、内存模型与 P0 优化
-- 分层归并（限制 fan-in，滚动 F 路合并）
-  - 候选文件发现：
-    - 初始候选由当前运行过程中 `ParquetChunkWriter` 刷新 Run 时产生，统一命名为 `<instance>.<idx:06>.run`（`idx` 来自发号器，单调递增，内容为 Parquet）；
-    - 不进行目录扫描；不考虑历史残留与断点续传场景。
-  - 滚动选择与产出：
-    - 记当前候选集合的最小 F 个文件为集合 S（按 idx 升序取前 F 个）。
-    - 若候选数 `<= F`：这是最后一次合并，合并全部候选到 `<instance>.parquet`；
-    - 否则（候选数 `> F`）：
-      - 由发号器申请 `next_idx = issuer.next()`；
-      - 使用 S 作为输入，执行一次 F 路归并，直接写入 `<instance>.<next_idx:06>.run`；
-      - MergeContext 成功返回后，将新文件加入候选集合，继续循环。
-  - 终止条件与合并次数：
-    - 每次合并用 F 个文件生成 1 个新文件，候选数量减少 `F-1`；
-    - 合并总次数约为 `ceil((k - 1) / (F - 1))`（k 为初始候选数）。
-  - 内存上界：
-    - 任一时刻仅有 F 个 `RunCursor` 活跃，常驻内存从 O(k) 降至 O(F)。
-- P0 优化 1：较小的读取批次
-  - 为每个 `RunCursor` 的 `ParquetRecordBatchReader` 设置较小的 `batch_rows`（建议默认 1024~2048），减少“当前 RecordBatch”的内存占用。
-  - 若底层不支持精确控制，可在写 Run 分段时采用较小的 row group 或输出批次作为替代策略。
-- P0 优化 2：及时释放已完成 run 的当前批次
-  - 当某个 `RunCursor` 读到结尾，应立即清空其 `current RecordBatch` 并让 reader 尽快可被回收，避免完成的 runs 尾部缓冲常驻到全局结束。
-- 输出端批构建器（OutputBuilders）
-  - 可将单批输出容量从 64K 行下调至 8K~16K（可配），进一步回收常驻 builder 内存（次要）。
+## 6. 可观测性与错误处理
+- 日志（遵循规范：`operation` 首位，描述置尾）：
+  - run 写入：`parquet_run_lz4_flush_started/finished`，字段含 `idx`、`rows`、`bytes_uncompressed`、`bytes_compressed`、耗时与速率。
+  - 归并：`parquet_run_lz4_merge_started/finished`，字段含输入数量、输出路径、批量大小、rows/s、MB/s；如触发分批归并，记录每轮的输入/输出规模与耗时。
+  - 批次最终化：`parquet_batch_finalize`（保持不变）。
+- 校验：
+  - 读端对每条 `payload` 做 CRC32 校验，失败报错并中止当前实例合并，保留输入以便排查。
+- 清理：
+  - 仅在最终 Parquet 成功关闭后删除所有 `.run.lz4`；失败路径不删除。
 
-### 滚动合并的命名与清理
-- 命名：
-  - 统一采用 `<instance>.<idx:06>.run`（idx 来自发号器，零填充 6 位，Parquet 内容），便于 ls 区分与排序；
-  - 最后仅保留 `<instance>.parquet` 作为实例最终文件。
-- 清理策略：
-  - 每次合并所消耗的输入文件删除由 MergeContext 在合并成功后执行；
-  - 整个批次均在 `_tmp_batch=` 目录中；不支持断点续传，如中断请删除该目录后重跑。
+## 7. 兼容性与范围
+- run 文件仅为临时产物，无需兼容历史版本、无需断点续传；如中断，删除 `_tmp_batch=...` 后重跑。
+- 最终 Parquet 的 schema、排序、目录结构与可见性保持既有行为。
 
-### 伪代码
-- 初始化：
-  - `issuer = 0`
-  - dump 阶段每次 flush：
-    - `out = format("<inst>.{idx:06}.run", idx = issuer.next())`
-    - `write_run(out)`；`candidates.add(out)`
-- finalize 循环：
-  - `if candidates.len() <= F: merge_to("<inst>.parquet", candidates) // MergeContext merges and deletes inputs; break`
-  - `S = take_first_F(candidates)`
-  - `out = format("<inst>.{idx:06}.run", idx = issuer.next())`
-  - `merge_to(out, S) // MergeContext merges and deletes inputs`
-  - `candidates = (candidates \ S) ∪ {out}`；继续循环
-
-## 5. 运行规模、并发与复杂度
-- 并发：
-  - 实例级并发仍由 `DumpArgs.concurrency` 控制；同一实例内部的滚动合并过程串行，不新增并行度。
-- 复杂度与 IO：
-  - 合并次数 `~ ceil((k - 1) / (F - 1))`；总 IO 相比单轮合并略增，但换取稳定内存峰值与实现简洁。
-- 内存上界（近似）：
-  - 峰值 ≈ F × reader_batch_rows × 平均行宽 + 输出构建器开销；F、reader_batch_rows 可调，便于权衡。
-
-## 6. 失败、清理与可观测性
-- 不支持断点续传；如执行中断，请删除 `_tmp_batch=...` 目录并重新执行该批次。
-- 清理：每次成功合并后立即删除输入段，保持磁盘占用受控；最终仅保留 `<instance>.parquet`。
-- 指标与日志：
-  - 指标：每次合并的输入数量、输出大小、耗时、累计合并次数、当前候选数；
-  - 日志：显示 `fan_in=F`、本轮选择的最小/最大 idx、next_idx、rows/s、MB/s；最终化时长。
-
-## 7. 兼容性
-- 当 `k <= F` 时，行为与现有单轮 k 路归并一致；
-- 所有产物保持 `(cluster,batch,instance,db,key)` 升序与 `sorting_columns` 元数据；
-- 不改变最终可见目录与文件命名（仅中间产物在 `_tmp_batch=` 下可见，完成后均被清理）。
-
-## 后续迭代（非本次范围）
-- 报告生成：
-  - 基于已排序的 Parquet，使用跨实例 k 路归并迭代器获得全局有序视图，执行显著前缀（≥1%）与其他聚合；
-  - 提供 `report from-parquet` 命令；
-  - 可能的优化：利用目录分区与列统计进行剪枝、预读与向量化、并发读写优化等。
-- 更精细的 `run-bytes` 控制与内存探测（global allocator 或 Arrow/Parquet 层的精确内存统计）。
+## 8. 复杂度与资源占用（估算）
+- 内存：~ O(k × 单条记录平均大小 + 输出批构建器)，远小于列式批读的 O(k × batch_rows × 行宽)。
+- IO：相较“Parquet run → Parquet 合并”，取消了中间列式解码与批内存，CPU 更聚焦于 LZ4 与 bincode，整体 IO 更线性与可预测。
 
 
 # 实施建议
 
-- 阶段二：实例内分层归并（限制 fan-in，滚动 F 路合并）
-  - 引入 `merge_fan_in=F`（默认 64），并按“最小 idx 优先、滚动合并”算法实现；
-  - 所有中间产物与最终文件均设置完整的 `sorting_columns`；
-  - 合并完成后清理输入段，最终仅保留 `<instance>.parquet`。
-
-- 阶段三：参数与文档
-  - 新增参数：
-    - `merge_fan_in`：最大 fan-in，默认 64；
-    - `reader_batch_rows`：单 run 读取批次行数上限，默认 1024 或 2048；
-    - `merge_output_batch_rows`：合并输出批次行数上限，默认 16K（可选）。
-  - CLI 与配置文档补充默认值、取值范围、内存/IO 的权衡说明；日志补充 idx 选择与合并迭代信息。
+- 定义与派生：
+  - 为 `Record`、`RDBStr` 及相关枚举 `derive(Serialize, Deserialize)`；引入 `crc32fast` 与 `lz4_flex` 依赖。
+- RunWriter/RunReader：
+  - RunWriter：管理 `FrameEncoder`，提供 `write_record(&Record)`，内部完成 bincode、长度与 CRC 写入；在 `spawn_blocking` 中以同步 I/O 实现（`std::fs::File` + `BufWriter` + `FrameEncoder`）。
+  - RunReader（游标）：管理 `FrameDecoder`，提供 `read_next() -> Option<Record>`，在 `spawn_blocking` 中以同步 I/O 实现（`std::fs::File` + `BufReader` + `FrameDecoder`），内部完成长度读取、payload 和 CRC 校验、bincode 反序列化。
+- ParquetChunkWriter 集成：
+  - 保持 `BTreeMap<SortKey, Record>` 聚合；当达到 `run_rows=64K` 时，创建 `RunWriter` 将所有条目按序写入新 `.run.lz4`，清空内存并登记候选。
+  - `finalize_instance`：在 `spawn_blocking` 中以同步 I/O 执行归并，创建全部 `RunReader`，基于最小堆按 `(db,key)` 归并，批量写 `ArrowWriter` 到最终 Parquet，并在成功后删除候选。
+- 资源保护（可选）：
+  - 若候选过多导致 FD 不足，内部进行分批归并输出临时 `.run.lz4`，直至剩余数量足够一次性归并为最终 Parquet。
+- 测试与验证：
+  - 单元：RunWriter/RunReader 的回归（多条记录序列化/反序列化、CRC 校验错误路径）。
+  - 集成：强制产生多 run（小 `run_rows`），验证最终 Parquet 顺序、sorting_columns 元数据、run 清理；构造大量 run 验证内存峰值与 FD 保护策略。
 
 
 # 建议标题
 
 ```text
-feat(parquet): adopt rolling F-way merge (min-index first) to cap memory and simplify implementation
+feat(parquet): switch run segments to LZ4 streaming with bincode blocks; stream k-way merge; default run_rows=64k
 ```

@@ -1,13 +1,46 @@
-use std::{cmp::Reverse, collections::BinaryHeap, path::PathBuf, sync::Arc};
+use std::{
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use anyhow::{Context, anyhow};
-use parquet::{arrow::ArrowWriter, file::properties::WriterProperties};
+use base64::Engine;
+use parquet::{
+    arrow::ArrowWriter,
+    file::{metadata::KeyValue, properties::WriterProperties},
+};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     config::ParquetCompression,
     helper::AnyResult,
     output::parquet::{mapper::records_to_columns, run_lz4::RunReader, schema},
+    record::RecordType,
 };
+
+#[derive(Serialize, Deserialize, Default)]
+pub struct KeysStatistics {
+    pub key_count: u64,
+    pub total_size: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Summary {
+    pub cluster: String,
+    pub batch_unix_nanos: i64,
+    pub instance: String,
+    pub total_key_count: u64,
+    pub total_size_bytes: u64,
+    pub per_db: HashMap<u64, KeysStatistics>,
+    pub per_type: HashMap<RecordType, KeysStatistics>,
+    pub top_keys_full: Vec<crate::record::Record>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codis_slots: Option<Vec<u16>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redis_slots: Option<Vec<u16>>,
+}
 
 pub struct MergeContext {
     pub inputs: Vec<PathBuf>,
@@ -53,6 +86,16 @@ impl MergeContext {
 
         let mut writer = Self::create_arrow_writer_for(final_compression, final_file)?;
 
+        // summary accumulation structures
+        let mut total_key_count: u64 = 0;
+        let mut total_size_bytes: u64 = 0;
+        let mut per_db_map: HashMap<u64, KeysStatistics> = HashMap::new();
+        let mut per_type_map: HashMap<RecordType, KeysStatistics> = HashMap::new();
+        let mut top_records: Vec<crate::record::Record> = Vec::new();
+        let mut top_heap: BinaryHeap<Reverse<(u64, usize)>> = BinaryHeap::new();
+        let mut codis_slots_set: HashSet<u16> = HashSet::new();
+        let mut redis_slots_set: HashSet<u16> = HashSet::new();
+
         let (mut readers, mut current_records) = Self::open_run_readers(&self.inputs)?;
 
         let mut heap: BinaryHeap<Reverse<HeapItem>> = BinaryHeap::new();
@@ -72,6 +115,31 @@ impl MergeContext {
             let record = current_records[run_idx]
                 .as_ref()
                 .expect("current record should be present");
+
+            total_key_count = total_key_count.saturating_add(1);
+            total_size_bytes = total_size_bytes.saturating_add(record.rdb_size);
+            let db_entry = per_db_map.entry(record.db).or_default();
+            db_entry.key_count = db_entry.key_count.saturating_add(1);
+            db_entry.total_size = db_entry.total_size.saturating_add(record.rdb_size);
+            let type_entry = per_type_map.entry(record.r#type).or_default();
+            type_entry.key_count = type_entry.key_count.saturating_add(1);
+            type_entry.total_size = type_entry.total_size.saturating_add(record.rdb_size);
+
+            // maintain top-100 by rdb_size
+            let idx_in_top = top_records.len();
+            top_records.push(record.clone());
+            top_heap.push(Reverse((record.rdb_size, idx_in_top)));
+            if top_heap.len() > 100 {
+                top_heap.pop();
+            }
+
+            if let Some(s) = record.codis_slot {
+                codis_slots_set.insert(s);
+            }
+            if let Some(s) = record.redis_slot {
+                redis_slots_set.insert(s);
+            }
+
             batch_buf.push(record.clone());
 
             match readers[run_idx].read_next() {
@@ -96,6 +164,53 @@ impl MergeContext {
         if !batch_buf.is_empty() {
             Self::flush_batch_buf(&mut writer, &cluster, batch_ts, &instance, &mut batch_buf)?;
         }
+
+        // collect top keys into vec sorted desc by size
+        let mut top_vec: Vec<crate::record::Record> = top_heap
+            .into_iter()
+            .map(|rev| top_records[rev.0.1].clone())
+            .collect();
+        top_vec.sort_by(|a, b| b.rdb_size.cmp(&a.rdb_size));
+
+        let codis_slots = if codis_slots_set.is_empty() {
+            None
+        } else {
+            let mut v: Vec<u16> = codis_slots_set.into_iter().collect();
+            v.sort();
+            Some(v)
+        };
+        let redis_slots = if redis_slots_set.is_empty() {
+            None
+        } else {
+            let mut v: Vec<u16> = redis_slots_set.into_iter().collect();
+            v.sort();
+            Some(v)
+        };
+
+        let summary = Summary {
+            cluster: cluster.clone(),
+            batch_unix_nanos: batch_ts.unix_timestamp_nanos() as i64,
+            instance: instance.clone(),
+            total_key_count,
+            total_size_bytes,
+            per_db: per_db_map,
+            per_type: per_type_map,
+            top_keys_full: top_vec,
+            codis_slots,
+            redis_slots,
+        };
+
+        let msgpack = rmp_serde::to_vec_named(&summary).context("Failed to serialize summary")?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&msgpack);
+
+        writer.append_key_value_metadata(KeyValue {
+            key: "rdbinsight.meta.version".to_string(),
+            value: Some("1".to_string()),
+        });
+        writer.append_key_value_metadata(KeyValue {
+            key: "rdbinsight.meta.summary.b64_msgpack".to_string(),
+            value: Some(b64),
+        });
 
         writer
             .close()

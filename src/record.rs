@@ -23,7 +23,7 @@ use crate::{
 };
 
 /// Redis data type variants
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordType {
     String,
@@ -33,6 +33,20 @@ pub enum RecordType {
     Hash,
     Stream,
     Module,
+}
+
+impl RecordType {
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            RecordType::String => "string",
+            RecordType::List => "list",
+            RecordType::Set => "set",
+            RecordType::ZSet => "zset",
+            RecordType::Hash => "hash",
+            RecordType::Stream => "stream",
+            RecordType::Module => "module",
+        }
+    }
 }
 
 /// Encoding information for different Redis data types
@@ -96,15 +110,7 @@ impl Record {
 
     /// Get the type as a string for serialization
     pub fn type_name(&self) -> &'static str {
-        match self.r#type {
-            RecordType::String => "string",
-            RecordType::List => "list",
-            RecordType::Set => "set",
-            RecordType::ZSet => "zset",
-            RecordType::Hash => "hash",
-            RecordType::Stream => "stream",
-            RecordType::Module => "module",
-        }
+        self.r#type.type_name()
     }
 
     /// Get the encoding as a string for serialization

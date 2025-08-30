@@ -1,6 +1,7 @@
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap, HashSet},
+    ops::AddAssign,
     path::PathBuf,
     sync::Arc,
 };
@@ -20,54 +21,69 @@ use crate::{
     record::RecordType,
 };
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 pub struct KeysStatistics {
     pub key_count: u64,
     pub total_size: u64,
 }
 
+impl std::ops::AddAssign for KeysStatistics {
+    fn add_assign(&mut self, other: KeysStatistics) {
+        self.key_count += other.key_count;
+        self.total_size += other.total_size;
+    }
+}
+
 #[derive(Serialize, Deserialize)]
-struct Summary {
+pub struct RecordsSummary {
     pub cluster: String,
     pub batch_unix_nanos: i64,
     pub instance: String,
-    pub total_key_count: u64,
-    pub total_size_bytes: u64,
-    pub per_db: HashMap<u64, KeysStatistics>,
-    pub per_type: HashMap<RecordType, KeysStatistics>,
-    pub top_keys_full: Vec<crate::record::Record>,
+    pub keys_statistics: KeysStatistics,
+    pub db_statistics: HashMap<u64, KeysStatistics>,
+    pub type_statistics: HashMap<RecordType, KeysStatistics>,
     pub codis_slots: HashSet<u16>,
     pub redis_slots: HashSet<u16>,
     pub top_keys: Vec<crate::record::Record>,
+    pub big_keys: Vec<crate::record::Record>,
 }
 
 #[allow(dead_code)]
-impl Summary {
+impl RecordsSummary {
     pub fn new(cluster: String, batch_unix_nanos: i64, instance: String) -> Self {
-        Summary {
+        RecordsSummary {
             cluster,
             batch_unix_nanos,
             instance,
-            total_key_count: 0,
-            total_size_bytes: 0,
-            per_db: HashMap::new(),
-            per_type: HashMap::new(),
-            top_keys_full: Vec::new(),
+            keys_statistics: KeysStatistics::default(),
+            db_statistics: HashMap::new(),
+            type_statistics: HashMap::new(),
             codis_slots: HashSet::new(),
             redis_slots: HashSet::new(),
             top_keys: Vec::new(),
+            big_keys: Vec::new(),
         }
     }
 
     pub fn update_from_record(&mut self, record: &crate::record::Record) {
-        self.total_key_count = self.total_key_count.saturating_add(1);
-        self.total_size_bytes = self.total_size_bytes.saturating_add(record.rdb_size);
-        let db_entry = self.per_db.entry(record.db).or_default();
-        db_entry.key_count = db_entry.key_count.saturating_add(1);
-        db_entry.total_size = db_entry.total_size.saturating_add(record.rdb_size);
-        let type_entry = self.per_type.entry(record.r#type).or_default();
-        type_entry.key_count = type_entry.key_count.saturating_add(1);
-        type_entry.total_size = type_entry.total_size.saturating_add(record.rdb_size);
+        self.keys_statistics.add_assign(KeysStatistics {
+            key_count: 1,
+            total_size: record.rdb_size,
+        });
+        self.db_statistics
+            .entry(record.db)
+            .or_default()
+            .add_assign(KeysStatistics {
+                key_count: 1,
+                total_size: record.rdb_size,
+            });
+        self.type_statistics
+            .entry(record.r#type)
+            .or_default()
+            .add_assign(KeysStatistics {
+                key_count: 1,
+                total_size: record.rdb_size,
+            });
         if let Some(s) = record.codis_slot {
             self.codis_slots.insert(s);
         }
@@ -76,6 +92,16 @@ impl Summary {
         }
 
         self.update_top_keys(record);
+        self.update_big_keys(record);
+    }
+
+    fn update_big_keys(&mut self, record: &crate::record::Record) {
+        // Consider a key "big" if it's over 1 GiB, or if it's a String over 1 MiB
+        if record.rdb_size > 1073741824
+            || (record.r#type == RecordType::String && record.rdb_size > 1048576)
+        {
+            self.big_keys.push(record.clone());
+        }
     }
 
     fn update_top_keys(&mut self, new: &crate::record::Record) {
@@ -140,7 +166,7 @@ impl MergeContext {
 
         let mut writer = Self::create_arrow_writer_for(final_compression, final_file)?;
 
-        let mut summary = Summary::new(
+        let mut summary = RecordsSummary::new(
             cluster.clone(),
             batch_ts.unix_timestamp_nanos() as i64,
             instance.clone(),
@@ -196,11 +222,7 @@ impl MergeContext {
         let b64 = base64::engine::general_purpose::STANDARD.encode(&msgpack);
 
         writer.append_key_value_metadata(KeyValue {
-            key: "rdbinsight.meta.version".to_string(),
-            value: Some("1".to_string()),
-        });
-        writer.append_key_value_metadata(KeyValue {
-            key: "rdbinsight.meta.summary.b64_msgpack".to_string(),
+            key: "rdbinsight.meta.v1.summary.msgpack.b64".to_string(),
             value: Some(b64),
         });
 

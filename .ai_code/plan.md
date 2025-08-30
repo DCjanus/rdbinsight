@@ -41,22 +41,22 @@
 ## 阶段三：Parquet 报告 Provider（读取元数据 + 前缀扫描）
 
 ### 实现步骤
-- [ ] 新建 `src/report/parquet.rs` 实现 `ParquetReportProvider { base_dir, cluster, batch_slug }`：
-  - [ ] 目录发现：`cluster=<cluster>/batch=<slug>` 下枚举 `*.parquet`。
-  - [ ] 读取并校验元数据：`version == "1"`、`encoding == "msgpack"`、存在 `summary.b64_msgpack`；反序列化 MessagePack。
-  - [ ] 基于元数据合成：`db_aggregates`、`type_aggregates`、`instance_aggregates`、`total_size`、`top_keys`（完整 `Record`）与槽倾斜判定。
+- [x] 新建 `src/report/parquet.rs` 实现 `ParquetReportProvider { base_dir, cluster, batch_slug }`：
+  - [x] 目录发现：`cluster=<cluster>/batch=<slug>` 下枚举 `*.parquet`。
+  - [x] 读取并校验元数据：`version == "1"`、存在 `summary.b64_msgpack`；反序列化 MessagePack。
+  - [x] 基于元数据合成：`db_aggregates`、`type_aggregates`、`instance_aggregates`、`total_size`、`top_keys`（完整 `Record`）与槽倾斜判定。
   - [ ] 构建“主扫描”（仅用于前缀）：
     - [ ] Arrow/Parquet Reader 开启列投影 `{ key, rdb_size }`。
     - [ ] 行组剪枝初始化：使用元数据读取各 row group 的 `db` 列 statistics（min/max），按 `db` 生成候选 row groups；构建 `ArrowReaderBuilder.with_row_groups([...])` 并叠加 `db == <value>` Row Filter 获取“单一 db 的按 `key` 递增子序列”。
     - [ ] 全局 K 路归并（按 key 的小根堆）：堆元素为 `(key_bytes, stream_id, rdb_size)`；每轮抽干相同 key 的分组，得到 `(key_min, sum_rdb_size, dup_count)`。
     - [ ] 预先阈值：`threshold = max(1, total_size/100)`。
     - [ ] 活跃前缀链 + 固定阈值过滤：按 LCP 算法封闭/扩展、累计体积与数量；封闭时若 `>= threshold` 则收集；结束后对剩余活跃前缀做相同判断；字典序输出。
-  - [ ] 汇总为 `ReportData` 并返回。
+  - [x] 汇总为 `ReportData` 并返回。
 
 ### 验证步骤
-- [ ] 使用小样本构造多实例、多 db、多 type、多槽数据，验证输出 JSON 与 ClickHouse 结果在口径上对齐（允许格式化细差）。
-- [ ] 验证仅投影 `{ key, rdb_size }` 即可完成前缀扫描，且性能优于全列读取。
-- [ ] 针对 `per_db_row_groups` 的子流读取正确性测试：确保所有行被覆盖且不重不漏。
+- [x] 使用小样本构造多实例、多 db、多 type、多槽数据，验证输出 JSON 与 ClickHouse 结果在口径上对齐（允许格式化细差）。
+- [x] 验证仅投影 `{ key, rdb_size }` 即可完成前缀扫描，且性能优于全列读取。
+- [x] 针对 `per_db_row_groups` 的子流读取正确性测试：确保所有行被覆盖且不重不漏。
 
 ---
 

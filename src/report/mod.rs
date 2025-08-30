@@ -6,6 +6,7 @@ use serde::Deserialize;
 use time::OffsetDateTime;
 
 pub mod model;
+pub mod parquet;
 pub mod querier;
 
 use querier::ClickHouseQuerier;

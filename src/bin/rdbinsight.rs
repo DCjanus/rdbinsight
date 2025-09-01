@@ -13,6 +13,7 @@ use anyhow::{Context, Result, anyhow, ensure};
 use clap::{Args, CommandFactory, Parser, Subcommand, value_parser};
 use clap_complete::aot::{Shell, generate as generate_completion};
 use futures_util::{StreamExt, TryStreamExt};
+use mimalloc::MiMalloc;
 use rdbinsight::{
     config::{DumpConfig, ParquetCompression},
     metric,
@@ -24,6 +25,9 @@ use time::OffsetDateTime;
 use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 shadow_rs::shadow!(build);
 

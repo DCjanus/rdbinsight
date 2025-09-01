@@ -8,6 +8,7 @@
 ### Features
 - Parquet: Per-instance external merge sort; one final file per instance sorted by `(db, key)`.
 - Parquet: Configurable compression for runs (LZ4) and final files (ZSTD).
+ - Use `mimalloc` as the global allocator to improve memory management and performance
 
 ## [0.1.0-rc.3]
 

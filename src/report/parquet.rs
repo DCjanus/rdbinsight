@@ -1,13 +1,36 @@
-use std::{cmp::Reverse, collections::HashMap, fs, ops::AddAssign, path::PathBuf};
+use std::{
+    cmp::Reverse,
+    collections::{HashMap, VecDeque},
+    fs,
+    ops::AddAssign,
+    path::{Path, PathBuf},
+};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use arrow::{
+    array::{Array, ArrayAccessor, AsArray, RecordBatch, UInt64Array},
+    datatypes::UInt64Type,
+};
 use base64::Engine;
 use bytes::Bytes;
+use futures_util::StreamExt;
 use itertools::Itertools;
+use parquet::{
+    arrow::{
+        ProjectionMask,
+        arrow_reader::{
+            ArrowPredicateFn, ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder, RowFilter,
+        },
+    },
+    file::statistics::Statistics,
+};
 
 use crate::{
     helper::AnyResult,
-    output::parquet::merge::{KeysStatistics, RecordsSummary},
+    output::parquet::{
+        merge::{KeysStatistics, RecordsSummary},
+        schema::find_field_index,
+    },
     record::RecordType,
     report::model::{
         BigKey, ClusterIssues, DbAggregate, InstanceAggregate, ReportData, ReportDataProvider,
@@ -34,7 +57,7 @@ impl ParquetReportProvider {
     fn find_batch_dir(&self) -> Result<PathBuf> {
         let cluster_dir = self.base_dir.join(format!("cluster={}", self.cluster));
         if !cluster_dir.exists() {
-            anyhow::bail!(
+            bail!(
                 "Cluster directory does not exist: {}",
                 cluster_dir.display()
             );
@@ -45,7 +68,7 @@ impl ParquetReportProvider {
             if candidate.exists() {
                 return Ok(candidate);
             } else {
-                anyhow::bail!("Specified batch slug not found: {}", candidate.display());
+                bail!("Specified batch slug not found: {}", candidate.display());
             }
         }
 
@@ -62,7 +85,7 @@ impl ParquetReportProvider {
             return Ok(cluster_dir.join(latest));
         }
 
-        anyhow::bail!("No batch directories found under {}", cluster_dir.display());
+        bail!("No batch directories found under {}", cluster_dir.display());
     }
 
     fn list_parquet_files(batch_dir: &PathBuf) -> Result<Vec<PathBuf>> {
@@ -84,12 +107,85 @@ impl ParquetReportProvider {
         Ok(files)
     }
 
-    fn parse_file_metadata(path: &PathBuf) -> Result<RecordsSummary> {
-        use std::fs::File;
+    fn build_all_iterators(self) -> AnyResult<Vec<DBElementsIterator>> {
+        let batch_dir = self.find_batch_dir()?;
+        let files = Self::list_parquet_files(&batch_dir)?;
+        let mut iterators = Vec::new();
+        for file in files {
+            let summary = Self::parse_file_metadata(&file)?;
+            for db in summary.db_statistics.keys() {
+                let iterator = Self::db_elements_iterator(&file, *db)?;
+                iterators.push(iterator);
+            }
+        }
+        Ok(iterators)
+    }
 
+    fn db_elements_iterator(path: &Path, target: u64) -> AnyResult<DBElementsIterator> {
+        let file = std::fs::File::open(path).context("open parquet file")?;
+        let mut builder = ParquetRecordBatchReaderBuilder::try_new(file)
+            .context("try new parquet record batch reader builder")?;
+
+        let metadata = builder.metadata().clone();
+        let schema = builder.schema().clone();
+        let parquet_schema = builder.parquet_schema();
+        let db_mask = ProjectionMask::columns(&parquet_schema, ["db"]);
+
+        let key_and_size_mask = ProjectionMask::columns(&parquet_schema, ["key", "rdb_size"]);
+        builder = builder.with_projection(key_and_size_mask);
+
+        let db_col_idx =
+            find_field_index(&schema, "db").ok_or_else(|| anyhow!("missing 'db' field"))?;
+        let mut row_group_idx = vec![];
+        for (idx, rg) in metadata.row_groups().iter().enumerate() {
+            let db_statistics = rg
+                .column(db_col_idx)
+                .statistics()
+                .ok_or_else(|| anyhow!("found 'db' column without statistics"))?;
+            let db_statistics = match db_statistics {
+                Statistics::Int64(s) => s,
+                _ => bail!("unexpected statistics type for 'db' field"),
+            };
+            let min = db_statistics
+                .min_opt()
+                .cloned()
+                .ok_or_else(|| anyhow!("missing min statistics"))?;
+            ensure!(min >= 0, "'db' field must be non-negative");
+            let min = min as u64;
+            let max = db_statistics
+                .max_opt()
+                .cloned()
+                .ok_or_else(|| anyhow!("missing max statistics"))?;
+            ensure!(max >= 0, "'db' field must be non-negative");
+            let max = max as u64;
+            if (min..=max).contains(&target) {
+                row_group_idx.push(idx);
+            }
+        }
+        builder = builder.with_row_groups(row_group_idx);
+
+        let predict = ArrowPredicateFn::new(db_mask, move |batch: RecordBatch| {
+            let scale = UInt64Array::new_scalar(target);
+            let column = batch
+                .column_by_name("db")
+                .expect("no 'db' field")
+                .as_primitive::<UInt64Type>();
+            arrow::compute::kernels::cmp::eq(column, &scale)
+        });
+        builder = builder.with_row_filter(RowFilter::new(vec![Box::new(predict)]));
+
+        let reader = builder.build()?;
+
+        Ok(DBElementsIterator {
+            reader,
+            buffer: VecDeque::new(),
+        })
+    }
+
+    fn parse_file_metadata(path: &Path) -> Result<RecordsSummary> {
         use parquet::file::metadata::{PageIndexPolicy, ParquetMetaDataReader};
 
-        let file = File::open(path)
+        let file = std::fs::File::open(path)
             .with_context(|| format!("Failed to open parquet file: {}", path.display()))?;
         let mut reader =
             ParquetMetaDataReader::new().with_page_index_policy(PageIndexPolicy::Required);
@@ -122,6 +218,52 @@ impl ParquetReportProvider {
         })?;
 
         Ok(summary)
+    }
+}
+
+struct DBElementsIterator {
+    reader: ParquetRecordBatchReader,
+    buffer: VecDeque<(Bytes, u64)>,
+}
+
+impl DBElementsIterator {
+    fn fill(&mut self) -> AnyResult {
+        let batch = match self.reader.next() {
+            None => {
+                return Ok(());
+            }
+            Some(Err(e)) => Err(e)?,
+
+            Some(Ok(batch)) => batch,
+        };
+        let key_array = batch
+            .column_by_name("key")
+            .ok_or_else(|| anyhow!("can't find field 'key' in parquet file"))?
+            .as_binary::<i32>();
+        let size_array = batch
+            .column_by_name("rdb_size")
+            .ok_or_else(|| anyhow!("can't find field 'size' in parquet file"))?
+            .as_primitive::<UInt64Type>();
+        for i in 0..key_array.len() {
+            let key = key_array.value(i);
+            let size = size_array.value(i);
+            self.buffer.push_back((Bytes::copy_from_slice(key), size));
+        }
+        Ok(())
+    }
+}
+
+impl Iterator for DBElementsIterator {
+    type Item = AnyResult<(Bytes, u64)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(head) = self.buffer.pop_front() {
+            return Some(Ok(head));
+        };
+        if let Err(e) = self.fill() {
+            return Some(Err(e));
+        }
+        self.buffer.pop_front().map(Ok)
     }
 }
 

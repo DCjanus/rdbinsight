@@ -107,7 +107,7 @@ impl ParquetReportProvider {
         Ok(files)
     }
 
-    fn build_all_iterators(self) -> AnyResult<Vec<DBElementsIterator>> {
+    fn build_all_iterators(&self) -> AnyResult<Vec<DBElementsIterator>> {
         let batch_dir = self.find_batch_dir()?;
         let files = Self::list_parquet_files(&batch_dir)?;
         let mut iterators = Vec::new();

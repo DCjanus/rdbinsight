@@ -205,7 +205,7 @@ impl ParquetReportProvider {
         })?;
         let summary_b64 = kvs
             .iter()
-            .find(|kv| kv.key == "rdbinsight.meta.summary.b64_msgpack")
+            .find(|kv| kv.key == "rdbinsight.meta.v1.summary.msgpack.b64")
             .ok_or_else(|| anyhow::anyhow!("Missing summary metadata in {}", path.display()))?
             .value
             .clone()

@@ -301,6 +301,7 @@ fn merge_prefix_aggregates(mut aggregates: Vec<PrefixAggregate>) -> Vec<PrefixAg
         out.push(agg);
     }
 
+    out.sort_by(|a, b| a.prefix.cmp(&b.prefix));
     out
 }
 

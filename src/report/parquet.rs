@@ -229,16 +229,15 @@ impl ParquetReportProvider {
         for ret in iter {
             let (key, size) = ret.context("failed to get key and size")?;
 
-            for (closed_prefix, (size_sum, key_count)) in
-                active_prefixes.extract_if(|prefix, _| !key.starts_with(prefix))
+            for (closed_prefix, (size_sum, key_count)) in active_prefixes
+                .extract_if(|prefix, _| !key.starts_with(prefix))
+                .filter(|(_, (size_sum, _))| *size_sum >= threshold)
             {
-                if size_sum >= threshold {
-                    out.push(PrefixAggregate {
-                        prefix: closed_prefix.clone(),
-                        total_size: size_sum,
-                        key_count,
-                    });
-                }
+                out.push(PrefixAggregate {
+                    prefix: closed_prefix.clone(),
+                    total_size: size_sum,
+                    key_count,
+                });
             }
 
             for new_prefix in (1..key.len()).map(|i| key.slice(0..i)) {

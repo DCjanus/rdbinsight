@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-#[cfg(test)]
-use arrow::array::{Int32Array, Int64Array};
 use arrow::{
     array::{
         BinaryArray, StringArray, TimestampMillisecondArray, TimestampNanosecondArray, UInt8Array,
@@ -238,7 +236,7 @@ mod tests {
         let idle_seconds_array = record_batch
             .column(10)
             .as_any()
-            .downcast_ref::<Int64Array>()
+            .downcast_ref::<UInt64Array>()
             .unwrap();
         assert!(idle_seconds_array.is_null(0));
 
@@ -246,7 +244,7 @@ mod tests {
         let freq_array = record_batch
             .column(11)
             .as_any()
-            .downcast_ref::<Int32Array>()
+            .downcast_ref::<UInt8Array>()
             .unwrap();
         assert!(freq_array.is_null(0));
 
@@ -254,7 +252,7 @@ mod tests {
         let codis_slot_array = record_batch
             .column(12)
             .as_any()
-            .downcast_ref::<Int32Array>()
+            .downcast_ref::<UInt16Array>()
             .unwrap();
         assert!(codis_slot_array.is_null(0));
 
@@ -262,7 +260,7 @@ mod tests {
         let redis_slot_array = record_batch
             .column(13)
             .as_any()
-            .downcast_ref::<Int32Array>()
+            .downcast_ref::<UInt16Array>()
             .unwrap();
         assert!(redis_slot_array.is_null(0));
     }
@@ -312,10 +310,10 @@ mod tests {
         let db_array = record_batch
             .column(3)
             .as_any()
-            .downcast_ref::<Int64Array>()
+            .downcast_ref::<UInt64Array>()
             .unwrap();
-        assert_eq!(db_array.value(0), 0);
-        assert_eq!(db_array.value(1), 1);
+        assert_eq!(db_array.value(0), 0u64);
+        assert_eq!(db_array.value(1), 1u64);
 
         // Check key values
         let key_array = record_batch

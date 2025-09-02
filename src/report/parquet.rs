@@ -223,43 +223,85 @@ impl ParquetReportProvider {
     fn scan_top_prefix(&self, total_size: u64) -> AnyResult<Vec<PrefixAggregate>> {
         let threshold = (total_size / 100).max(1);
         let iter = self.build_group_merge_iterator()?;
-        let mut active_prefixes: HashMap<Bytes, (u64, u64)> = HashMap::new();
+        let mut active_prefixes: HashMap<Bytes, PrefixAggregate> = HashMap::new();
         let mut out: Vec<PrefixAggregate> = Vec::new();
 
         for ret in iter {
             let (key, size) = ret.context("failed to get key and size")?;
 
-            for (closed_prefix, (size_sum, key_count)) in active_prefixes
+            let iter = active_prefixes
                 .extract_if(|prefix, _| !key.starts_with(prefix))
-                .filter(|(_, (size_sum, _))| *size_sum >= threshold)
-            {
-                out.push(PrefixAggregate {
-                    prefix: closed_prefix.clone(),
-                    total_size: size_sum,
-                    key_count,
-                });
-            }
+                .filter(|(_, aggregate)| aggregate.total_size >= threshold)
+                .map(|(_, aggregate)| aggregate);
+            out.extend(iter);
 
             for new_prefix in (1..key.len()).map(|i| key.slice(0..i)) {
-                let item = active_prefixes.entry(new_prefix).or_default();
-                item.0 += size;
-                item.1 += 1;
+                let prefix_clone = new_prefix.clone();
+                let item = active_prefixes
+                    .entry(new_prefix)
+                    .or_insert_with(|| PrefixAggregate {
+                        prefix: prefix_clone,
+                        total_size: 0,
+                        key_count: 0,
+                    });
+                item.total_size += size;
+                item.key_count += 1;
             }
         }
 
-        for (prefix, (size_sum, key_count)) in active_prefixes {
-            if size_sum >= threshold {
-                out.push(PrefixAggregate {
-                    prefix: prefix.clone(),
-                    total_size: size_sum,
-                    key_count,
-                });
-            }
-        }
+        out.extend(
+            active_prefixes
+                .into_iter()
+                .filter(|(_, aggregate)| aggregate.total_size >= threshold)
+                .map(|(_, aggregate)| aggregate),
+        );
 
-        out.sort_by_key(|x| Reverse(x.total_size));
-        Ok(out)
+        Ok(merge_prefix_aggregates(out))
     }
+}
+
+/// Merge a list of prefix aggregates for the common case used by this codebase.
+///
+/// Assumptions:
+/// - The input `aggregates` contains no duplicate prefix bytes (each `prefix` is unique).
+/// - Prefixes may be nested (e.g. `b"f"`, `b"fo"`, `b"foo"`) but exact duplicates
+///   are not present.
+///
+/// Behavior:
+/// - Sorts the aggregates by prefix bytes so nested prefixes are adjacent.
+/// - When a longer prefix is a descendant of the previous (shorter) prefix and
+///   they have identical `total_size` and `key_count`, the longer prefix is kept
+///   (we prefer the most-specific prefix) and the shorter is discarded.
+/// - When nested prefixes have different statistics, both entries are kept to
+///   avoid losing information.
+///
+/// This simplified implementation omits handling for exact duplicate prefixes
+/// because callers guarantee uniqueness.
+fn merge_prefix_aggregates(mut aggregates: Vec<PrefixAggregate>) -> Vec<PrefixAggregate> {
+    // Sort by prefix bytes ascending so nested prefixes are adjacent
+    aggregates.sort_by(|a, b| a.prefix.cmp(&b.prefix));
+
+    let mut out: Vec<PrefixAggregate> = Vec::new();
+
+    for agg in aggregates.into_iter() {
+        if let Some(last) = out.last_mut() {
+            // If current prefix is a descendant (longer) of the last prefix
+            if agg.prefix.as_ref().starts_with(last.prefix.as_ref()) {
+                // If stats are identical, prefer the longer (agg) and replace last
+                if agg.total_size == last.total_size && agg.key_count == last.key_count {
+                    *last = agg;
+                    continue;
+                }
+                // Different stats -> keep both
+                out.push(agg);
+                continue;
+            }
+        }
+
+        out.push(agg);
+    }
+
+    out
 }
 
 struct DBElementsIterator {
@@ -611,5 +653,58 @@ mod tests {
             Bytes::from_static(b"b"),
             Bytes::from_static(b"c"),
         ]);
+    }
+    fn make_prefix(p: &'static [u8], total_size: u64, key_count: u64) -> PrefixAggregate {
+        PrefixAggregate {
+            prefix: Bytes::from_static(p),
+            total_size,
+            key_count,
+        }
+    }
+
+    #[test]
+    fn test_merge_prefix_aggregates_cases() {
+        struct Case {
+            name: &'static str,
+            input: Vec<PrefixAggregate>,
+            expect: Vec<(&'static [u8], u64, u64)>,
+        }
+
+        let cases = vec![
+            Case {
+                name: "nested_identical",
+                input: vec![
+                    make_prefix(b"f", 100, 3),
+                    make_prefix(b"fo", 100, 3),
+                    make_prefix(b"foo", 100, 3),
+                ],
+                expect: vec![(b"foo", 100, 3)],
+            },
+            Case {
+                name: "nested_different",
+                input: vec![
+                    make_prefix(b"f", 100, 3),
+                    make_prefix(b"fo", 50, 1),
+                    make_prefix(b"foo", 30, 1),
+                ],
+                expect: vec![(b"f", 100, 3), (b"fo", 50, 1), (b"foo", 30, 1)],
+            },
+        ];
+
+        for case in cases {
+            let out = merge_prefix_aggregates(case.input);
+            assert_eq!(out.len(), case.expect.len(), "{}: length", case.name);
+            for (i, (p, s, k)) in case.expect.iter().enumerate() {
+                assert_eq!(
+                    out[i].prefix,
+                    Bytes::from_static(*p),
+                    "{}: prefix {}",
+                    case.name,
+                    i
+                );
+                assert_eq!(out[i].total_size, *s, "{}: total_size {}", case.name, i);
+                assert_eq!(out[i].key_count, *k, "{}: key_count {}", case.name, i);
+            }
+        }
     }
 }

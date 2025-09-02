@@ -8,12 +8,11 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use arrow::{
-    array::{Array, ArrayAccessor, AsArray, RecordBatch, UInt64Array},
+    array::{Array, AsArray, RecordBatch, UInt64Array},
     datatypes::UInt64Type,
 };
 use base64::Engine;
 use bytes::Bytes;
-use futures_util::StreamExt;
 use itertools::Itertools;
 use parquet::{
     arrow::{
@@ -33,12 +32,12 @@ use crate::{
     },
     record::RecordType,
     report::model::{
-        BigKey, ClusterIssues, DbAggregate, InstanceAggregate, ReportData, ReportDataProvider,
-        TopKeyRecord, TypeAggregate,
+        BigKey, ClusterIssues, DbAggregate, InstanceAggregate, PrefixAggregate, ReportData,
+        ReportDataProvider, TopKeyRecord, TypeAggregate,
     },
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParquetReportProvider {
     pub base_dir: PathBuf,
     pub cluster: String,
@@ -107,21 +106,22 @@ impl ParquetReportProvider {
         Ok(files)
     }
 
-    fn build_all_iterators(&self) -> AnyResult<Vec<DBElementsIterator>> {
+    fn build_group_merge_iterator(&self) -> AnyResult<GroupedMergeIterator> {
         let batch_dir = self.find_batch_dir()?;
         let files = Self::list_parquet_files(&batch_dir)?;
         let mut iterators = Vec::new();
         for file in files {
             let summary = Self::parse_file_metadata(&file)?;
             for db in summary.db_statistics.keys() {
-                let iterator = Self::db_elements_iterator(&file, *db)?;
+                let iterator = Self::build_db_iterator(&file, *db)?;
                 iterators.push(iterator);
             }
         }
-        Ok(iterators)
+        let iter = GroupedMergeIterator::new(iterators)?;
+        Ok(iter)
     }
 
-    fn db_elements_iterator(path: &Path, target: u64) -> AnyResult<DBElementsIterator> {
+    fn build_db_iterator(path: &Path, target: u64) -> AnyResult<DBElementsIterator> {
         let file = std::fs::File::open(path).context("open parquet file")?;
         let mut builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .context("try new parquet record batch reader builder")?;
@@ -129,9 +129,9 @@ impl ParquetReportProvider {
         let metadata = builder.metadata().clone();
         let schema = builder.schema().clone();
         let parquet_schema = builder.parquet_schema();
-        let db_mask = ProjectionMask::columns(&parquet_schema, ["db"]);
+        let db_mask = ProjectionMask::columns(parquet_schema, ["db"]);
 
-        let key_and_size_mask = ProjectionMask::columns(&parquet_schema, ["key", "rdb_size"]);
+        let key_and_size_mask = ProjectionMask::columns(parquet_schema, ["key", "rdb_size"]);
         builder = builder.with_projection(key_and_size_mask);
 
         let db_col_idx =
@@ -219,6 +219,48 @@ impl ParquetReportProvider {
 
         Ok(summary)
     }
+
+    fn scan_top_prefix(&self, total_size: u64) -> AnyResult<Vec<PrefixAggregate>> {
+        let threshold = (total_size / 100).max(1);
+        let iter = self.build_group_merge_iterator()?;
+        let mut active_prefixes: HashMap<Bytes, (u64, u64)> = HashMap::new();
+        let mut out: Vec<PrefixAggregate> = Vec::new();
+
+        for ret in iter {
+            let (key, size) = ret.context("failed to get key and size")?;
+
+            for (closed_prefix, (size_sum, key_count)) in
+                active_prefixes.extract_if(|prefix, _| !prefix.starts_with(&key))
+            {
+                if size_sum >= threshold {
+                    out.push(PrefixAggregate {
+                        prefix: closed_prefix.clone(),
+                        total_size: size_sum,
+                        key_count,
+                    });
+                }
+            }
+
+            for new_prefix in (1..key.len()).map(|i| key.slice(0..i)) {
+                let item = active_prefixes.entry(new_prefix).or_default();
+                item.0 += size;
+                item.1 += 1;
+            }
+        }
+
+        for (prefix, (size_sum, key_count)) in active_prefixes {
+            if size_sum >= threshold {
+                out.push(PrefixAggregate {
+                    prefix: prefix.clone(),
+                    total_size: size_sum,
+                    key_count,
+                });
+            }
+        }
+
+        out.sort_by_key(|x| Reverse(x.total_size));
+        Ok(out)
+    }
 }
 
 struct DBElementsIterator {
@@ -293,10 +335,7 @@ impl Iterator for GroupedMergeIterator {
     type Item = AnyResult<(Bytes, u64)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let top = match self.heap.pop() {
-            None => return None,
-            Some(item) => item,
-        };
+        let top = self.heap.pop()?;
 
         let poped_iter = &mut self.iters[top.iter_idx];
         match poped_iter.next() {
@@ -394,6 +433,10 @@ impl ReportDataProvider for ParquetReportProvider {
             }
         }
 
+        let total_size = keys_statistics.total_size;
+        let this = self.clone();
+        let top_prefixes =
+            tokio::task::spawn_blocking(move || this.scan_top_prefix(total_size)).await??;
         let report = ReportData {
             cluster: self.cluster.clone(),
             batch: self.batch_slug.clone().unwrap_or_default(),
@@ -425,7 +468,7 @@ impl ReportDataProvider for ParquetReportProvider {
                 .sorted_by_key(|x| Reverse(x.total_size))
                 .collect(),
             top_keys,
-            top_prefixes: vec![], // TODO: implement top prefixes
+            top_prefixes,
             cluster_issues: ClusterIssues {
                 big_keys,
                 codis_slot_skew: codis_slots_map.into_values().any(|c| c > 1),

@@ -230,7 +230,7 @@ impl ParquetReportProvider {
             let (key, size) = ret.context("failed to get key and size")?;
 
             for (closed_prefix, (size_sum, key_count)) in
-                active_prefixes.extract_if(|prefix, _| !prefix.starts_with(&key))
+                active_prefixes.extract_if(|prefix, _| !key.starts_with(prefix))
             {
                 if size_sum >= threshold {
                     out.push(PrefixAggregate {

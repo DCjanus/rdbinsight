@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use arrow::{
     array::{
-        BinaryArray, Int32Array, Int64Array, StringArray, TimestampMillisecondArray,
-        TimestampNanosecondArray,
+        BinaryArray, StringArray, TimestampMillisecondArray, TimestampNanosecondArray, UInt8Array,
+        UInt16Array, UInt64Array,
     },
     record_batch::RecordBatch,
 };
@@ -42,41 +42,41 @@ pub fn records_to_columns(
         cluster_data.push(cluster.to_string());
         batch_data.push(batch_nanos);
         instance_data.push(instance.to_string());
-        db_data.push(record.db as i64);
+        db_data.push(record.db);
         let key_bytes = match &record.key {
             RDBStr::Str(bytes) => bytes.to_vec(),
             RDBStr::Int(int_val) => int_val.to_string().into_bytes(),
         };
         key_data.push(key_bytes);
         type_data.push(record.type_name().to_string());
-        member_count_data.push(record.member_count.unwrap_or(0) as i64);
-        rdb_size_data.push(record.rdb_size as i64);
+        member_count_data.push(record.member_count.unwrap_or(0));
+        rdb_size_data.push(record.rdb_size);
         encoding_data.push(record.encoding_name());
         expire_at_data.push(record.expire_at_ms.map(|ms| ms as i64));
-        idle_seconds_data.push(record.idle_seconds.map(|s| s as i64));
-        freq_data.push(record.freq.map(|f| f as i32));
-        codis_slot_data.push(record.codis_slot.map(|s| s as i32));
-        redis_slot_data.push(record.redis_slot.map(|s| s as i32));
+        idle_seconds_data.push(record.idle_seconds.map(|s| s));
+        freq_data.push(record.freq.map(|f| f));
+        codis_slot_data.push(record.codis_slot.map(|s| s));
+        redis_slot_data.push(record.redis_slot.map(|s| s));
     }
 
     let cluster_array = Arc::new(StringArray::from(cluster_data));
     let batch_array = Arc::new(TimestampNanosecondArray::from(batch_data).with_timezone("UTC"));
     let instance_array = Arc::new(StringArray::from(instance_data));
-    let db_array = Arc::new(Int64Array::from(db_data));
+    let db_array = Arc::new(UInt64Array::from(db_data));
 
     let key_refs: Vec<&[u8]> = key_data.iter().map(|v| v.as_slice()).collect();
     let key_array = Arc::new(BinaryArray::from(key_refs));
 
     let type_array = Arc::new(StringArray::from(type_data));
-    let member_count_array = Arc::new(Int64Array::from(member_count_data));
-    let rdb_size_array = Arc::new(Int64Array::from(rdb_size_data));
+    let member_count_array = Arc::new(UInt64Array::from(member_count_data));
+    let rdb_size_array = Arc::new(UInt64Array::from(rdb_size_data));
     let encoding_array = Arc::new(StringArray::from(encoding_data));
     let expire_at_array =
         Arc::new(TimestampMillisecondArray::from(expire_at_data).with_timezone("UTC"));
-    let idle_seconds_array = Arc::new(Int64Array::from(idle_seconds_data));
-    let freq_array = Arc::new(Int32Array::from(freq_data));
-    let codis_slot_array = Arc::new(Int32Array::from(codis_slot_data));
-    let redis_slot_array = Arc::new(Int32Array::from(redis_slot_data));
+    let idle_seconds_array = Arc::new(UInt64Array::from(idle_seconds_data));
+    let freq_array = Arc::new(UInt8Array::from(freq_data));
+    let codis_slot_array = Arc::new(UInt16Array::from(codis_slot_data));
+    let redis_slot_array = Arc::new(UInt16Array::from(redis_slot_data));
 
     RecordBatch::try_new(schema, vec![
         cluster_array,

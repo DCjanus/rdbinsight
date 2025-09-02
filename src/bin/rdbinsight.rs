@@ -19,6 +19,7 @@ use rdbinsight::{
     metric,
     output::{ChunkWriter, ChunkWriterEnum, Output},
     record::RecordStream,
+    report::model::ReportDataProvider,
     source::{RDBStream, RdbSourceConfig},
 };
 use time::OffsetDateTime;
@@ -242,6 +243,9 @@ enum ReportCommand {
     /// Generate report from ClickHouse
     #[command(name = "from-clickhouse")]
     FromClickhouse(ReportFromClickHouseArgs),
+    /// Generate report from Parquet files
+    #[command(name = "from-parquet")]
+    FromParquet(ReportFromParquetArgs),
 }
 
 #[derive(Args)]
@@ -266,6 +270,25 @@ struct ReportFromClickHouseArgs {
     /// HTTP proxy URL for ClickHouse connections
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PROXY_URL")]
     proxy_url: Option<String>,
+}
+
+#[derive(Args)]
+struct ReportFromParquetArgs {
+    /// Base directory where parquet output is stored
+    #[arg(long)]
+    dir: PathBuf,
+
+    /// Cluster name
+    #[clap(long, env = "RDBINSIGHT_CLUSTER")]
+    cluster: String,
+
+    /// Batch slug (optional, defaults to latest)
+    #[clap(long, env = "RDBINSIGHT_BATCH")]
+    batch: Option<String>,
+
+    /// Output HTML file path
+    #[clap(short, long, env = "RDBINSIGHT_REPORT_OUTPUT")]
+    output: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -744,6 +767,64 @@ async fn run_report(args: ReportArgs) -> Result<()> {
                 sub.output,
             )
             .await
+        }
+        ReportCommand::FromParquet(sub) => {
+            let provider = rdbinsight::report::parquet::ParquetReportProvider::new(
+                sub.dir,
+                sub.cluster.clone(),
+                sub.batch.clone(),
+            );
+
+            let report_data = provider
+                .generate_report_data()
+                .await
+                .with_context(|| "Failed to generate report data from Parquet files")?;
+
+            let template_content = include_str!("../../templates/report.html");
+            let report_json = serde_json::to_string_pretty(&report_data)
+                .context("Failed to serialize report data to JSON")?;
+
+            let template_pattern = r#"<script id="rdbinsight-data" type="application/json" src="./report.json"></script>"#;
+
+            let html_content = template_content.replace(
+                template_pattern,
+                &format!(
+                    r#"<script id="rdbinsight-data" type="application/json">
+{report_json}
+    </script>"#
+                ),
+            );
+
+            if html_content == template_content {
+                return Err(anyhow!(
+                    "Template replacement failed: pattern not found in template."
+                ));
+            }
+
+            let actual_batch = sub.batch.unwrap_or_default();
+            let output_path = match sub.output {
+                Some(path) => path,
+                None => {
+                    let safe_batch = actual_batch.replace(':', "-").replace('+', "_");
+                    let filename: String =
+                        format!("rdb_report_{}_{}.html", sub.cluster, safe_batch);
+                    PathBuf::from(filename)
+                }
+            };
+
+            tokio::fs::write(&output_path, html_content)
+                .await
+                .with_context(|| format!("Failed to write report to: {}", output_path.display()))?;
+
+            info!(
+                operation = "report_generated_from_parquet",
+                cluster = %sub.cluster,
+                batch = %actual_batch,
+                output_path = %output_path.display(),
+                "Report generated successfully from Parquet"
+            );
+
+            Ok(())
         }
     }
 }

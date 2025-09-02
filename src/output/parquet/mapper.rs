@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+#[cfg(test)]
+use arrow::array::{Int32Array, Int64Array};
 use arrow::{
     array::{
         BinaryArray, StringArray, TimestampMillisecondArray, TimestampNanosecondArray, UInt8Array,
@@ -53,10 +55,10 @@ pub fn records_to_columns(
         rdb_size_data.push(record.rdb_size);
         encoding_data.push(record.encoding_name());
         expire_at_data.push(record.expire_at_ms.map(|ms| ms as i64));
-        idle_seconds_data.push(record.idle_seconds.map(|s| s));
-        freq_data.push(record.freq.map(|f| f));
-        codis_slot_data.push(record.codis_slot.map(|s| s));
-        redis_slot_data.push(record.redis_slot.map(|s| s));
+        idle_seconds_data.push(record.idle_seconds);
+        freq_data.push(record.freq);
+        codis_slot_data.push(record.codis_slot);
+        redis_slot_data.push(record.redis_slot);
     }
 
     let cluster_array = Arc::new(StringArray::from(cluster_data));

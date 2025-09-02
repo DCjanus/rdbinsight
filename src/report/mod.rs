@@ -5,16 +5,16 @@ use clickhouse::Row;
 use serde::Deserialize;
 use time::OffsetDateTime;
 
+pub mod ch;
 pub mod model;
 pub mod parquet;
-pub mod querier;
 
-use querier::ClickHouseQuerier;
+use ch::ClickHouseReportProvider;
 
-use crate::config::ClickHouseConfig;
+use crate::{config::ClickHouseConfig, report::model::ReportDataProvider};
 
 pub struct ReportGenerator {
-    querier: ClickHouseQuerier,
+    querier: ClickHouseReportProvider,
     cluster: String,
     batch: String,
 }
@@ -25,9 +25,10 @@ impl ReportGenerator {
         cluster: String,
         batch: String,
     ) -> Result<Self> {
-        let querier = ClickHouseQuerier::new(clickhouse_config, cluster.clone(), batch.clone())
-            .await
-            .context("Failed to initialize ClickHouse querier")?;
+        let querier =
+            ClickHouseReportProvider::new(clickhouse_config, cluster.clone(), batch.clone())
+                .await
+                .context("Failed to initialize ClickHouse querier")?;
 
         Ok(Self {
             querier,

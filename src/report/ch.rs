@@ -1,29 +1,17 @@
-use anyhow::{Context, Result as AnyResult};
+use anyhow::Context;
 use bytes::Bytes;
 use clickhouse::{Client, Row};
-use serde::{Deserialize, Serialize};
-use serde_with::{base64::Base64, serde_as};
+use serde::Deserialize;
 use time::OffsetDateTime;
 
 use crate::{
     config::ClickHouseConfig,
+    helper::AnyResult,
     report::model::{
         BigKey, ClusterIssues, DbAggregate, InstanceAggregate, PrefixAggregate, ReportData,
-        TopKeyRecord, TypeAggregate,
+        ReportDataProvider, TopKeyRecord, TypeAggregate,
     },
 };
-
-#[serde_as]
-#[derive(Debug, Clone, Serialize)]
-pub struct PrefixRecord {
-    #[serde_as(as = "Base64")]
-    pub prefix_base64: Bytes,
-    pub instance: String,
-    pub db: u64,
-    pub r#type: String,
-    pub rdb_size: u64,
-    pub key_count: u64,
-}
 
 #[derive(Debug)]
 struct PrefixPartition {
@@ -33,15 +21,13 @@ struct PrefixPartition {
     max_key: Bytes,
 }
 
-// Note: `BigKey`, `ClusterIssues`, and `ReportData` types are provided by `crate::report::model`.
-
-pub struct ClickHouseQuerier {
+pub struct ClickHouseReportProvider {
     client: Client,
     cluster: String,
     batch: String,
 }
 
-impl ClickHouseQuerier {
+impl ClickHouseReportProvider {
     pub async fn new(config: ClickHouseConfig, cluster: String, batch: String) -> AnyResult<Self> {
         let client = config
             .create_client()
@@ -633,8 +619,11 @@ impl ClickHouseQuerier {
 
         Ok(has_skew)
     }
+}
 
-    pub async fn generate_report_data(&self) -> AnyResult<ReportData> {
+#[async_trait::async_trait]
+impl ReportDataProvider for ClickHouseReportProvider {
+    async fn generate_report_data(&self) -> AnyResult<ReportData> {
         tracing::info!(
             operation = "report_generation_start",
             cluster = %self.cluster,

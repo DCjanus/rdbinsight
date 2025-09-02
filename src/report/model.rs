@@ -80,16 +80,19 @@ pub struct ReportData {
     /// Aggregates per logical DB index.
     /// - key_count: number of keys in the DB
     /// - total_size: sum of `rdb_size` over all keys in the DB
+    ///
     /// Sorting: ascending by `db`.
     pub db_aggregates: Vec<DbAggregate>,
     /// Aggregates per Redis data type (e.g., "string", "list", ...).
     /// - key_count: number of keys of the type
     /// - total_size: sum of `rdb_size` over keys of the type
+    ///
     /// Sorting: descending by `total_size`.
     pub type_aggregates: Vec<TypeAggregate>,
     /// Aggregates per Redis instance.
     /// - key_count: number of keys on the instance
     /// - total_size: sum of `rdb_size` over keys on the instance
+    ///
     /// Sorting: descending by `total_size`.
     pub instance_aggregates: Vec<InstanceAggregate>,
     /// Top 100 keys by `rdb_size` across the batch.

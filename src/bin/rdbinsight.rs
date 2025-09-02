@@ -827,7 +827,10 @@ async fn run_report(args: ReportArgs) -> Result<()> {
             let html_content = rdbinsight::report::render_report_html(&report_data)
                 .context("Failed to render report")?;
 
-            let actual_batch = sub.batch.clone().unwrap_or_default();
+            let actual_batch = sub
+                .batch
+                .clone()
+                .ok_or_else(|| anyhow!("No batch specified"))?;
             write_and_log_report(
                 &sub.cluster,
                 &actual_batch,

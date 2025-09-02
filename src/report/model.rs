@@ -71,13 +71,41 @@ pub struct ClusterIssues {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ReportData {
+    /// Logical cluster name that this report describes.
+    /// Providers should pass through the input label; data-source agnostic.
     pub cluster: String,
+    /// Identifier of the analyzed batch/snapshot.
+    /// Providers should return a human-readable, monotonically sortable string (RFC3339 recommended).
     pub batch: String,
+    /// Aggregates per logical DB index.
+    /// - key_count: number of keys in the DB
+    /// - total_size: sum of `rdb_size` over all keys in the DB
+    /// Sorting: ascending by `db`.
     pub db_aggregates: Vec<DbAggregate>,
+    /// Aggregates per Redis data type (e.g., "string", "list", ...).
+    /// - key_count: number of keys of the type
+    /// - total_size: sum of `rdb_size` over keys of the type
+    /// Sorting: descending by `total_size`.
     pub type_aggregates: Vec<TypeAggregate>,
+    /// Aggregates per Redis instance.
+    /// - key_count: number of keys on the instance
+    /// - total_size: sum of `rdb_size` over keys on the instance
+    /// Sorting: descending by `total_size`.
     pub instance_aggregates: Vec<InstanceAggregate>,
+    /// Top 100 keys by `rdb_size` across the batch.
+    /// Sorting: descending by `rdb_size` (ties may use a deterministic provider-defined tiebreaker).
+    /// Limit: at most 100 items.
     pub top_keys: Vec<TopKeyRecord>,
+    /// Significant key prefixes discovered from all keys in the batch.
+    /// Aggregation: for a byte prefix P, `key_count` and `total_size` are computed over keys whose bytes start with P.
+    /// Inclusion: only prefixes with `total_size >= floor(total_size_all_keys / 100)`, with a minimum threshold of 1 byte.
+    /// Structure: nested prefixes may exist; when identical stats occur for a prefix and its descendant, providers may keep the more specific prefix.
+    /// Sorting: ascending by raw prefix bytes (lexicographic).
     pub top_prefixes: Vec<PrefixAggregate>,
+    /// Cluster-level issue summary derived from the batch.
+    /// - big_keys: largest key per data type exceeding thresholds (string > 1 MiB; non-string > 1 GiB), sorted by `rdb_size` descending
+    /// - codis_slot_skew: true if any Codis slot maps to more than one instance within the batch
+    /// - redis_cluster_slot_skew: true if any Redis Cluster slot maps to more than one instance within the batch
     pub cluster_issues: ClusterIssues,
 }
 

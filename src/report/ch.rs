@@ -621,6 +621,51 @@ impl ClickHouseReportProvider {
     }
 }
 
+/// Fetch the latest completed batch timestamp string (RFC3339) for a cluster.
+pub async fn get_latest_batch_for_cluster(
+    clickhouse_config: &ClickHouseConfig,
+    cluster: &str,
+) -> anyhow::Result<String> {
+    let client = clickhouse_config
+        .create_client()
+        .context("Failed to create ClickHouse client")?;
+
+    let query = "
+        SELECT batch
+        FROM import_batches_completed
+        WHERE cluster = ?
+        ORDER BY batch DESC
+        LIMIT 1
+    ";
+
+    #[derive(Debug, Row, Deserialize)]
+    struct LatestBatchRow {
+        #[serde(with = "clickhouse::serde::time::datetime64::nanos")]
+        batch: OffsetDateTime,
+    }
+
+    let rows: Vec<LatestBatchRow> = client
+        .query(query)
+        .bind(cluster)
+        .fetch_all()
+        .await
+        .with_context(|| format!("Failed to query latest batch for cluster: {cluster}"))?;
+
+    if rows.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No completed batches found for cluster: {}",
+            cluster
+        ));
+    }
+
+    let latest_batch = rows[0].batch;
+    let batch_str = latest_batch
+        .format(&time::format_description::well_known::Rfc3339)
+        .with_context(|| "Failed to format batch timestamp")?;
+
+    Ok(batch_str)
+}
+
 #[async_trait::async_trait]
 impl ReportDataProvider for ClickHouseReportProvider {
     async fn generate_report_data(&self) -> AnyResult<ReportData> {

@@ -760,13 +760,58 @@ async fn run_report(args: ReportArgs) -> Result<()> {
                 sub.proxy_url,
             )?;
 
-            rdbinsight::report::run_report_with_config(
+            // determine batch
+            let actual_batch = match sub.batch {
+                Some(batch_str) => {
+                    let _batch_timestamp = OffsetDateTime::parse(
+                        &batch_str,
+                        &time::format_description::well_known::Rfc3339,
+                    )
+                    .with_context(|| format!("Invalid batch timestamp format: {batch_str}"))?;
+                    batch_str
+                }
+                None => {
+                    info!(
+                        operation = "latest_batch_fetch",
+                        cluster = %sub.cluster,
+                        "No batch specified, fetching latest batch for cluster"
+                    );
+                    rdbinsight::report::ch::get_latest_batch_for_cluster(
+                        &clickhouse_config,
+                        &sub.cluster,
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("Failed to get latest batch for cluster: {}", sub.cluster)
+                    })?
+                }
+            };
+
+            let querier = rdbinsight::report::ch::ClickHouseReportProvider::new(
                 clickhouse_config,
-                sub.cluster,
-                sub.batch,
-                sub.output,
+                sub.cluster.clone(),
+                actual_batch.clone(),
             )
             .await
+            .with_context(|| "Failed to initialize ClickHouse querier")?;
+
+            let report_data = ReportDataProvider::generate_report_data(&querier)
+                .await
+                .with_context(|| "Failed to generate report data from ClickHouse")?;
+
+            let html_content = rdbinsight::report::render_report_html(&report_data)
+                .context("Failed to render report")?;
+
+            write_and_log_report(
+                &sub.cluster,
+                &actual_batch,
+                sub.output,
+                html_content,
+                "report_generated",
+            )
+            .await?;
+
+            Ok(())
         }
         ReportCommand::FromParquet(sub) => {
             let provider = rdbinsight::report::parquet::ParquetReportProvider::new(
@@ -775,58 +820,57 @@ async fn run_report(args: ReportArgs) -> Result<()> {
                 sub.batch.clone(),
             );
 
-            let report_data = provider
-                .generate_report_data()
+            let report_data = ReportDataProvider::generate_report_data(&provider)
                 .await
                 .with_context(|| "Failed to generate report data from Parquet files")?;
 
-            let template_content = include_str!("../../templates/report.html");
-            let report_json = serde_json::to_string_pretty(&report_data)
-                .context("Failed to serialize report data to JSON")?;
+            let html_content = rdbinsight::report::render_report_html(&report_data)
+                .context("Failed to render report")?;
 
-            let template_pattern = r#"<script id="rdbinsight-data" type="application/json" src="./report.json"></script>"#;
-
-            let html_content = template_content.replace(
-                template_pattern,
-                &format!(
-                    r#"<script id="rdbinsight-data" type="application/json">
-{report_json}
-    </script>"#
-                ),
-            );
-
-            if html_content == template_content {
-                return Err(anyhow!(
-                    "Template replacement failed: pattern not found in template."
-                ));
-            }
-
-            let actual_batch = sub.batch.unwrap_or_default();
-            let output_path = match sub.output {
-                Some(path) => path,
-                None => {
-                    let safe_batch = actual_batch.replace(':', "-").replace('+', "_");
-                    let filename: String =
-                        format!("rdb_report_{}_{}.html", sub.cluster, safe_batch);
-                    PathBuf::from(filename)
-                }
-            };
-
-            tokio::fs::write(&output_path, html_content)
-                .await
-                .with_context(|| format!("Failed to write report to: {}", output_path.display()))?;
-
-            info!(
-                operation = "report_generated_from_parquet",
-                cluster = %sub.cluster,
-                batch = %actual_batch,
-                output_path = %output_path.display(),
-                "Report generated successfully from Parquet"
-            );
+            let actual_batch = sub.batch.clone().unwrap_or_default();
+            write_and_log_report(
+                &sub.cluster,
+                &actual_batch,
+                sub.output,
+                html_content,
+                "report_generated_from_parquet",
+            )
+            .await?;
 
             Ok(())
         }
     }
+}
+
+async fn write_and_log_report(
+    cluster: &str,
+    batch: &str,
+    output: Option<PathBuf>,
+    html_content: String,
+    op_name: &str,
+) -> anyhow::Result<()> {
+    let output_path = match output {
+        Some(path) => path,
+        None => {
+            let safe_batch = batch.replace(':', "-").replace('+', "_");
+            let filename: String = format!("rdb_report_{}_{}.html", cluster, safe_batch);
+            PathBuf::from(filename)
+        }
+    };
+
+    tokio::fs::write(&output_path, html_content)
+        .await
+        .with_context(|| format!("Failed to write report to: {}", output_path.display()))?;
+
+    info!(
+        operation = %op_name,
+        cluster = %cluster,
+        batch = %batch,
+        output_path = %output_path.display(),
+        "Report generated successfully"
+    );
+
+    Ok(())
 }
 
 fn log_instance_progress(

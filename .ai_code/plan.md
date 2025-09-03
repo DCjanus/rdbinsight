@@ -11,19 +11,19 @@
 
 ### 实现步骤
 
-- [ ] 新增文件 `src/helper/sort_merge.rs`，实现：
-  - [ ] `SortMergeIterator<I, T>`：`I: Iterator<Item=T>`, `T: Ord`；内部使用最小堆（通过 `std::cmp::Reverse` 包装）维护 `{ item: T, iter_idx: usize }`，`Ord` 按 `item` 再 `iter_idx`。
-  - [ ] `SortMergeIteratorResult<I, T, E>`：`I: Iterator<Item=Result<T,E>>`, `T: Ord`；遇到任一来源 `Err(e)` 时，迭代器 `next()` 返回该错误并终止。
-  - [ ] 为两个结构补充基础单元测试：
-    - [ ] 多来源合并的顺序正确性（包含相等元素的稳定性）。
-    - [ ] Result 变体的错误传播行为。
-- [ ] 在 `src/helper/mod.rs`（或 crate 根模块）中导出公共 API（仅暴露必要类型）。
+- [x] 新增文件 `src/helper/sort_merge.rs`，实现：
+  - [x] `SortMergeIterator<I, T>`：`I: Iterator<Item=T>`, `T: Ord`；内部使用最小堆（通过 `std::cmp::Reverse` 包装）维护 `{ item: T, iter_idx: usize }`，`Ord` 按 `item` 再 `iter_idx`。
+  - [x] `SortMergeIteratorResult<I, T, E>`：`I: Iterator<Item=Result<T,E>>`, `T: Ord`；遇到任一来源 `Err(e)` 时，迭代器 `next()` 返回该错误并终止。
+  - [x] 为两个结构补充基础单元测试：
+    - [x] 多来源合并的顺序正确性（包含相等元素的稳定性）。
+    - [x] Result 变体的错误传播行为。
+- [x] 在 `src/helper/mod.rs`（或 crate 根模块）中导出公共 API（仅暴露必要类型）。
 
 ### 验证步骤
 
-- [ ] 运行 `cargo build`，确保编译通过。
-- [ ] 运行 `cargo test -p rdbinsight -- sort_merge`，测试通过。
-- [ ] 代码通过 `cargo clippy` 与 `cargo fmt`（若项目使用）。
+- [x] 运行 `cargo build`，确保编译通过。
+- [x] 运行 `cargo test -p rdbinsight -- sort_merge`，测试通过。
+- [x] 代码通过 `cargo clippy` 与 `cargo fmt`（若项目使用）。
 
 ---
 

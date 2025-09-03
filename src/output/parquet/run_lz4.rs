@@ -10,7 +10,7 @@ use lz4_flex::frame::{FrameDecoder, FrameEncoder};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
-use crate::record::Record;
+use crate::{output::parquet::merge::SortableRecord, record::Record};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChunkDesc {
@@ -34,7 +34,6 @@ pub struct ChunkDesc {
 pub struct RunChunkReader {
     decoder: FrameDecoder<BufReader<std::io::Take<File>>>,
     path: std::path::PathBuf,
-    offset: u64,
 }
 
 impl RunChunkReader {
@@ -55,54 +54,51 @@ impl RunChunkReader {
         Ok(Self {
             decoder,
             path: path_buf,
-            offset: 0,
         })
     }
+}
 
-    pub fn read_next(&mut self) -> Result<Option<Record>> {
+impl Iterator for RunChunkReader {
+    type Item = crate::helper::AnyResult<crate::output::parquet::merge::SortableRecord>;
+
+    fn next(&mut self) -> Option<Self::Item> {
         use anyhow::Context;
 
         // Read 4-byte big-endian length
         let mut len_buf = [0u8; 4];
         if let Err(e) = self.decoder.read_exact(&mut len_buf) {
             if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                return Ok(None);
+                return None;
             } else {
-                return Err(e).with_context(|| {
-                    anyhow!(
-                        "Failed to read length from {} at chunk-offset {}",
-                        self.path.display(),
-                        self.offset
-                    )
-                });
+                return Some(Err(e).with_context(|| {
+                    anyhow!("Failed to read length from {}", self.path.display())
+                }));
             }
         }
         let len = u32::from_be_bytes(len_buf) as usize;
 
         // Read payload
         let mut payload = vec![0u8; len];
-        self.decoder.read_exact(&mut payload).with_context(|| {
-            anyhow!(
-                "Failed to read payload from {} at chunk-offset {}",
-                self.path.display(),
-                self.offset
-            )
-        })?;
+        if let Err(e) = self.decoder.read_exact(&mut payload) {
+            return Some(
+                Err(e).with_context(|| {
+                    anyhow!("Failed to read payload from {}", self.path.display())
+                }),
+            );
+        }
 
         // Deserialize with bincode
-        let (record, _): (Record, usize) = bincode::serde::decode_from_slice(&payload, standard())
-            .with_context(|| {
-                anyhow!(
-                    "Failed to deserialize record from {} at chunk-offset {}",
-                    self.path.display(),
-                    self.offset
-                )
-            })?;
+        let (record, _): (Record, usize) =
+            match bincode::serde::decode_from_slice(&payload, standard()) {
+                Ok(t) => t,
+                Err(e) => {
+                    return Some(Err(e).with_context(|| {
+                        anyhow!("Failed to deserialize record from {}", self.path.display())
+                    }));
+                }
+            };
 
-        // Advance offset (len field + payload)
-        self.offset += 4 + len as u64;
-
-        Ok(Some(record))
+        Some(Ok(SortableRecord(record)))
     }
 }
 

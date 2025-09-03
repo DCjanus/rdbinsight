@@ -315,15 +315,3 @@ impl Ord for SortableRecord {
         self.0.key.cmp(&other.0.key)
     }
 }
-
-impl Iterator for RunChunkReader {
-    type Item = AnyResult<SortableRecord>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.read_next() {
-            Ok(Some(rec)) => Some(Ok(SortableRecord(rec))),
-            Ok(None) => None,
-            Err(e) => Some(Err(e)),
-        }
-    }
-}

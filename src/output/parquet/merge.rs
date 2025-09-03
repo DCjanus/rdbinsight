@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::ParquetCompression,
     helper::AnyResult,
-    output::parquet::{mapper::records_to_columns, run_lz4::RunReader, schema},
+    output::parquet::{mapper::records_to_columns, run_lz4::RunChunkReader, schema},
     record::RecordType,
 };
 
@@ -161,7 +161,6 @@ impl MergeContext {
         );
 
         let readers = Self::open_run_readers(&self.inputs)?;
-
         let merge_iter = crate::helper::sort_merge::SortMergeIterator::new(readers)
             .context("Failed to initialize merge iterator")?;
 
@@ -247,13 +246,28 @@ impl MergeContext {
         Ok(writer)
     }
 
-    fn open_run_readers(inputs: &[PathBuf]) -> AnyResult<Vec<RunReader>> {
-        let mut readers = Vec::with_capacity(inputs.len());
+    fn open_run_readers(inputs: &[PathBuf]) -> AnyResult<Vec<RunChunkReader>> {
+        let mut readers = Vec::new();
         for path in inputs {
-            let r = RunReader::open(path).with_context(|| {
-                anyhow!("Failed to open run file for reading: {}", path.display())
-            })?;
-            readers.push(r);
+            let chunks =
+                crate::output::parquet::run_lz4::read_run_index(path).with_context(|| {
+                    anyhow!("Failed to read run index for file: {}", path.display())
+                })?;
+            for chunk in chunks {
+                let r = crate::output::parquet::run_lz4::RunChunkReader::open(
+                    path,
+                    chunk.offset,
+                    chunk.length,
+                )
+                .with_context(|| {
+                    anyhow!(
+                        "Failed to open chunk reader for {} at offset {}",
+                        path.display(),
+                        chunk.offset
+                    )
+                })?;
+                readers.push(r);
+            }
         }
         Ok(readers)
     }
@@ -306,7 +320,7 @@ impl Ord for SortableRecord {
     }
 }
 
-impl Iterator for RunReader {
+impl Iterator for RunChunkReader {
     type Item = AnyResult<SortableRecord>;
 
     fn next(&mut self) -> Option<Self::Item> {

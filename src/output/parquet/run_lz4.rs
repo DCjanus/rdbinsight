@@ -1,13 +1,12 @@
 use std::{
     fs::File,
-    io::{BufReader, Read, Write},
+    io::{BufReader, Read, Seek, SeekFrom, Write},
     path::Path,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, ensure};
 use bincode::config::standard;
-use crc::{CRC_32_ISO_HDLC, Crc};
-use lz4_flex::frame::FrameEncoder;
+use lz4_flex::frame::{FrameDecoder, FrameEncoder};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
@@ -19,19 +18,69 @@ pub struct ChunkDesc {
     pub length: u64,
 }
 
-pub struct RunReader {
-    decoder: lz4_flex::frame::FrameDecoder<BufReader<File>>,
+pub struct RunChunkReader {
+    decoder: FrameDecoder<BufReader<std::io::Take<File>>>,
     path: std::path::PathBuf,
     offset: u64,
 }
 
-impl RunReader {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+pub fn read_run_index(path: impl AsRef<Path>) -> Result<Vec<ChunkDesc>> {
+    let path_buf = path.as_ref().to_path_buf();
+    let mut file = File::open(&path_buf).with_context(|| {
+        anyhow!(
+            "Failed to open run file for index read: {}",
+            path_buf.display()
+        )
+    })?;
+    let file_len = file
+        .metadata()
+        .with_context(|| anyhow!("Failed to stat run file: {}", path_buf.display()))?
+        .len();
+    ensure!(
+        file_len >= 8,
+        "Run file too small to contain index: {}",
+        path_buf.display()
+    );
+
+    file.seek(SeekFrom::End(-8)).context("seek to end - 8")?;
+    let mut len_buf = [0u8; 8];
+    file.read_exact(&mut len_buf).context("read index length")?;
+    let index_len = u64::from_be_bytes(len_buf);
+
+    let index_start = file_len.saturating_sub(8 + index_len);
+    file.seek(SeekFrom::Start(index_start))
+        .context("seek to index start")?;
+
+    let mut compressed_index = vec![0u8; index_len as usize];
+    file.read_exact(&mut compressed_index)
+        .context("read compressed index")?;
+
+    let mut decoder = FrameDecoder::new(BufReader::new(std::io::Cursor::new(compressed_index)));
+    let mut index_bytes = Vec::new();
+    decoder
+        .read_to_end(&mut index_bytes)
+        .context("decompress index")?;
+
+    let (chunks, _): (Vec<ChunkDesc>, usize) =
+        bincode::serde::decode_from_slice(&index_bytes, standard()).context("decode index")?;
+    Ok(chunks)
+}
+
+impl RunChunkReader {
+    pub fn open(path: impl AsRef<Path>, offset: u64, length: u64) -> Result<Self> {
         let path_buf = path.as_ref().to_path_buf();
-        let file = File::open(&path_buf)
+        let mut file = File::open(&path_buf)
             .with_context(|| anyhow!("Failed to open run file: {}", path_buf.display()))?;
-        let buf_reader = BufReader::with_capacity(64 * 1024, file);
-        let decoder = lz4_flex::frame::FrameDecoder::new(buf_reader);
+        file.seek(SeekFrom::Start(offset)).with_context(|| {
+            anyhow!(
+                "Failed to seek run file: {} to offset {}",
+                path_buf.display(),
+                offset
+            )
+        })?;
+        let take = file.take(length);
+        let buf_reader = BufReader::with_capacity(64 * 1024, take);
+        let decoder = FrameDecoder::new(buf_reader);
         Ok(Self {
             decoder,
             path: path_buf,
@@ -50,7 +99,7 @@ impl RunReader {
             } else {
                 return Err(e).with_context(|| {
                     anyhow!(
-                        "Failed to read length from {} at offset {}",
+                        "Failed to read length from {} at chunk-offset {}",
                         self.path.display(),
                         self.offset
                     )
@@ -63,47 +112,24 @@ impl RunReader {
         let mut payload = vec![0u8; len];
         self.decoder.read_exact(&mut payload).with_context(|| {
             anyhow!(
-                "Failed to read payload from {} at offset {}",
+                "Failed to read payload from {} at chunk-offset {}",
                 self.path.display(),
                 self.offset
             )
         })?;
-
-        // Read CRC32
-        let mut crc_buf = [0u8; 4];
-        self.decoder.read_exact(&mut crc_buf).with_context(|| {
-            anyhow!(
-                "Failed to read crc from {} at offset {}",
-                self.path.display(),
-                self.offset
-            )
-        })?;
-        let crc_read = u32::from_be_bytes(crc_buf);
-
-        // Validate CRC
-        let crc_calc = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&payload);
-        if crc_calc != crc_read {
-            return Err(anyhow!(
-                "CRC mismatch for {} at offset {}: expected {}, got {}",
-                self.path.display(),
-                self.offset,
-                crc_read,
-                crc_calc
-            ));
-        }
 
         // Deserialize with bincode
         let (record, _): (Record, usize) = bincode::serde::decode_from_slice(&payload, standard())
             .with_context(|| {
                 anyhow!(
-                    "Failed to deserialize record from {} at offset {}",
+                    "Failed to deserialize record from {} at chunk-offset {}",
                     self.path.display(),
                     self.offset
                 )
             })?;
 
-        // Advance offset (len field + payload + crc)
-        self.offset += 4 + len as u64 + 4;
+        // Advance offset (len field + payload)
+        self.offset += 4 + len as u64;
 
         Ok(Some(record))
     }

@@ -94,20 +94,20 @@
 
 ### 实现步骤
 
-- [ ] 在 `src/output/parquet/run_lz4.rs`（或新建模块）实现 `ChunkedRunReader`：
-  - [ ] 打开文件，读取尾部 8 字节（BE）得到 `index_len`，回读 `index_len` 字节并 LZ4 解压 + bincode 反序列化 `RunIndex`。
-  - [ ] 为每个 `{offset, length}` 构造限长读取器 + LZ4 Frame 解码器，得到 `ChunkIterator<Item=anyhow::Result<Record>>`：
-    - [ ] 逐条读取 `u32 (BE)` 长度与 bincode payload；EOF 即结束该 chunk。
-- [ ] 在 `merge.rs` 中新增 `open_chunk_readers()`：
-  - [ ] 打开单个 run 文件，创建所有 `ChunkIterator`；
-  - [ ] 将其包装为 `Iterator<Item=anyhow::Result<SortableRecord>>`（注入 `(db,key)`），并交给 `SortMergeIteratorResult`。
-- [ ] 根据新流程删除（或保留兼容）旧的“多文件 run 输入”流。
+- [x] 在 `src/output/parquet/run_lz4.rs`（或新建模块）实现 `ChunkedRunReader`：
+  - [x] 打开文件，读取尾部 8 字节（BE）得到 `index_len`，回读 `index_len` 字节并 LZ4 解压 + bincode 反序列化 `RunIndex`。
+  - [x] 为每个 `{offset, length}` 构造限长读取器 + LZ4 Frame 解码器，得到 `ChunkIterator<Item=anyhow::Result<Record>>`：
+    - [x] 逐条读取 `u32 (BE)` 长度与 bincode payload；EOF 即结束该 chunk。
+- [x] 在 `merge.rs` 中新增 `open_chunk_readers()`：
+  - [x] 打开单个 run 文件，创建所有 `ChunkIterator`；
+  - [x] 将其包装为 `Iterator<Item=anyhow::Result<SortableRecord>>`（注入 `(db,key)`），并交给 `SortMergeIteratorResult`。
+- [x] 根据新流程删除（或保留兼容）旧的“多文件 run 输入”流。
 
 ### 验证步骤
 
-- [ ] 用阶段四生成的单 run 文件执行合并，确认排序与 Parquet 输出正确。
-- [ ] 使用包含多个 chunk 的输入验证 k 路归并稳定性与完整性。
-- [ ] 运行 `cargo build` 与全部测试。
+- [x] 用阶段四生成的单 run 文件执行合并，确认排序与 Parquet 输出正确。
+- [x] 使用包含多个 chunk 的输入验证 k 路归并稳定性与完整性。
+- [x] 运行 `cargo build` 与全部测试。
 
 ---
 

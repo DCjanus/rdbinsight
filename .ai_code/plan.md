@@ -70,23 +70,23 @@
 
 ### 实现步骤
 
-- [ ] 在 `src/output/parquet/output.rs` 的 `ParquetChunkWriter` 中：
-  - [ ] 打开并持有单个 run 文件句柄（临时路径，位于 batch temp 目录）。
-  - [ ] 维护 `Vec<ChunkDesc { offset: u64, length: u64 }>` 的内存索引。
-  - [ ] 改造 `flush_run_segment()`：
-    - [ ] 取出排序缓冲的记录，按序编码为 `u32 (BE) + bincode(record)` 连续字节流（移除 CRC）。
-    - [ ] 将该字节流压缩为单个 LZ4 Frame，并写入文件；记录写入前的文件偏移为 `offset`，压缩后字节数为 `length`，追加到 `Vec<ChunkDesc>`。
-  - [ ] 在 `finalize_instance()`：
-    - [ ] 将 `RunIndex { chunks: Vec<ChunkDesc> }` 进行 bincode 编码；对编码结果做 LZ4 压缩；
-    - [ ] 先写入“压缩后的 index 二进制”，再写入 8 字节（BE）的 `index_len: u64`；
-    - [ ] 调用合并阶段时仅传入该单个 run 文件路径。
-- [ ] 保留配置 `max_run_rows` 作为 chunk 粒度控制（按记录条数）。
+- [x] 在 `src/output/parquet/output.rs` 的 `ParquetChunkWriter` 中：
+  - [x] 打开并持有单个 run 文件句柄（临时路径，位于 batch temp 目录）。
+  - [x] 维护 `Vec<ChunkDesc { offset: u64, length: u64 }>` 的内存索引。
+  - [x] 改造 `flush_run_segment()`：
+    - [x] 取出排序缓冲的记录，按序编码为 `u32 (BE) + bincode(record)` 连续字节流（移除 CRC）。
+    - [x] 将该字节流压缩为单个 LZ4 Frame，并写入文件；记录写入前的文件偏移为 `offset`，压缩后字节数为 `length`，追加到 `Vec<ChunkDesc>`。
+  - [x] 在 `finalize_instance()`：
+    - [x] 将 `RunIndex { chunks: Vec<ChunkDesc> }` 进行 bincode 编码；对编码结果做 LZ4 压缩；
+    - [x] 先写入“压缩后的 index 二进制”，再写入 8 字节（BE）的 `index_len: u64`；
+    - [x] 调用合并阶段时仅传入该单个 run 文件路径。
+- [x] 保留配置 `max_run_rows` 作为 chunk 粒度控制（按记录条数）。
 
 ### 验证步骤
 
-- [ ] 使用临时目录运行一次小批量数据写入，检查生成的单一 run 文件大小与尾部 8 字节（BE）是否正确。
-- [ ] 解析并解压 index，验证 `chunks` 的 offset/length 合法且不重叠、覆盖所有 chunk。
-- [ ] 运行 `cargo build` 与基础测试。
+- [x] 使用临时目录运行一次小批量数据写入，检查生成的单一 run 文件大小与尾部 8 字节（BE）是否正确。
+- [x] 解析并解压 index，验证 `chunks` 的 offset/length 合法且不重叠、覆盖所有 chunk。
+- [x] 运行 `cargo build` 与基础测试。
 
 ---
 

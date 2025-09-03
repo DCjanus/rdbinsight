@@ -2,50 +2,21 @@ use std::{
     fs::File,
     io::{BufReader, Read, Write},
     path::Path,
-    time::Instant,
 };
 
 use anyhow::{Context, Result, anyhow};
 use bincode::config::standard;
 use crc::{CRC_32_ISO_HDLC, Crc};
 use lz4_flex::frame::FrameEncoder;
-use tracing::debug;
+use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 
 use crate::record::Record;
 
-/// Write all records into a single LZ4-framed run file. This consumes the provided
-/// records iterator (ownership of `Record`) which fits the batch-write scenario.
-pub fn write_run_file<I>(path: impl AsRef<Path>, records: I) -> Result<()>
-where I: IntoIterator<Item = Record> {
-    let path_buf = path.as_ref().to_path_buf();
-    let file = File::create(&path_buf)?;
-    let mut encoder = FrameEncoder::new(file);
-
-    let mut rows_written: u64 = 0;
-    let mut bytes_uncompressed: u64 = 0;
-    let start = Instant::now();
-
-    for record in records {
-        let payload = bincode::serde::encode_to_vec(&record, standard())?;
-        let len = payload.len();
-
-        let crc = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&payload);
-
-        encoder.write_all(&(len as u32).to_be_bytes())?;
-        encoder.write_all(&payload)?;
-        encoder.write_all(&crc.to_be_bytes())?;
-
-        rows_written += 1;
-        bytes_uncompressed += len as u64;
-    }
-
-    // finish the frame and flush
-    encoder.finish().context("finish encoder")?;
-    let elapsed = start.elapsed();
-
-    debug!(operation = "parquet_run_lz4_flush_finished", path = %path_buf.display(), rows = rows_written, bytes_uncompressed = bytes_uncompressed, elapsed_ms = %elapsed.as_millis(), "Flushed run to {}", path_buf.display());
-
-    Ok(())
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChunkDesc {
+    pub offset: u64,
+    pub length: u64,
 }
 
 pub struct RunReader {
@@ -55,7 +26,6 @@ pub struct RunReader {
 }
 
 impl RunReader {
-    /// Open a run file for reading. Uses a buffered reader (256 KiB) wrapped by FrameDecoder.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path_buf = path.as_ref().to_path_buf();
         let file = File::open(&path_buf)
@@ -69,7 +39,6 @@ impl RunReader {
         })
     }
 
-    /// Read the next Record from the run. Returns Ok(None) on EOF.
     pub fn read_next(&mut self) -> Result<Option<Record>> {
         use anyhow::Context;
 
@@ -140,17 +109,32 @@ impl RunReader {
     }
 }
 
-// Async wrapper that runs `write_run_file` inside `tokio::task::spawn_blocking` to avoid blocking the async runtime.
-// Accepts a pre-collected Vec<Record> so ownership can be moved into the blocking thread.
-pub async fn write_run_file_blocking<P>(path: P, records: Vec<Record>) -> Result<()>
-where P: AsRef<Path> + Send + 'static {
-    let path_buf = path.as_ref().to_path_buf();
-    let join_handle =
-        tokio::task::spawn_blocking(move || write_run_file(path_buf, records.into_iter()));
-
-    match join_handle.await {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(e),
-        Err(join_err) => Err(anyhow!("spawn_blocking join error: {}", join_err)),
+pub async fn append_chunk(file: &mut tokio::fs::File, records: Vec<Record>) -> Result<ChunkDesc> {
+    let mut encoder = FrameEncoder::new(Vec::new());
+    for record in records {
+        let payload = bincode::serde::encode_to_vec(&record, standard())?;
+        let len = payload.len();
+        encoder.write_all(&(len as u32).to_be_bytes())?;
+        encoder.write_all(&payload)?;
     }
+    let compressed = encoder.finish().context("finish encoder")?;
+
+    let offset = file.metadata().await?.len();
+    file.write_all(&compressed).await?;
+
+    Ok(ChunkDesc {
+        offset,
+        length: compressed.len() as u64,
+    })
+}
+
+pub async fn write_index(file: &mut tokio::fs::File, index: Vec<ChunkDesc>) -> Result<()> {
+    let index_bytes = bincode::serde::encode_to_vec(&index, standard())?;
+    let mut encoder = FrameEncoder::new(Vec::new());
+    encoder.write_all(&index_bytes)?;
+    let compressed = encoder.finish().context("finish encoder")?;
+    file.write_all(&compressed).await?;
+    file.write_all(&(compressed.len() as u64).to_be_bytes())
+        .await?;
+    Ok(())
 }

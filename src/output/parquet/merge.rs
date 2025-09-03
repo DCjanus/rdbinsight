@@ -254,18 +254,14 @@ impl MergeContext {
                     anyhow!("Failed to read run index for file: {}", path.display())
                 })?;
             for chunk in chunks {
-                let r = crate::output::parquet::run_lz4::RunChunkReader::open(
-                    path,
-                    chunk.offset,
-                    chunk.length,
-                )
-                .with_context(|| {
-                    anyhow!(
-                        "Failed to open chunk reader for {} at offset {}",
-                        path.display(),
-                        chunk.offset
-                    )
-                })?;
+                let r =
+                    RunChunkReader::open(path, chunk.offset, chunk.length).with_context(|| {
+                        anyhow!(
+                            "Failed to open chunk reader for {} at offset {}",
+                            path.display(),
+                            chunk.offset
+                        )
+                    })?;
                 readers.push(r);
             }
         }

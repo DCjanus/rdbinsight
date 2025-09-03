@@ -31,18 +31,18 @@
 
 ### 实现步骤
 
-- [ ] 打开 `src/report/parquet.rs`，定位 `GroupedMergeIterator`：
-  - [ ] 保留对外 `GroupedMergeIterator` 名称与 `Iterator<Item=AnyResult<(Bytes,u64)>>` 行为不变。
-  - [ ] 将内部 `heap + iters` 实现替换为基于 `SortMergeIteratorResult<DBElementsIterator, (Bytes,u64), anyhow::Error>` 的组合：
-    - [ ] 将 `Vec<DBElementsIterator>` 传入 `SortMergeIteratorResult::new`，由其维护堆与拉取。
-    - [ ] `impl Iterator for GroupedMergeIterator` 中直接委托 `next()` 到内部的 `SortMergeIteratorResult`。
-- [ ] 复用现有单元测试；若有必要，微调以适配实现内细节变更（不改对外行为）。
+- [x] 打开 `src/report/parquet.rs`，定位 `GroupedMergeIterator`：
+  - [x] 保留对外 `GroupedMergeIterator` 名称与 `Iterator<Item=AnyResult<(Bytes,u64)>>` 行为不变。
+  - [x] 将内部 `heap + iters` 实现替换为基于 `SortMergeIteratorResult<DBElementsIterator, (Bytes,u64), anyhow::Error>` 的组合：
+    - [x] 将 `Vec<DBElementsIterator>` 传入 `SortMergeIteratorResult::new`，由其维护堆与拉取。
+    - [x] `impl Iterator for GroupedMergeIterator` 中直接委托 `next()` 到内部的 `SortMergeIteratorResult`。
+- [x] 复用现有单元测试；若有必要，微调以适配实现内细节变更（不改对外行为）。
 
 ### 验证步骤
 
-- [ ] 运行 `cargo build` 确认编译通过。
-- [ ] 运行报表相关测试（若存在），确保通过。
-- [ ] 使用一组小型 Parquet 样本手动运行报表生成，确认结果一致。
+- [x] 运行 `cargo build` 确认编译通过。
+- [x] 运行报表相关测试（若存在），确保通过。
+- [x] 使用一组小型 Parquet 样本手动运行报表生成，确认结果一致。
 
 ---
 
@@ -50,10 +50,10 @@
 
 ### 实现步骤
 
-- [ ] 在 `src/output/parquet/merge.rs` 或临近模块新增 `SortableRecord`：
-  - [ ] 字段：`db: i64`, `key: Vec<u8>`, `record: crate::record::Record`；实现 `Ord/PartialOrd/Eq/PartialEq`，排序规则 `(db asc, key asc)`。
-- [ ] 为 `run_lz4::RunReader` 提供轻量迭代器适配器 `RunRecordIter`：
-  - [ ] `impl Iterator<Item=anyhow::Result<SortableRecord>>`，内部调用 `read_next()` 并在 EOF 时返回 `None`。
+- [x] 在 `src/output/parquet/merge.rs` 或临近模块新增 `SortableRecord`：
+  - [x] 字段：`db: i64`, `key: Vec<u8>`, `record: crate::record::Record`；实现 `Ord/PartialOrd/Eq/PartialEq`，排序规则 `(db asc, key asc)`。
+- [x] 为 `run_lz4::RunReader` 提供轻量迭代器适配器 `RunRecordIter`：
+  - [x] `impl Iterator<Item=anyhow::Result<SortableRecord>>`，内部调用 `read_next()` 并在 EOF 时返回 `None`。
 - [ ] 在 `merge.rs` 的 `merge()` 中：
   - [ ] 将现有 `BinaryHeap<Reverse<HeapItem>>` 逻辑替换为 `SortMergeIteratorResult<RunRecordIter, SortableRecord, anyhow::Error>`。
   - [ ] 消费 `SortableRecord` 时取 `record` 字段，保持批写与统计逻辑不变。

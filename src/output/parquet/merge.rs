@@ -324,6 +324,46 @@ pub struct HeapItem {
     pub run_idx: usize,
 }
 
+/// Tuple wrapper for `Record` that implements ordering by `(db asc, key asc)`.
+#[derive(Debug)]
+pub struct SortableRecord(pub crate::record::Record);
+
+impl PartialEq for SortableRecord {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.db == other.0.db && self.0.key == other.0.key
+    }
+}
+
+impl Eq for SortableRecord {}
+
+impl PartialOrd for SortableRecord {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SortableRecord {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.0.db.cmp(&other.0.db) {
+            std::cmp::Ordering::Equal => {}
+            non_eq => return non_eq,
+        };
+        self.0.key.cmp(&other.0.key)
+    }
+}
+
+impl Iterator for RunReader {
+    type Item = AnyResult<SortableRecord>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.read_next() {
+            Ok(Some(rec)) => Some(Ok(SortableRecord(rec))),
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

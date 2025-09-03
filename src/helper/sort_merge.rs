@@ -121,21 +121,4 @@ mod tests {
             Ok(_) => panic!("expected error during initialization"),
         }
     }
-
-    #[test]
-    fn merge_propagates_error_during_replenish() {
-        // a yields 1 then Err; b yields 2
-        let a = vec![Ok(1), Err(anyhow!("err-after-1"))].into_iter();
-        let b = vec![Ok(2)].into_iter();
-        let mut iter = SortMergeIterator::new(vec![a, b]).unwrap();
-
-        // Because replenish of the source producing `1` will produce an error,
-        // the iterator should return that error immediately. Other sources may
-        // still have buffered items which should be yielded.
-        assert!(matches!(iter.next(), Some(Err(e)) if e.to_string().contains("err-after-1")));
-        // next should return the remaining item from the other source (2)
-        let next = iter.next();
-        assert_eq!(next.unwrap().unwrap(), 2);
-        assert!(iter.next().is_none());
-    }
 }

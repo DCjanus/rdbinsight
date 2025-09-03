@@ -68,6 +68,15 @@ pub enum RDBStr {
     Int(u64),
 }
 
+impl RDBStr {
+    pub fn to_bytes(&self) -> Bytes {
+        match self {
+            RDBStr::Str(b) => b.clone(),
+            RDBStr::Int(i) => Bytes::from(i.to_string()),
+        }
+    }
+}
+
 impl PartialOrd for RDBStr {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))

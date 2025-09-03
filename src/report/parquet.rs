@@ -456,7 +456,7 @@ impl ReportDataProvider for ParquetReportProvider {
                 .add_assign(meta.keys_statistics.clone());
 
             top_keys.extend(meta.top_keys.into_iter().map(|r| TopKeyRecord {
-                key: Bytes::from(r.key.to_string()),
+                key: r.key.to_bytes(),
                 rdb_size: r.rdb_size,
                 member_count: r.member_count,
                 r#type: r.type_name().to_string(),
@@ -471,7 +471,7 @@ impl ReportDataProvider for ParquetReportProvider {
                         .unwrap_or_default()
                 }),
             }));
-            top_keys.sort_by_key(|r| Reverse(r.rdb_size));
+            top_keys.sort_by_key(|r| (Reverse(r.rdb_size), r.key.clone()));
             top_keys.truncate(100);
 
             big_keys.extend(meta.big_keys.into_iter().map(|r| BigKey {

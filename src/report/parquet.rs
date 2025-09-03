@@ -409,7 +409,7 @@ impl ReportDataProvider for ParquetReportProvider {
         for path in files {
             let meta = Self::parse_file_metadata(&path)
                 .with_context(|| format!("Failed to parse metadata for {}", path.display()))?;
-            
+
             if inferred_batch_nanos.is_none() {
                 inferred_batch_nanos = Some(meta.batch_unix_nanos);
             } else if inferred_batch_nanos != Some(meta.batch_unix_nanos) {
@@ -422,7 +422,6 @@ impl ReportDataProvider for ParquetReportProvider {
                 );
             }
 
-            
             if inferred_cluster.is_none() {
                 inferred_cluster = Some(meta.cluster.clone());
             } else if inferred_cluster.as_ref().map(|c| c.as_str()) != Some(meta.cluster.as_str()) {
@@ -464,7 +463,13 @@ impl ReportDataProvider for ParquetReportProvider {
                 instance: meta.instance.clone(),
                 db: r.db,
                 encoding: r.encoding_name(),
-                expire_at: r.expire_at_ms.map(|ms| ms.to_string()),
+                expire_at: r.expire_at_ms.map(|ms| {
+                    // Convert milliseconds since Unix epoch to an RFC3339 string in UTC
+                    let odt = OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000)
+                        .unwrap_or_else(|_| OffsetDateTime::from_unix_timestamp_nanos(0).unwrap());
+                    odt.format(&time::format_description::well_known::Rfc3339)
+                        .unwrap_or_default()
+                }),
             }));
             top_keys.sort_by_key(|r| Reverse(r.rdb_size));
             top_keys.truncate(100);
@@ -490,7 +495,7 @@ impl ReportDataProvider for ParquetReportProvider {
         let this = self.clone();
         let top_prefixes =
             tokio::task::spawn_blocking(move || this.scan_top_prefix(total_size)).await??;
-        
+
         let nanos = inferred_batch_nanos
             .ok_or_else(|| anyhow!("Missing summary metadata batch timestamp in parquet files"))?;
         let odt = OffsetDateTime::from_unix_timestamp_nanos(nanos as i128)

@@ -16,6 +16,7 @@ pub struct TopKeyRecord {
     pub instance: String,
     pub db: u64,
     pub encoding: String,
+    /// Expiration time as an RFC3339 UTC string (e.g. `2025-01-15T10:00:00Z`).
     pub expire_at: Option<String>,
 }
 

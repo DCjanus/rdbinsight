@@ -68,6 +68,42 @@ pub enum RDBStr {
     Int(u64),
 }
 
+impl RDBStr {
+    pub fn to_bytes(&self) -> Bytes {
+        match self {
+            RDBStr::Str(b) => b.clone(),
+            RDBStr::Int(i) => Bytes::from(i.to_string()),
+        }
+    }
+}
+
+impl PartialOrd for RDBStr {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RDBStr {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (RDBStr::Str(a), RDBStr::Str(b)) => a.as_ref().cmp(b.as_ref()),
+            (RDBStr::Str(a), RDBStr::Int(b)) => {
+                let b_bytes = Bytes::from(b.to_string());
+                a.cmp(&b_bytes)
+            }
+            (RDBStr::Int(a), RDBStr::Str(b)) => {
+                let a_bytes = Bytes::from(a.to_string());
+                a_bytes.cmp(b)
+            }
+            (RDBStr::Int(a), RDBStr::Int(b)) => {
+                let a_bytes = Bytes::from(a.to_string());
+                let b_bytes = Bytes::from(b.to_string());
+                a_bytes.cmp(&b_bytes)
+            }
+        }
+    }
+}
+
 pub fn read_rdb_str(input: &[u8]) -> AnyResult<(&[u8], RDBStr)> {
     let (input, len) = read_rdb_len(input)?;
     match len {
@@ -97,8 +133,70 @@ pub fn read_rdb_str(input: &[u8]) -> AnyResult<(&[u8], RDBStr)> {
 impl Display for RDBStr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RDBStr::Str(s) => write!(f, "{:?}", s),
+            RDBStr::Str(s) => write!(f, "{}", s.escape_ascii()),
             RDBStr::Int(i) => write!(f, "{}", i),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn str_vs_str_ordering() {
+        let a = RDBStr::Str(Bytes::from("a"));
+        let b = RDBStr::Str(Bytes::from("b"));
+        let a2 = RDBStr::Str(Bytes::from("a"));
+        assert!(a < b);
+        assert_eq!(a.cmp(&a2), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn int_vs_int_lexicographic() {
+        // "2" > "10" in lexicographic byte order
+        let two = RDBStr::Int(2);
+        let ten = RDBStr::Int(10);
+        assert!(two > ten);
+        assert_eq!(ten.cmp(&ten), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn str_vs_int_mixed() {
+        // "2" (Str) vs 10 (Int -> "10")
+        let s = RDBStr::Str(Bytes::from("2"));
+        let i = RDBStr::Int(10);
+        assert!(s > i);
+    }
+
+    #[test]
+    fn empty_string_and_zero() {
+        let empty = RDBStr::Str(Bytes::new());
+        let zero_int = RDBStr::Int(0);
+        // "" < "0"
+        assert!(empty < zero_int);
+    }
+
+    #[test]
+    fn binary_bytes_ordering() {
+        let a = RDBStr::Str(Bytes::from(&b"\x00\x01\x02"[..]));
+        let b = RDBStr::Str(Bytes::from(&b"\x00\x01\x03"[..]));
+        assert!(a < b);
+    }
+
+    #[test]
+    fn sorting_preserves_non_decreasing_order() {
+        let mut v = vec![
+            RDBStr::Str(Bytes::from("")),
+            RDBStr::Int(0),
+            RDBStr::Str(Bytes::from("0")),
+            RDBStr::Int(1),
+            RDBStr::Str(Bytes::from("1")),
+            RDBStr::Str(Bytes::from("2")),
+        ];
+        v.sort();
+        for i in 1..v.len() {
+            assert!(v[i - 1] <= v[i], "order violated at index {}", i - 1);
         }
     }
 }

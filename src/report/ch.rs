@@ -1,69 +1,17 @@
-use anyhow::{Context, Result as AnyResult};
+use anyhow::Context;
 use bytes::Bytes;
 use clickhouse::{Client, Row};
-use serde::{Deserialize, Serialize};
-use serde_with::{base64::Base64, serde_as};
+use serde::Deserialize;
 use time::OffsetDateTime;
 
-use crate::config::ClickHouseConfig;
-
-#[serde_as]
-#[derive(Debug, Clone, Serialize)]
-pub struct PrefixRecord {
-    #[serde_as(as = "Base64")]
-    pub prefix_base64: Bytes,
-    pub instance: String,
-    pub db: u64,
-    pub r#type: String,
-    pub rdb_size: u64,
-    pub key_count: u64,
-}
-
-#[serde_as]
-#[derive(Debug, Clone, Serialize)]
-pub struct TopKeyRecord {
-    #[serde_as(as = "Base64")]
-    #[serde(rename = "key_base64")]
-    pub key: Bytes,
-    pub rdb_size: u64,
-    pub member_count: Option<u64>,
-    pub r#type: String,
-    pub instance: String,
-    pub db: u64,
-    pub encoding: String,
-    pub expire_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DbAggregate {
-    pub db: u64,
-    pub key_count: u64,
-    pub total_size: u64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TypeAggregate {
-    pub data_type: String,
-    pub key_count: u64,
-    pub total_size: u64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct InstanceAggregate {
-    pub instance: String,
-    pub key_count: u64,
-    pub total_size: u64,
-}
-
-#[serde_as]
-#[derive(Debug, Clone, Serialize)]
-pub struct PrefixAggregate {
-    #[serde_as(as = "Base64")]
-    #[serde(rename = "prefix_base64")]
-    pub prefix: Bytes,
-    pub total_size: u64,
-    pub key_count: u64,
-}
+use crate::{
+    config::ClickHouseConfig,
+    helper::AnyResult,
+    report::model::{
+        BigKey, ClusterIssues, DbAggregate, InstanceAggregate, PrefixAggregate, ReportData,
+        ReportDataProvider, TopKeyRecord, TypeAggregate,
+    },
+};
 
 #[derive(Debug)]
 struct PrefixPartition {
@@ -73,44 +21,13 @@ struct PrefixPartition {
     max_key: Bytes,
 }
 
-#[serde_as]
-#[derive(Debug, Clone, Serialize)]
-pub struct BigKey {
-    #[serde_as(as = "Base64")]
-    #[serde(rename = "key_base64")]
-    pub key: Bytes,
-    pub instance: String,
-    pub db: u64,
-    pub r#type: String,
-    pub rdb_size: u64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ClusterIssues {
-    pub big_keys: Vec<BigKey>,
-    pub codis_slot_skew: bool,
-    pub redis_cluster_slot_skew: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ReportData {
-    pub cluster: String,
-    pub batch: String,
-    pub db_aggregates: Vec<DbAggregate>,
-    pub type_aggregates: Vec<TypeAggregate>,
-    pub instance_aggregates: Vec<InstanceAggregate>,
-    pub top_keys: Vec<TopKeyRecord>,
-    pub top_prefixes: Vec<PrefixAggregate>,
-    pub cluster_issues: ClusterIssues,
-}
-
-pub struct ClickHouseQuerier {
+pub struct ClickHouseReportProvider {
     client: Client,
     cluster: String,
     batch: String,
 }
 
-impl ClickHouseQuerier {
+impl ClickHouseReportProvider {
     pub async fn new(config: ClickHouseConfig, cluster: String, batch: String) -> AnyResult<Self> {
         let client = config
             .create_client()
@@ -482,7 +399,7 @@ impl ClickHouseQuerier {
                 expire_at
             FROM redis_records_view
             WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC')
-            ORDER BY rdb_size DESC
+            ORDER BY rdb_size DESC, key ASC
             LIMIT 100
         ";
 
@@ -702,8 +619,56 @@ impl ClickHouseQuerier {
 
         Ok(has_skew)
     }
+}
 
-    pub async fn generate_report_data(&self) -> AnyResult<ReportData> {
+/// Fetch the latest completed batch timestamp string (RFC3339) for a cluster.
+pub async fn get_latest_batch_for_cluster(
+    clickhouse_config: &ClickHouseConfig,
+    cluster: &str,
+) -> anyhow::Result<String> {
+    let client = clickhouse_config
+        .create_client()
+        .context("Failed to create ClickHouse client")?;
+
+    let query = "
+        SELECT batch
+        FROM import_batches_completed
+        WHERE cluster = ?
+        ORDER BY batch DESC
+        LIMIT 1
+    ";
+
+    #[derive(Debug, Row, Deserialize)]
+    struct LatestBatchRow {
+        #[serde(with = "clickhouse::serde::time::datetime64::nanos")]
+        batch: OffsetDateTime,
+    }
+
+    let rows: Vec<LatestBatchRow> = client
+        .query(query)
+        .bind(cluster)
+        .fetch_all()
+        .await
+        .with_context(|| format!("Failed to query latest batch for cluster: {cluster}"))?;
+
+    if rows.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No completed batches found for cluster: {}",
+            cluster
+        ));
+    }
+
+    let latest_batch = rows[0].batch;
+    let batch_str = latest_batch
+        .format(&time::format_description::well_known::Rfc3339)
+        .with_context(|| "Failed to format batch timestamp")?;
+
+    Ok(batch_str)
+}
+
+#[async_trait::async_trait]
+impl ReportDataProvider for ClickHouseReportProvider {
+    async fn generate_report_data(&self) -> AnyResult<ReportData> {
         tracing::info!(
             operation = "report_generation_start",
             cluster = %self.cluster,

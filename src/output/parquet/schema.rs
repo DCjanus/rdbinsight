@@ -11,21 +11,21 @@ pub fn create_redis_record_schema() -> Schema {
             false,
         ),
         Field::new("instance", DataType::Utf8, false),
-        Field::new("db", DataType::Int64, false),
+        Field::new("db", DataType::UInt64, false),
         Field::new("key", DataType::Binary, false),
         Field::new("type", DataType::Utf8, false),
-        Field::new("member_count", DataType::Int64, false),
-        Field::new("rdb_size", DataType::Int64, false),
+        Field::new("member_count", DataType::UInt64, false),
+        Field::new("rdb_size", DataType::UInt64, false),
         Field::new("encoding", DataType::Utf8, false),
         Field::new(
             "expire_at",
             DataType::Timestamp(TimeUnit::Millisecond, Some("UTC".into())),
             true, // nullable
         ),
-        Field::new("idle_seconds", DataType::Int64, true), // nullable
-        Field::new("freq", DataType::Int32, true),         // nullable
-        Field::new("codis_slot", DataType::Int32, true),   // nullable
-        Field::new("redis_slot", DataType::Int32, true),   // nullable
+        Field::new("idle_seconds", DataType::UInt64, true), // nullable
+        Field::new("freq", DataType::UInt8, true),          // nullable
+        Field::new("codis_slot", DataType::UInt16, true),   // nullable
+        Field::new("redis_slot", DataType::UInt16, true),   // nullable
     ])
 }
 

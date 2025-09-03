@@ -234,9 +234,7 @@ impl ParquetChunkWriter {
 #[async_trait::async_trait]
 impl ChunkWriter for ParquetChunkWriter {
     async fn write_record(&mut self, record: crate::record::Record) -> AnyResult<()> {
-        // Feed run buffer (sorted by (db, key))
         let key = SortKey::from_record(&record);
-        // On duplicate keys, newer record overwrites previous one. This should be rare/non-existent in typical RDB dumps.
         self.run_buffer.insert(key, record);
         if self.run_buffer.len() >= self.max_run_rows {
             self.flush_run_segment().await?;

@@ -4,7 +4,7 @@ use rdbinsight::{
     config::ClickHouseConfig,
     output::{ChunkWriter, Output, clickhouse::ClickHouseOutput},
     record::{Record, RecordEncoding, RecordType},
-    report::{ReportGenerator, get_latest_batch_for_cluster},
+    report::ch::{ClickHouseReportProvider, get_latest_batch_for_cluster},
 };
 use time::OffsetDateTime;
 use tracing::info;
@@ -83,10 +83,13 @@ async fn test_report_generate_data_with_clickhouse() {
     let batch_str = get_latest_batch_for_cluster(&ch_config, &cluster)
         .await
         .unwrap();
-    let generator = ReportGenerator::new(ch_config.clone(), cluster.clone(), batch_str.clone())
+    let querier =
+        ClickHouseReportProvider::new(ch_config.clone(), cluster.clone(), batch_str.clone())
+            .await
+            .unwrap();
+    let data = rdbinsight::report::model::ReportDataProvider::generate_report_data(&querier)
         .await
         .unwrap();
-    let data = generator.generate_data().await.unwrap();
 
     // 5) assertions
     assert_eq!(data.cluster, cluster);
@@ -152,10 +155,13 @@ async fn test_report_generate_data_with_empty_cluster() {
     let batch_str = get_latest_batch_for_cluster(&ch_config, &cluster)
         .await
         .unwrap();
-    let generator = ReportGenerator::new(ch_config.clone(), cluster.clone(), batch_str.clone())
+    let querier =
+        ClickHouseReportProvider::new(ch_config.clone(), cluster.clone(), batch_str.clone())
+            .await
+            .unwrap();
+    let data = rdbinsight::report::model::ReportDataProvider::generate_report_data(&querier)
         .await
         .unwrap();
-    let data = generator.generate_data().await.unwrap();
 
     // 5) assertions for empty cluster
     assert_eq!(data.cluster, cluster);

@@ -19,6 +19,7 @@ use rdbinsight::{
     metric,
     output::{ChunkWriter, ChunkWriterEnum, Output},
     record::RecordStream,
+    report::model::ReportDataProvider,
     source::{RDBStream, RdbSourceConfig},
 };
 use time::OffsetDateTime;
@@ -242,6 +243,9 @@ enum ReportCommand {
     /// Generate report from ClickHouse
     #[command(name = "from-clickhouse")]
     FromClickhouse(ReportFromClickHouseArgs),
+    /// Generate report from Parquet files
+    #[command(name = "from-parquet")]
+    FromParquet(ReportFromParquetArgs),
 }
 
 #[derive(Args)]
@@ -266,6 +270,25 @@ struct ReportFromClickHouseArgs {
     /// HTTP proxy URL for ClickHouse connections
     #[arg(long, env = "RDBINSIGHT_CLICKHOUSE_PROXY_URL")]
     proxy_url: Option<String>,
+}
+
+#[derive(Args)]
+struct ReportFromParquetArgs {
+    /// Base directory where parquet output is stored
+    #[arg(long)]
+    dir: PathBuf,
+
+    /// Cluster name
+    #[clap(long, env = "RDBINSIGHT_CLUSTER")]
+    cluster: String,
+
+    /// Batch slug (optional, defaults to latest)
+    #[clap(long, env = "RDBINSIGHT_BATCH")]
+    batch: Option<String>,
+
+    /// Output HTML file path
+    #[clap(short, long, env = "RDBINSIGHT_REPORT_OUTPUT")]
+    output: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -737,15 +760,155 @@ async fn run_report(args: ReportArgs) -> Result<()> {
                 sub.proxy_url,
             )?;
 
-            rdbinsight::report::run_report_with_config(
+            // determine batch
+            let actual_batch = match sub.batch {
+                Some(batch_str) => {
+                    let _batch_timestamp = OffsetDateTime::parse(
+                        &batch_str,
+                        &time::format_description::well_known::Rfc3339,
+                    )
+                    .with_context(|| format!("Invalid batch timestamp format: {batch_str}"))?;
+                    batch_str
+                }
+                None => {
+                    info!(
+                        operation = "latest_batch_fetch",
+                        cluster = %sub.cluster,
+                        "No batch specified, fetching latest batch for cluster"
+                    );
+                    rdbinsight::report::ch::get_latest_batch_for_cluster(
+                        &clickhouse_config,
+                        &sub.cluster,
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("Failed to get latest batch for cluster: {}", sub.cluster)
+                    })?
+                }
+            };
+
+            let querier = rdbinsight::report::ch::ClickHouseReportProvider::new(
                 clickhouse_config,
-                sub.cluster,
-                sub.batch,
-                sub.output,
+                sub.cluster.clone(),
+                actual_batch.clone(),
             )
             .await
+            .with_context(|| "Failed to initialize ClickHouse querier")?;
+
+            let report_data = ReportDataProvider::generate_report_data(&querier)
+                .await
+                .with_context(|| "Failed to generate report data from ClickHouse")?;
+
+            let html_content = rdbinsight::report::render_report_html(&report_data)
+                .context("Failed to render report")?;
+
+            write_and_log_report(
+                &sub.cluster,
+                &actual_batch,
+                sub.output,
+                html_content,
+                "report_generated",
+            )
+            .await?;
+
+            Ok(())
+        }
+        ReportCommand::FromParquet(sub) => {
+            // Resolve actual batch slug before creating provider.
+            let resolved_batch: String = if let Some(slug) = sub.batch.clone() {
+                // user provided slug, validate it exists
+                let candidate = sub
+                    .dir
+                    .join(format!("cluster={}", sub.cluster))
+                    .join(format!("batch={}", slug));
+                if !candidate.exists() {
+                    return Err(anyhow!(
+                        "Specified batch slug not found: {}",
+                        candidate.display()
+                    ));
+                }
+                slug
+            } else {
+                // pick latest by lexicographical order under cluster dir
+                let cluster_dir = sub.dir.join(format!("cluster={}", sub.cluster));
+                if !cluster_dir.exists() {
+                    return Err(anyhow!(
+                        "Cluster directory does not exist: {}",
+                        cluster_dir.display()
+                    ));
+                }
+                let mut slugs: Vec<_> = std::fs::read_dir(&cluster_dir)?
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                    .filter_map(|e| e.file_name().into_string().ok())
+                    .filter(|name| name.starts_with("batch="))
+                    .collect();
+                slugs.sort();
+                let latest = slugs.pop().ok_or_else(|| {
+                    anyhow!("No batch directories found under {}", cluster_dir.display())
+                })?;
+                latest
+                    .strip_prefix("batch=")
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| anyhow!("Unexpected batch dir name: {}", latest))?
+            };
+
+            let provider = rdbinsight::report::parquet::ParquetReportProvider::new(
+                sub.dir.clone(),
+                sub.cluster.clone(),
+                resolved_batch.clone(),
+            );
+
+            let report_data = ReportDataProvider::generate_report_data(&provider)
+                .await
+                .with_context(|| "Failed to generate report data from Parquet files")?;
+
+            let html_content = rdbinsight::report::render_report_html(&report_data)
+                .context("Failed to render report")?;
+
+            write_and_log_report(
+                &sub.cluster,
+                &resolved_batch,
+                sub.output,
+                html_content,
+                "report_generated_from_parquet",
+            )
+            .await?;
+
+            Ok(())
         }
     }
+}
+
+async fn write_and_log_report(
+    cluster: &str,
+    batch: &str,
+    output: Option<PathBuf>,
+    html_content: String,
+    op_name: &str,
+) -> anyhow::Result<()> {
+    let output_path = match output {
+        Some(path) => path,
+        None => {
+            let safe_batch = batch.replace(':', "-").replace('+', "_");
+            let filename: String = format!("rdb_report_{}_{}.html", cluster, safe_batch);
+            PathBuf::from(filename)
+        }
+    };
+
+    tokio::fs::write(&output_path, html_content)
+        .await
+        .with_context(|| format!("Failed to write report to: {}", output_path.display()))?;
+
+    info!(
+        operation = %op_name,
+        cluster = %cluster,
+        batch = %batch,
+        output_path = %output_path.display(),
+        "Report generated successfully"
+    );
+
+    Ok(())
 }
 
 fn log_instance_progress(

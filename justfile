@@ -16,7 +16,7 @@ fmt:
 	cargo +nightly fmt --all
 
 fix: fmt
-	cargo fix --allow-dirty --allow-staged
+	cargo +nightly fix --allow-dirty --allow-staged
 
 before_commit:
     just fix
@@ -24,8 +24,9 @@ before_commit:
     just test
 
 clean:
-	rm -rf tests/dumps/*.rdb
-	rm -f ./rdb_report_*.html
+    rm -rf tests/dumps/*.rdb 
+    rm -f ./rdb_report_*.html
+    rm -rf ./tmp/
 
 init_test:
     @ if ! cargo nextest --version > /dev/null 2>&1; then cargo install cargo-nextest --locked; fi
@@ -47,7 +48,9 @@ down_dev:
 demo with_data='true': up_dev
     if {{with_data}} == 'true'; then cargo run --release --bin fill_redis_memory -- 'redis://127.0.0.1:6380' '512M'; fi
     cargo run --release --bin rdbinsight -- dump from-standalone --addr '127.0.0.1:6380' --cluster 'dev-test-cluster' into-clickhouse --url 'http://rdbinsight:rdbinsight@127.0.0.1:8124?database=rdbinsight' --auto-create-tables
-    cargo run --release --bin rdbinsight -- report from-clickhouse --cluster 'dev-test-cluster' --url 'http://rdbinsight:rdbinsight@127.0.0.1:8124?database=rdbinsight'
+    cargo run --release --bin rdbinsight -- report from-clickhouse --cluster 'dev-test-cluster' --url 'http://rdbinsight:rdbinsight@127.0.0.1:8124?database=rdbinsight' --output ./rdb_report_from_clickhouse.html
+    cargo run --release --bin rdbinsight -- dump from-standalone --addr '127.0.0.1:6380' --cluster 'dev-test-cluster' into-parquet --dir ./tmp/parquet_output
+    cargo run --release --bin rdbinsight -- report from-parquet --cluster 'dev-test-cluster' --dir ./tmp/parquet_output --output ./rdb_report_from_parquet.html
 
 verify_version tag='':
     #!/usr/bin/env bash

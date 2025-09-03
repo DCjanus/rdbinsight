@@ -54,15 +54,15 @@
   - [x] 字段：`db: i64`, `key: Vec<u8>`, `record: crate::record::Record`；实现 `Ord/PartialOrd/Eq/PartialEq`，排序规则 `(db asc, key asc)`。
 - [x] 为 `run_lz4::RunReader` 提供轻量迭代器适配器 `RunRecordIter`：
   - [x] `impl Iterator<Item=anyhow::Result<SortableRecord>>`，内部调用 `read_next()` 并在 EOF 时返回 `None`。
-- [ ] 在 `merge.rs` 的 `merge()` 中：
-  - [ ] 将现有 `BinaryHeap<Reverse<HeapItem>>` 逻辑替换为 `SortMergeIteratorResult<RunRecordIter, SortableRecord, anyhow::Error>`。
-  - [ ] 消费 `SortableRecord` 时取 `record` 字段，保持批写与统计逻辑不变。
-- [ ] 单元测试：保留并通过现有 `heap` 行为测试（必要时调整为覆盖 `SortableRecord` 的比较与合并行为）。
+- [x] 在 `merge.rs` 的 `merge()` 中：
+  - [x] 将现有 `BinaryHeap<Reverse<HeapItem>>` 逻辑替换为 `SortMergeIteratorResult<RunRecordIter, SortableRecord, anyhow::Error>`。
+  - [x] 消费 `SortableRecord` 时取 `record` 字段，保持批写与统计逻辑不变。
+- [x] 单元测试：保留并通过现有 `heap` 行为测试（必要时调整为覆盖 `SortableRecord` 的比较与合并行为）。
 
 ### 验证步骤
 
-- [ ] 运行 `cargo build` 确认编译通过。
-- [ ] 运行相关测试；用较小的旧式 run 文件样本进行一次合并，检验排序与输出一致。
+- [x] 运行 `cargo build` 确认编译通过。
+- [x] 运行相关测试；用较小的旧式 run 文件样本进行一次合并，检验排序与输出一致。
 
 ---
 

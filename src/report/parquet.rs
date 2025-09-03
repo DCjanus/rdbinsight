@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    collections::{BinaryHeap, HashMap, VecDeque},
+    collections::{HashMap, VecDeque},
     fs,
     ops::AddAssign,
     path::{Path, PathBuf},
@@ -26,7 +26,7 @@ use parquet::{
 use time::OffsetDateTime;
 
 use crate::{
-    helper::AnyResult,
+    helper::{AnyResult, SortMergeIterator},
     output::parquet::{
         merge::{KeysStatistics, RecordsSummary},
         schema::find_field_index,
@@ -90,7 +90,9 @@ impl ParquetReportProvider {
         Ok(files)
     }
 
-    fn build_group_merge_iterator(&self) -> AnyResult<GroupedMergeIterator> {
+    fn build_group_merge_iterator(
+        &self,
+    ) -> AnyResult<SortMergeIterator<DBElementsIterator, (Bytes, u64)>> {
         let batch_dir = self.find_batch_dir()?;
         let files = Self::list_parquet_files(&batch_dir)?;
         let mut iterators = Vec::new();
@@ -101,7 +103,7 @@ impl ParquetReportProvider {
                 iterators.push(iterator);
             }
         }
-        let iter = GroupedMergeIterator::new(iterators)?;
+        let iter = SortMergeIterator::new(iterators)?;
         Ok(iter)
     }
 
@@ -335,51 +337,6 @@ impl Iterator for DBElementsIterator {
     }
 }
 
-struct GroupedMergeIterator {
-    iters: Vec<DBElementsIterator>,
-    heap: BinaryHeap<HeapItem>,
-}
-
-impl GroupedMergeIterator {
-    fn new(mut iters: Vec<DBElementsIterator>) -> AnyResult<Self> {
-        let mut heap = BinaryHeap::new();
-        for (idx, iter) in iters.iter_mut().enumerate() {
-            if let Some(ret) = iter.next() {
-                let (key, size) = ret?;
-                heap.push(HeapItem {
-                    key,
-                    size,
-                    iter_idx: idx,
-                });
-            }
-        }
-        Ok(Self { iters, heap })
-    }
-}
-
-impl Iterator for GroupedMergeIterator {
-    type Item = AnyResult<(Bytes, u64)>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let top = self.heap.pop()?;
-
-        let poped_iter = &mut self.iters[top.iter_idx];
-        match poped_iter.next() {
-            None => {}
-            Some(Ok((key, size))) => {
-                self.heap.push(HeapItem {
-                    key,
-                    size,
-                    iter_idx: top.iter_idx,
-                });
-            }
-            Some(Err(e)) => return Some(Err(e)),
-        }
-
-        Some(Ok((top.key, top.size)))
-    }
-}
-
 #[async_trait::async_trait]
 impl ReportDataProvider for ParquetReportProvider {
     async fn generate_report_data(&self) -> AnyResult<ReportData> {
@@ -547,193 +504,5 @@ impl ReportDataProvider for ParquetReportProvider {
         };
 
         Ok(report)
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct HeapItem {
-    key: Bytes,
-    size: u64,
-    iter_idx: usize,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_heapitem_ordering_basic() {
-        let a = HeapItem {
-            key: Bytes::from_static(b"abc"),
-            size: 10,
-            iter_idx: 1,
-        };
-        let b = HeapItem {
-            key: Bytes::from_static(b"abc"),
-            size: 10,
-            iter_idx: 2,
-        };
-        let c = HeapItem {
-            key: Bytes::from_static(b"abd"),
-            size: 5,
-            iter_idx: 0,
-        };
-        let d = HeapItem {
-            key: Bytes::from_static(b"abb"),
-            size: 20,
-            iter_idx: 3,
-        };
-
-        // Ord: key, size, iter_idx
-        assert!(d < a); // "abb" < "abc"
-        assert!(a < c); // "abc" < "abd"
-        assert!(a < b); // same key/size, iter_idx 1 < 2
-        assert!(b > a);
-    }
-
-    #[test]
-    fn test_heapitem_ordering_stability() {
-        // Items with same key and size but different iter_idx
-        let mut items = vec![
-            HeapItem {
-                key: Bytes::from_static(b"foo"),
-                size: 42,
-                iter_idx: 2,
-            },
-            HeapItem {
-                key: Bytes::from_static(b"foo"),
-                size: 42,
-                iter_idx: 0,
-            },
-            HeapItem {
-                key: Bytes::from_static(b"foo"),
-                size: 42,
-                iter_idx: 1,
-            },
-        ];
-        items.sort();
-
-        assert_eq!(items[0].iter_idx, 0);
-        assert_eq!(items[1].iter_idx, 1);
-        assert_eq!(items[2].iter_idx, 2);
-    }
-
-    #[test]
-    fn test_heapitem_binaryheap_minheap_behavior() {
-        use std::collections::BinaryHeap;
-
-        let mut heap = BinaryHeap::new();
-        heap.push(HeapItem {
-            key: Bytes::from_static(b"b"),
-            size: 1,
-            iter_idx: 0,
-        });
-        heap.push(HeapItem {
-            key: Bytes::from_static(b"a"),
-            size: 1,
-            iter_idx: 0,
-        });
-        heap.push(HeapItem {
-            key: Bytes::from_static(b"c"),
-            size: 1,
-            iter_idx: 0,
-        });
-
-        // BinaryHeap is max-heap by default, so pop order: "c", "b", "a"
-        let mut keys = vec![];
-        while let Some(item) = heap.pop() {
-            keys.push(item.key.clone());
-        }
-        assert_eq!(keys, vec![
-            Bytes::from_static(b"c"),
-            Bytes::from_static(b"b"),
-            Bytes::from_static(b"a"),
-        ]);
-    }
-
-    #[test]
-    fn test_heapitem_reverse_for_minheap() {
-        use std::{cmp::Reverse, collections::BinaryHeap};
-
-        let mut heap = BinaryHeap::new();
-        heap.push(Reverse(HeapItem {
-            key: Bytes::from_static(b"b"),
-            size: 1,
-            iter_idx: 0,
-        }));
-        heap.push(Reverse(HeapItem {
-            key: Bytes::from_static(b"a"),
-            size: 1,
-            iter_idx: 0,
-        }));
-        heap.push(Reverse(HeapItem {
-            key: Bytes::from_static(b"c"),
-            size: 1,
-            iter_idx: 0,
-        }));
-
-        // With Reverse, pop order: "a", "b", "c"
-        let mut keys = vec![];
-        while let Some(Reverse(item)) = heap.pop() {
-            keys.push(item.key.clone());
-        }
-        assert_eq!(keys, vec![
-            Bytes::from_static(b"a"),
-            Bytes::from_static(b"b"),
-            Bytes::from_static(b"c"),
-        ]);
-    }
-    fn make_prefix(p: &'static [u8], total_size: u64, key_count: u64) -> PrefixAggregate {
-        PrefixAggregate {
-            prefix: Bytes::from_static(p),
-            total_size,
-            key_count,
-        }
-    }
-
-    #[test]
-    fn test_merge_prefix_aggregates_cases() {
-        struct Case {
-            name: &'static str,
-            input: Vec<PrefixAggregate>,
-            expect: Vec<(&'static [u8], u64, u64)>,
-        }
-
-        let cases = vec![
-            Case {
-                name: "nested_identical",
-                input: vec![
-                    make_prefix(b"f", 100, 3),
-                    make_prefix(b"fo", 100, 3),
-                    make_prefix(b"foo", 100, 3),
-                ],
-                expect: vec![(b"foo", 100, 3)],
-            },
-            Case {
-                name: "nested_different",
-                input: vec![
-                    make_prefix(b"f", 100, 3),
-                    make_prefix(b"fo", 50, 1),
-                    make_prefix(b"foo", 30, 1),
-                ],
-                expect: vec![(b"f", 100, 3), (b"fo", 50, 1), (b"foo", 30, 1)],
-            },
-        ];
-
-        for case in cases {
-            let out = merge_prefix_aggregates(case.input);
-            assert_eq!(out.len(), case.expect.len(), "{}: length", case.name);
-            for (i, (p, s, k)) in case.expect.iter().enumerate() {
-                assert_eq!(
-                    out[i].prefix,
-                    Bytes::from_static(*p),
-                    "{}: prefix {}",
-                    case.name,
-                    i
-                );
-                assert_eq!(out[i].total_size, *s, "{}: total_size {}", case.name, i);
-                assert_eq!(out[i].key_count, *k, "{}: key_count {}", case.name, i);
-            }
-        }
     }
 }

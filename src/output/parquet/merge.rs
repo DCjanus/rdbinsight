@@ -324,10 +324,6 @@ pub struct HeapItem {
     pub run_idx: usize,
 }
 
-// ColumnIndices removed — no longer needed
-
-// OutputBuilders removed — no longer needed
-
 #[cfg(test)]
 mod tests {
     use super::*;

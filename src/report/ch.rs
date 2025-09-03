@@ -399,7 +399,7 @@ impl ClickHouseReportProvider {
                 expire_at
             FROM redis_records_view
             WHERE cluster = ? AND batch = parseDateTime64BestEffort(?, 9, 'UTC')
-            ORDER BY rdb_size DESC
+            ORDER BY rdb_size DESC, key ASC
             LIMIT 100
         ";
 

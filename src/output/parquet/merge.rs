@@ -117,7 +117,8 @@ impl RecordsSummary {
         }
 
         self.top_keys.push(new.clone());
-        self.top_keys.sort_by_key(|r| Reverse(r.rdb_size));
+        self.top_keys
+            .sort_by_key(|r| (Reverse(r.rdb_size), r.key.clone()));
         self.top_keys.truncate(COUNT);
     }
 }

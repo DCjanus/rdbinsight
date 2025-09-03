@@ -97,7 +97,8 @@ pub struct ReportData {
     /// Sorting: descending by `total_size`.
     pub instance_aggregates: Vec<InstanceAggregate>,
     /// Top 100 keys by `rdb_size` across the batch.
-    /// Sorting: descending by `rdb_size` (ties may use a deterministic provider-defined tiebreaker).
+    /// Sorting: descending by `rdb_size`. When `rdb_size` values are equal, keys MUST be ordered
+    /// by their raw bytes in ascending lexicographic order (i.e., smallest key first).
     /// Limit: at most 100 items.
     pub top_keys: Vec<TopKeyRecord>,
     /// Significant key prefixes discovered from all keys in the batch.

@@ -410,14 +410,7 @@ impl RecordStream {
     fn calculate_slot(&self, key: &RDBStr) -> (Option<u16>, Option<u16>) {
         match self.source_type {
             SourceType::Codis => {
-                let slot = match key {
-                    RDBStr::Str(bytes) => codis_slot(bytes.as_ref()),
-                    RDBStr::Int(int_val) => {
-                        // Convert integer key to string representation for slot calculation
-                        let key_str = int_val.to_string();
-                        codis_slot(key_str.as_bytes())
-                    }
-                };
+                let slot = codis_slot(key.to_bytes().as_ref());
                 (Some(slot), None)
             }
             SourceType::Cluster => {

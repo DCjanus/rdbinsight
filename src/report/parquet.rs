@@ -424,7 +424,7 @@ impl ReportDataProvider for ParquetReportProvider {
 
             if inferred_cluster.is_none() {
                 inferred_cluster = Some(meta.cluster.clone());
-            } else if inferred_cluster.as_ref().map(|c| c.as_str()) != Some(meta.cluster.as_str()) {
+            } else if inferred_cluster.as_deref() != Some(meta.cluster.as_str()) {
                 // Different files report different cluster -> hard error
                 bail!(
                     "Parquet file {} reports cluster='{}' which differs from first file's cluster='{}'",

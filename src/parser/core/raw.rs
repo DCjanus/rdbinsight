@@ -97,7 +97,7 @@ pub fn read_rdb_str(input: &[u8]) -> AnyResult<(&[u8], RDBStr)> {
 impl Display for RDBStr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RDBStr::Str(s) => write!(f, "{:?}", s),
+            RDBStr::Str(s) => write!(f, "{}", s.escape_ascii()),
             RDBStr::Int(i) => write!(f, "{}", i),
         }
     }

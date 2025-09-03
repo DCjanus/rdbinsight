@@ -1,156 +1,175 @@
 use std::{
     fs::File,
-    io::{BufReader, Read, Write},
+    io::{BufReader, Read, Seek, SeekFrom, Write},
     path::Path,
-    time::Instant,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, ensure};
 use bincode::config::standard;
-use crc::{CRC_32_ISO_HDLC, Crc};
-use lz4_flex::frame::FrameEncoder;
-use tracing::debug;
+use lz4_flex::frame::{FrameDecoder, FrameEncoder};
+use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 
-use crate::record::Record;
+use crate::{output::parquet::merge::SortableRecord, record::Record};
 
-/// Write all records into a single LZ4-framed run file. This consumes the provided
-/// records iterator (ownership of `Record`) which fits the batch-write scenario.
-pub fn write_run_file<I>(path: impl AsRef<Path>, records: I) -> Result<()>
-where I: IntoIterator<Item = Record> {
-    let path_buf = path.as_ref().to_path_buf();
-    let file = File::create(&path_buf)?;
-    let mut encoder = FrameEncoder::new(file);
-
-    let mut rows_written: u64 = 0;
-    let mut bytes_uncompressed: u64 = 0;
-    let start = Instant::now();
-
-    for record in records {
-        let payload = bincode::serde::encode_to_vec(&record, standard())?;
-        let len = payload.len();
-
-        let crc = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&payload);
-
-        encoder.write_all(&(len as u32).to_be_bytes())?;
-        encoder.write_all(&payload)?;
-        encoder.write_all(&crc.to_be_bytes())?;
-
-        rows_written += 1;
-        bytes_uncompressed += len as u64;
-    }
-
-    // finish the frame and flush
-    encoder.finish().context("finish encoder")?;
-    let elapsed = start.elapsed();
-
-    debug!(operation = "parquet_run_lz4_flush_finished", path = %path_buf.display(), rows = rows_written, bytes_uncompressed = bytes_uncompressed, elapsed_ms = %elapsed.as_millis(), "Flushed run to {}", path_buf.display());
-
-    Ok(())
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChunkDesc {
+    pub offset: u64,
+    pub length: u64,
 }
 
-pub struct RunReader {
-    decoder: lz4_flex::frame::FrameDecoder<BufReader<File>>,
+// Unified run file format (single file, multiple LZ4 chunks):
+//
+// - File body: sequential LZ4 Frame compressed chunks. Each chunk, when
+// decompressed, is a sequence of records encoded as: `u32 (big-endian)` length
+// followed by `bincode` encoded `Record` payload (no CRC).
+//
+// - File tail: an LZ4-compressed bincode encoding of `Vec<ChunkDesc>` written
+// immediately before the last 8 bytes. The final 8 bytes are a big-endian
+// `u64` indicating the length of the compressed index region.
+//
+// - All integers use big-endian byte order. Run files are temporary artifacts and
+// readers should treat missing or malformed index regions as incomplete files.
+
+pub struct RunChunkReader {
+    decoder: FrameDecoder<BufReader<std::io::Take<File>>>,
     path: std::path::PathBuf,
-    offset: u64,
 }
 
-impl RunReader {
-    /// Open a run file for reading. Uses a buffered reader (256 KiB) wrapped by FrameDecoder.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+impl RunChunkReader {
+    pub fn open(path: impl AsRef<Path>, offset: u64, length: u64) -> Result<Self> {
         let path_buf = path.as_ref().to_path_buf();
-        let file = File::open(&path_buf)
+        let mut file = File::open(&path_buf)
             .with_context(|| anyhow!("Failed to open run file: {}", path_buf.display()))?;
-        let buf_reader = BufReader::with_capacity(64 * 1024, file);
-        let decoder = lz4_flex::frame::FrameDecoder::new(buf_reader);
+        file.seek(SeekFrom::Start(offset)).with_context(|| {
+            anyhow!(
+                "Failed to seek run file: {} to offset {}",
+                path_buf.display(),
+                offset
+            )
+        })?;
+        let take = file.take(length);
+        let buf_reader = BufReader::with_capacity(64 * 1024, take);
+        let decoder = FrameDecoder::new(buf_reader);
         Ok(Self {
             decoder,
             path: path_buf,
-            offset: 0,
         })
     }
+}
 
-    /// Read the next Record from the run. Returns Ok(None) on EOF.
-    pub fn read_next(&mut self) -> Result<Option<Record>> {
+impl Iterator for RunChunkReader {
+    type Item = crate::helper::AnyResult<crate::output::parquet::merge::SortableRecord>;
+
+    fn next(&mut self) -> Option<Self::Item> {
         use anyhow::Context;
 
         // Read 4-byte big-endian length
         let mut len_buf = [0u8; 4];
         if let Err(e) = self.decoder.read_exact(&mut len_buf) {
             if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                return Ok(None);
+                return None;
             } else {
-                return Err(e).with_context(|| {
-                    anyhow!(
-                        "Failed to read length from {} at offset {}",
-                        self.path.display(),
-                        self.offset
-                    )
-                });
+                return Some(Err(e).with_context(|| {
+                    anyhow!("Failed to read length from {}", self.path.display())
+                }));
             }
         }
         let len = u32::from_be_bytes(len_buf) as usize;
 
         // Read payload
         let mut payload = vec![0u8; len];
-        self.decoder.read_exact(&mut payload).with_context(|| {
-            anyhow!(
-                "Failed to read payload from {} at offset {}",
-                self.path.display(),
-                self.offset
-            )
-        })?;
-
-        // Read CRC32
-        let mut crc_buf = [0u8; 4];
-        self.decoder.read_exact(&mut crc_buf).with_context(|| {
-            anyhow!(
-                "Failed to read crc from {} at offset {}",
-                self.path.display(),
-                self.offset
-            )
-        })?;
-        let crc_read = u32::from_be_bytes(crc_buf);
-
-        // Validate CRC
-        let crc_calc = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&payload);
-        if crc_calc != crc_read {
-            return Err(anyhow!(
-                "CRC mismatch for {} at offset {}: expected {}, got {}",
-                self.path.display(),
-                self.offset,
-                crc_read,
-                crc_calc
-            ));
+        if let Err(e) = self.decoder.read_exact(&mut payload) {
+            return Some(
+                Err(e).with_context(|| {
+                    anyhow!("Failed to read payload from {}", self.path.display())
+                }),
+            );
         }
 
         // Deserialize with bincode
-        let (record, _): (Record, usize) = bincode::serde::decode_from_slice(&payload, standard())
-            .with_context(|| {
-                anyhow!(
-                    "Failed to deserialize record from {} at offset {}",
-                    self.path.display(),
-                    self.offset
-                )
-            })?;
+        let (record, _): (Record, usize) =
+            match bincode::serde::decode_from_slice(&payload, standard()) {
+                Ok(t) => t,
+                Err(e) => {
+                    return Some(Err(e).with_context(|| {
+                        anyhow!("Failed to deserialize record from {}", self.path.display())
+                    }));
+                }
+            };
 
-        // Advance offset (len field + payload + crc)
-        self.offset += 4 + len as u64 + 4;
-
-        Ok(Some(record))
+        Some(Ok(SortableRecord(record)))
     }
 }
 
-// Async wrapper that runs `write_run_file` inside `tokio::task::spawn_blocking` to avoid blocking the async runtime.
-// Accepts a pre-collected Vec<Record> so ownership can be moved into the blocking thread.
-pub async fn write_run_file_blocking<P>(path: P, records: Vec<Record>) -> Result<()>
-where P: AsRef<Path> + Send + 'static {
-    let path_buf = path.as_ref().to_path_buf();
-    let join_handle =
-        tokio::task::spawn_blocking(move || write_run_file(path_buf, records.into_iter()));
-
-    match join_handle.await {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(e),
-        Err(join_err) => Err(anyhow!("spawn_blocking join error: {}", join_err)),
+pub async fn append_chunk(file: &mut tokio::fs::File, records: Vec<Record>) -> Result<ChunkDesc> {
+    let mut encoder = FrameEncoder::new(Vec::new());
+    for record in records {
+        let payload = bincode::serde::encode_to_vec(&record, standard())?;
+        let len = payload.len();
+        encoder.write_all(&(len as u32).to_be_bytes())?;
+        encoder.write_all(&payload)?;
     }
+    let compressed = encoder.finish().context("finish encoder")?;
+
+    let offset = file.metadata().await?.len();
+    file.write_all(&compressed).await?;
+
+    Ok(ChunkDesc {
+        offset,
+        length: compressed.len() as u64,
+    })
+}
+
+pub async fn write_index(file: &mut tokio::fs::File, index: Vec<ChunkDesc>) -> Result<()> {
+    let index_bytes = bincode::serde::encode_to_vec(&index, standard())?;
+    let mut encoder = FrameEncoder::new(Vec::new());
+    encoder.write_all(&index_bytes)?;
+    let compressed = encoder.finish().context("finish encoder")?;
+    file.write_all(&compressed).await?;
+    file.write_all(&(compressed.len() as u64).to_be_bytes())
+        .await?;
+    Ok(())
+}
+
+pub fn read_run_index(path: impl AsRef<Path>) -> Result<Vec<ChunkDesc>> {
+    let path_buf = path.as_ref().to_path_buf();
+    let mut file = File::open(&path_buf).with_context(|| {
+        anyhow!(
+            "Failed to open run file for index read: {}",
+            path_buf.display()
+        )
+    })?;
+    let file_len = file
+        .metadata()
+        .with_context(|| anyhow!("Failed to stat run file: {}", path_buf.display()))?
+        .len();
+    ensure!(
+        file_len >= 8,
+        "Run file too small to contain index: {}",
+        path_buf.display()
+    );
+
+    file.seek(SeekFrom::End(-8)).context("seek to end - 8")?;
+    let mut len_buf = [0u8; 8];
+    file.read_exact(&mut len_buf).context("read index length")?;
+    let index_len = u64::from_be_bytes(len_buf);
+
+    let index_start = file_len.saturating_sub(8 + index_len);
+    file.seek(SeekFrom::Start(index_start))
+        .context("seek to index start")?;
+
+    let mut compressed_index = vec![0u8; index_len as usize];
+    file.read_exact(&mut compressed_index)
+        .context("read compressed index")?;
+
+    let mut decoder = FrameDecoder::new(BufReader::new(std::io::Cursor::new(compressed_index)));
+    let mut index_bytes = Vec::new();
+    decoder
+        .read_to_end(&mut index_bytes)
+        .context("decompress index")?;
+
+    let (chunks, _): (Vec<ChunkDesc>, usize) =
+        bincode::serde::decode_from_slice(&index_bytes, standard()).context("decode index")?;
+    Ok(chunks)
 }

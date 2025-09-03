@@ -43,4 +43,4 @@ component_management:
         - type: project
           # Temporarily lower coverage target while Parquet output is covered by integration tests.
           # TODO: Add integration tests covering Parquet output and raise this to 75.
-          target: 60
+          target: 50

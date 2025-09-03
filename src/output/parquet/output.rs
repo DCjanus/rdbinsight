@@ -83,7 +83,6 @@ impl Output for ParquetOutput {
 
         let writer = ParquetChunkWriter::new(
             instance.to_string(),
-            sanitized_instance.clone(),
             self.cluster.clone(),
             self.batch_ts,
             self.temp_batch_dir(),
@@ -150,24 +149,22 @@ impl SortKey {
 
 pub struct ParquetChunkWriter {
     instance: String,
-    instance_sanitized: String,
     cluster: String,
     batch_ts: time::OffsetDateTime,
-    temp_batch_dir: PathBuf,
     final_path: PathBuf,
     max_run_rows: usize,
 
     run_buffer: std::collections::BTreeMap<SortKey, crate::record::Record>,
     final_compression: ParquetCompression,
-    issuer: u64,
-    candidates: Vec<PathBuf>,
+    run_file_path: PathBuf,
+    run_file: tokio::fs::File,
+    run_index: Vec<crate::output::parquet::run_lz4::ChunkDesc>,
 }
 
 impl ParquetChunkWriter {
     #[allow(clippy::too_many_arguments)]
     async fn new(
         instance: String,
-        instance_sanitized: String,
         cluster: String,
         batch_ts: time::OffsetDateTime,
         temp_batch_dir: PathBuf,
@@ -175,26 +172,24 @@ impl ParquetChunkWriter {
         compression: ParquetCompression,
         max_run_rows: usize,
     ) -> AnyResult<Self> {
+        let run_file_path = temp_batch_dir.join(format!("{}.run.lz4", instance));
+        let run_file = tokio::fs::File::create(run_file_path.clone())
+            .await
+            .with_context(|| format!("Failed to create run file: {}", run_file_path.display()))?;
+
         Ok(Self {
             instance,
-            instance_sanitized,
             cluster,
             batch_ts,
-            temp_batch_dir,
             final_path,
             max_run_rows,
 
             run_buffer: std::collections::BTreeMap::new(),
             final_compression: compression,
-            issuer: 0,
-            candidates: Vec::new(),
+            run_file_path,
+            run_file,
+            run_index: Vec::new(),
         })
-    }
-
-    fn next_idx(&mut self) -> u64 {
-        let current = self.issuer;
-        self.issuer += 1;
-        current
     }
 
     async fn flush_run_segment(&mut self) -> AnyResult<()> {
@@ -202,29 +197,28 @@ impl ParquetChunkWriter {
             return Ok(());
         }
 
-        let idx = self.next_idx();
-        let segment_path = self
-            .temp_batch_dir
-            .join(path::run_filename(&self.instance_sanitized, idx));
+        let records = std::mem::take(&mut self.run_buffer)
+            .into_values()
+            .collect_vec();
+        let rows = records.len();
 
-        // Collect records and write them as an LZ4 streaming run file using bincode + crc32.
-        let records = self.run_buffer.values().cloned().collect_vec();
-        self.run_buffer.clear();
-
-        // Write run file in a blocking task to avoid blocking the async runtime.
-        super::run_lz4::write_run_file_blocking(segment_path.clone(), records.clone())
+        let desc = super::run_lz4::append_chunk(&mut self.run_file, records)
             .await
-            .with_context(|| format!("Failed to write run lz4 file: {}", segment_path.display()))?;
+            .with_context(|| {
+                format!(
+                    "Failed to append chunk to run file: {}",
+                    self.run_file_path.display()
+                )
+            })?;
 
-        // Track candidate for rolling merge
-        self.candidates.push(segment_path.clone());
+        self.run_index.push(desc);
 
         debug!(
             operation = "parquet_run_lz4_flush_finished",
             instance = %self.instance,
-            segment = %segment_path.file_name().and_then(|s| s.to_str()).unwrap_or("<unknown>"),
-            rows = records.len(),
-            "Flushed run lz4 segment"
+            run_file = %self.run_file_path.file_name().and_then(|s| s.to_str()).unwrap_or("<unknown>"),
+            rows = rows,
+            "Flushed chunk into single run file"
         );
 
         Ok(())
@@ -245,15 +239,21 @@ impl ChunkWriter for ParquetChunkWriter {
     async fn finalize_instance(self) -> AnyResult<()> {
         let mut this = self;
 
-        // Flush tail run segment if any
         if !this.run_buffer.is_empty() {
             this.flush_run_segment().await?;
         }
 
-        // Ensure deterministic order and perform a single merge into the final Parquet.
-        this.candidates.sort();
+        super::run_lz4::write_index(&mut this.run_file, this.run_index)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to write run index for {}",
+                    this.run_file_path.display()
+                )
+            })?;
+
         let merge_ctx = merge::MergeContext {
-            inputs: this.candidates,
+            inputs: vec![this.run_file_path.clone()],
             output: this.final_path.clone(),
             compression: this.final_compression,
             cluster: this.cluster.clone(),

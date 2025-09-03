@@ -1,8 +1,10 @@
 pub type AnyResult<T = ()> = anyhow::Result<T>;
 
 pub mod proxy_connector;
+pub mod sort_merge;
 
 use crc::{CRC_16_XMODEM, CRC_32_ISO_HDLC, Crc};
+pub use sort_merge::SortMergeIterator;
 
 pub fn wrapping_to_usize(value: u64) -> usize {
     value.try_into().unwrap_or(usize::MAX)

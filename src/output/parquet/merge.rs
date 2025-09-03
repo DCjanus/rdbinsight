@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    collections::{BinaryHeap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     ops::AddAssign,
     path::PathBuf,
     sync::Arc,
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::ParquetCompression,
     helper::AnyResult,
-    output::parquet::{mapper::records_to_columns, run_lz4::RunReader, schema},
+    output::parquet::{mapper::records_to_columns, run_lz4::RunChunkReader, schema},
     record::RecordType,
 };
 
@@ -133,20 +133,7 @@ pub struct MergeContext {
 }
 
 impl MergeContext {
-    fn make_heap_item_from_record(rec: &crate::record::Record, run_idx: usize) -> HeapItem {
-        let key_bytes = match &rec.key {
-            crate::parser::core::raw::RDBStr::Str(bytes) => bytes.to_vec(),
-            crate::parser::core::raw::RDBStr::Int(v) => v.to_string().into_bytes(),
-        };
-        HeapItem {
-            db: rec.db as i64,
-            key: key_bytes,
-            run_idx,
-        }
-    }
     pub fn merge(self) -> AnyResult<()> {
-        let _input_count = self.inputs.len();
-
         if self.inputs.is_empty() {
             self.create_empty_output()?;
             return Ok(());
@@ -173,42 +160,19 @@ impl MergeContext {
             instance.clone(),
         );
 
-        let (mut readers, mut current_records) = Self::open_run_readers(&self.inputs)?;
-
-        let mut heap: BinaryHeap<Reverse<HeapItem>> = BinaryHeap::new();
-
-        for (idx, opt_rec) in current_records.iter().enumerate() {
-            if let Some(rec) = opt_rec {
-                heap.push(Reverse(Self::make_heap_item_from_record(rec, idx)));
-            }
-        }
+        let readers = Self::open_run_readers(&self.inputs)?;
+        let merge_iter = crate::helper::sort_merge::SortMergeIterator::new(readers)
+            .context("Failed to initialize merge iterator")?;
 
         const BATCH_CAPACITY: usize = 8 * 1024;
         let mut batch_buf: Vec<crate::record::Record> = Vec::with_capacity(BATCH_CAPACITY);
 
-        while let Some(item) = heap.pop() {
-            let run_idx = item.0.run_idx;
+        for res in merge_iter {
+            let sortable = res.context("Failed during merging")?;
+            let record = sortable.0;
 
-            let record = current_records[run_idx]
-                .as_ref()
-                .expect("current record should be present");
-
-            summary.update_from_record(record);
+            summary.update_from_record(&record);
             batch_buf.push(record.clone());
-
-            match readers[run_idx].read_next() {
-                Ok(Some(next_rec)) => {
-                    current_records[run_idx] = Some(next_rec);
-                    heap.push(Reverse(Self::make_heap_item_from_record(
-                        current_records[run_idx].as_ref().unwrap(),
-                        run_idx,
-                    )));
-                }
-                Ok(None) => current_records[run_idx] = None,
-                Err(e) => {
-                    return Err(e).with_context(|| anyhow!("Failed to read from run {}", run_idx));
-                }
-            }
 
             if batch_buf.len() >= BATCH_CAPACITY {
                 Self::flush_batch_buf(&mut writer, &cluster, batch_ts, &instance, &mut batch_buf)?;
@@ -282,22 +246,26 @@ impl MergeContext {
         Ok(writer)
     }
 
-    fn open_run_readers(
-        inputs: &[PathBuf],
-    ) -> AnyResult<(Vec<RunReader>, Vec<Option<crate::record::Record>>)> {
-        let mut readers = Vec::with_capacity(inputs.len());
-        let mut current_records = Vec::with_capacity(inputs.len());
+    fn open_run_readers(inputs: &[PathBuf]) -> AnyResult<Vec<RunChunkReader>> {
+        let mut readers = Vec::new();
         for path in inputs {
-            let mut r = RunReader::open(path).with_context(|| {
-                anyhow!("Failed to open run file for reading: {}", path.display())
-            })?;
-            let rec = r
-                .read_next()
-                .with_context(|| anyhow!("Failed to read first record from: {}", path.display()))?;
-            readers.push(r);
-            current_records.push(rec);
+            let chunks =
+                crate::output::parquet::run_lz4::read_run_index(path).with_context(|| {
+                    anyhow!("Failed to read run index for file: {}", path.display())
+                })?;
+            for chunk in chunks {
+                let r =
+                    RunChunkReader::open(path, chunk.offset, chunk.length).with_context(|| {
+                        anyhow!(
+                            "Failed to open chunk reader for {} at offset {}",
+                            path.display(),
+                            chunk.offset
+                        )
+                    })?;
+                readers.push(r);
+            }
         }
-        Ok((readers, current_records))
+        Ok(readers)
     }
 
     fn flush_batch_buf(
@@ -319,89 +287,31 @@ impl MergeContext {
         Ok(())
     }
 }
-#[derive(Eq, PartialEq, Ord, PartialOrd)]
-pub struct HeapItem {
-    pub db: i64,
-    pub key: Vec<u8>,
-    pub run_idx: usize,
+
+/// Tuple wrapper for `Record` that implements ordering by `(db asc, key asc)`.
+#[derive(Debug)]
+pub struct SortableRecord(pub crate::record::Record);
+
+impl PartialEq for SortableRecord {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.db == other.0.db && self.0.key == other.0.key
+    }
 }
 
-// ColumnIndices removed — no longer needed
+impl Eq for SortableRecord {}
 
-// OutputBuilders removed — no longer needed
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_heap_item_ord() {
-        // Test HeapItem sorting logic
-        let item1 = HeapItem {
-            db: 1,
-            key: b"key1".to_vec(),
-            run_idx: 0,
-        };
-        let item2 = HeapItem {
-            db: 1,
-            key: b"key2".to_vec(),
-            run_idx: 0,
-        };
-        let item3 = HeapItem {
-            db: 2,
-            key: b"key1".to_vec(),
-            run_idx: 0,
-        };
-
-        // Test sorting logic with cmp method
-        assert_eq!(item1.cmp(&item2), std::cmp::Ordering::Less); // key1 < key2
-        assert_eq!(item2.cmp(&item1), std::cmp::Ordering::Greater); // key2 > key1
-        assert_eq!(item1.cmp(&item3), std::cmp::Ordering::Less); // db 1 < db 2
-        assert_eq!(item3.cmp(&item1), std::cmp::Ordering::Greater); // db 2 > db 1
+impl PartialOrd for SortableRecord {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
+}
 
-    #[test]
-    fn test_heap_behavior() {
-        // Test min-heap behavior
-        let mut heap = BinaryHeap::new();
-
-        let item1 = Reverse(HeapItem {
-            db: 2,
-            key: b"key2".to_vec(),
-            run_idx: 0,
-        });
-        let item2 = Reverse(HeapItem {
-            db: 1,
-            key: b"key1".to_vec(),
-            run_idx: 0,
-        });
-        let item3 = Reverse(HeapItem {
-            db: 3,
-            key: b"key3".to_vec(),
-            run_idx: 0,
-        });
-
-        heap.push(item1);
-        heap.push(item2);
-        heap.push(item3);
-
-        // Smallest item should come out first (db=1, key=key1)
-        let popped = heap.pop().unwrap();
-        assert_eq!(popped.0.db, 1);
-        assert_eq!(popped.0.key, b"key1");
-
-        // Next should be db=2, key=key2
-        let popped = heap.pop().unwrap();
-        assert_eq!(popped.0.db, 2);
-        assert_eq!(popped.0.key, b"key2");
-
-        // Last should be db=3, key=key3
-        let popped = heap.pop().unwrap();
-        assert_eq!(popped.0.db, 3);
-        assert_eq!(popped.0.key, b"key3");
+impl Ord for SortableRecord {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.0.db.cmp(&other.0.db) {
+            std::cmp::Ordering::Equal => {}
+            non_eq => return non_eq,
+        };
+        self.0.key.cmp(&other.0.key)
     }
-
-    // ColumnIndices tests removed
-
-    // OutputBuilders tests removed
 }

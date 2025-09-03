@@ -145,8 +145,6 @@ impl MergeContext {
         }
     }
     pub fn merge(self) -> AnyResult<()> {
-        let _input_count = self.inputs.len();
-
         if self.inputs.is_empty() {
             self.create_empty_output()?;
             return Ok(());

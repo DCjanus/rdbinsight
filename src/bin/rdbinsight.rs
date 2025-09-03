@@ -814,10 +814,49 @@ async fn run_report(args: ReportArgs) -> Result<()> {
             Ok(())
         }
         ReportCommand::FromParquet(sub) => {
+            // Resolve actual batch slug before creating provider.
+            let resolved_batch: String = if let Some(slug) = sub.batch.clone() {
+                // user provided slug, validate it exists
+                let candidate = sub
+                    .dir
+                    .join(format!("cluster={}", sub.cluster))
+                    .join(format!("batch={}", slug));
+                if !candidate.exists() {
+                    return Err(anyhow!(
+                        "Specified batch slug not found: {}",
+                        candidate.display()
+                    ));
+                }
+                slug
+            } else {
+                // pick latest by lexicographical order under cluster dir
+                let cluster_dir = sub.dir.join(format!("cluster={}", sub.cluster));
+                if !cluster_dir.exists() {
+                    return Err(anyhow!(
+                        "Cluster directory does not exist: {}",
+                        cluster_dir.display()
+                    ));
+                }
+                let mut slugs: Vec<_> = std::fs::read_dir(&cluster_dir)?
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                    .filter_map(|e| e.file_name().into_string().ok())
+                    .filter(|name| name.starts_with("batch="))
+                    .collect();
+                slugs.sort();
+                let latest = slugs.pop().ok_or_else(|| {
+                    anyhow!("No batch directories found under {}", cluster_dir.display())
+                })?;
+                latest
+                    .strip_prefix("batch=")
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| anyhow!("Unexpected batch dir name: {}", latest))?
+            };
+
             let provider = rdbinsight::report::parquet::ParquetReportProvider::new(
-                sub.dir,
+                sub.dir.clone(),
                 sub.cluster.clone(),
-                sub.batch.clone(),
+                resolved_batch.clone(),
             );
 
             let report_data = ReportDataProvider::generate_report_data(&provider)
@@ -827,13 +866,9 @@ async fn run_report(args: ReportArgs) -> Result<()> {
             let html_content = rdbinsight::report::render_report_html(&report_data)
                 .context("Failed to render report")?;
 
-            let actual_batch = sub
-                .batch
-                .clone()
-                .ok_or_else(|| anyhow!("No batch specified"))?;
             write_and_log_report(
                 &sub.cluster,
-                &actual_batch,
+                &resolved_batch,
                 sub.output,
                 html_content,
                 "report_generated_from_parquet",

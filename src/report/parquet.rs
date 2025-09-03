@@ -23,6 +23,7 @@ use parquet::{
     },
     file::statistics::Statistics,
 };
+use time::OffsetDateTime;
 
 use crate::{
     helper::AnyResult,
@@ -41,11 +42,11 @@ use crate::{
 pub struct ParquetReportProvider {
     pub base_dir: PathBuf,
     pub cluster: String,
-    pub batch_slug: Option<String>,
+    pub batch_slug: String,
 }
 
 impl ParquetReportProvider {
-    pub fn new(base_dir: PathBuf, cluster: String, batch_slug: Option<String>) -> Self {
+    pub fn new(base_dir: PathBuf, cluster: String, batch_slug: String) -> Self {
         Self {
             base_dir,
             cluster,
@@ -62,29 +63,12 @@ impl ParquetReportProvider {
             );
         }
 
-        if let Some(slug) = &self.batch_slug {
-            let candidate = cluster_dir.join(format!("batch={}", slug));
-            if candidate.exists() {
-                return Ok(candidate);
-            } else {
-                bail!("Specified batch slug not found: {}", candidate.display());
-            }
+        let candidate = cluster_dir.join(format!("batch={}", self.batch_slug));
+        if candidate.exists() {
+            Ok(candidate)
+        } else {
+            bail!("Specified batch slug not found: {}", candidate.display());
         }
-
-        // choose latest by lexicographical order of slug under cluster dir
-        let mut slugs: Vec<_> = fs::read_dir(&cluster_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-            .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|name| name.starts_with("batch="))
-            .collect();
-
-        slugs.sort();
-        if let Some(latest) = slugs.pop() {
-            return Ok(cluster_dir.join(latest));
-        }
-
-        bail!("No batch directories found under {}", cluster_dir.display());
     }
 
     fn list_parquet_files(batch_dir: &PathBuf) -> Result<Vec<PathBuf>> {
@@ -420,9 +404,36 @@ impl ReportDataProvider for ParquetReportProvider {
         let mut codis_slots_map: HashMap<u16, u64> = HashMap::new(); // codis slot -> instance count
         let mut redis_slots_map: HashMap<u16, u64> = HashMap::new(); // redis slot -> instance count
 
+        let mut inferred_batch_nanos: Option<i64> = None;
+        let mut inferred_cluster: Option<String> = None;
         for path in files {
             let meta = Self::parse_file_metadata(&path)
                 .with_context(|| format!("Failed to parse metadata for {}", path.display()))?;
+            
+            if inferred_batch_nanos.is_none() {
+                inferred_batch_nanos = Some(meta.batch_unix_nanos);
+            } else if inferred_batch_nanos != Some(meta.batch_unix_nanos) {
+                // Different files report different batch timestamps -> hard error
+                bail!(
+                    "Parquet file {} reports batch_unix_nanos={} which differs from first file's batch_unix_nanos={}",
+                    path.display(),
+                    meta.batch_unix_nanos,
+                    inferred_batch_nanos.unwrap()
+                );
+            }
+
+            
+            if inferred_cluster.is_none() {
+                inferred_cluster = Some(meta.cluster.clone());
+            } else if inferred_cluster.as_ref().map(|c| c.as_str()) != Some(meta.cluster.as_str()) {
+                // Different files report different cluster -> hard error
+                bail!(
+                    "Parquet file {} reports cluster='{}' which differs from first file's cluster='{}'",
+                    path.display(),
+                    meta.cluster,
+                    inferred_cluster.as_ref().unwrap()
+                );
+            }
 
             keys_statistics.add_assign(meta.keys_statistics.clone());
 
@@ -479,9 +490,21 @@ impl ReportDataProvider for ParquetReportProvider {
         let this = self.clone();
         let top_prefixes =
             tokio::task::spawn_blocking(move || this.scan_top_prefix(total_size)).await??;
+        
+        let nanos = inferred_batch_nanos
+            .ok_or_else(|| anyhow!("Missing summary metadata batch timestamp in parquet files"))?;
+        let odt = OffsetDateTime::from_unix_timestamp_nanos(nanos as i128)
+            .with_context(|| "Failed to construct batch timestamp from parquet metadata")?;
+        let batch_str = odt
+            .format(&time::format_description::well_known::Rfc3339)
+            .with_context(|| "Failed to format batch timestamp")?;
+
+        let cluster_str = inferred_cluster
+            .ok_or_else(|| anyhow!("Missing summary metadata cluster in parquet files"))?;
+
         let report = ReportData {
-            cluster: self.cluster.clone(),
-            batch: self.batch_slug.clone().unwrap_or_default(),
+            cluster: cluster_str,
+            batch: batch_str,
             db_aggregates: db_statistics
                 .into_iter()
                 .map(|(db, stats)| DbAggregate {

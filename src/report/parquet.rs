@@ -291,6 +291,155 @@ fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use super::*;
+
+    fn make_prefix(p: &'static [u8], total_size: u64, key_count: u64) -> PrefixAggregate {
+        PrefixAggregate {
+            prefix: Bytes::from_static(p),
+            total_size,
+            key_count,
+        }
+    }
+
+    #[test]
+    fn test_merge_prefix_aggregates_cases() {
+        struct Case {
+            name: &'static str,
+            input: Vec<PrefixAggregate>,
+            expect: Vec<PrefixAggregate>,
+        }
+
+        let cases = vec![
+            Case {
+                name: "nested_identical",
+                input: vec![
+                    make_prefix(b"f", 100, 3),
+                    make_prefix(b"fo", 100, 3),
+                    make_prefix(b"foo", 100, 3),
+                ],
+                expect: vec![make_prefix(b"foo", 100, 3)],
+            },
+            Case {
+                name: "nested_different",
+                input: vec![
+                    make_prefix(b"f", 100, 3),
+                    make_prefix(b"fo", 50, 2),
+                    make_prefix(b"foo", 30, 1),
+                ],
+                expect: vec![
+                    make_prefix(b"f", 100, 3),
+                    make_prefix(b"fo", 50, 2),
+                    make_prefix(b"foo", 30, 1),
+                ],
+            },
+            Case {
+                name: "nested_same_size",
+                input: vec![
+                    make_prefix(b"f", 100, 3),
+                    make_prefix(b"fo", 30, 1),
+                    make_prefix(b"foo", 30, 1),
+                ],
+                expect: vec![make_prefix(b"f", 100, 3), make_prefix(b"foo", 30, 1)],
+            },
+        ];
+
+        for case in cases {
+            let mut out = Vec::new();
+            deduplicate_push(case.input, &mut out);
+            assert_eq!(out, case.expect, "{}: {:?}", case.name, out);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix length invariant violated")]
+    fn dedup_prefix_length_invariant_violation() {
+        let a = PrefixAggregate {
+            prefix: Bytes::from_static(b"aa"),
+            total_size: 1,
+            key_count: 1,
+        };
+        let b = PrefixAggregate {
+            prefix: Bytes::from_static(b"bb"),
+            total_size: 1,
+            key_count: 1,
+        };
+        let mut out = Vec::new();
+        deduplicate_push(vec![a, b], &mut out);
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix order invariant violated")]
+    fn dedup_prefix_order_invariant_violation() {
+        let cur = PrefixAggregate {
+            prefix: Bytes::from_static(b"a"),
+            total_size: 10,
+            key_count: 5,
+        };
+        let nxt = PrefixAggregate {
+            prefix: Bytes::from_static(b"bc"),
+            total_size: 5,
+            key_count: 2,
+        };
+        let mut out = Vec::new();
+        deduplicate_push(vec![cur, nxt], &mut out);
+    }
+
+    #[test]
+    #[should_panic(expected = "total_size should be equal when key_count is equal")]
+    fn dedup_equal_key_count_total_size_mismatch() {
+        let cur = PrefixAggregate {
+            prefix: Bytes::from_static(b"a"),
+            total_size: 10,
+            key_count: 2,
+        };
+        let nxt = PrefixAggregate {
+            prefix: Bytes::from_static(b"ab"),
+            total_size: 5,
+            key_count: 2,
+        };
+        let mut out = Vec::new();
+        deduplicate_push(vec![cur, nxt], &mut out);
+    }
+
+    #[test]
+    #[should_panic(expected = "key_count should be greater when total_size is greater")]
+    fn dedup_key_count_invariant_violation() {
+        let cur = PrefixAggregate {
+            prefix: Bytes::from_static(b"a"),
+            total_size: 100,
+            key_count: 1,
+        };
+        let nxt = PrefixAggregate {
+            prefix: Bytes::from_static(b"ab"),
+            total_size: 50,
+            key_count: 2,
+        };
+        let mut out = Vec::new();
+        deduplicate_push(vec![cur, nxt], &mut out);
+    }
+
+    #[test]
+    #[should_panic(expected = "total_size should be greater when key_count is greater")]
+    fn dedup_total_size_invariant_violation() {
+        let cur = PrefixAggregate {
+            prefix: Bytes::from_static(b"a"),
+            total_size: 10,
+            key_count: 3,
+        };
+        let nxt = PrefixAggregate {
+            prefix: Bytes::from_static(b"ab"),
+            total_size: 20,
+            key_count: 2,
+        };
+        let mut out = Vec::new();
+        deduplicate_push(vec![cur, nxt], &mut out);
+    }
+}
+
 struct DBElementsIterator {
     reader: ParquetRecordBatchReader,
     buffer: VecDeque<(Bytes, u64)>,

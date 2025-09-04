@@ -259,14 +259,6 @@ fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate
     for (cur, nxt) in agg.iter().tuple_windows() {
         // some checks to ensure the invariant is met
         assert!(
-            cur.key_count <= nxt.key_count,
-            "key_count invariant violated"
-        );
-        assert!(
-            cur.total_size <= nxt.total_size,
-            "total_size invariant violated"
-        );
-        assert!(
             cur.prefix.len() < nxt.prefix.len(),
             "prefix length invariant violated"
         );
@@ -276,8 +268,12 @@ fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate
         );
 
         if cur.key_count == nxt.key_count {
+            assert_eq!(cur.total_size, nxt.total_size, "total_size should be equal when key_count is equal");
             continue;
         }
+
+        assert!(cur.key_count > nxt.key_count, "key_count should be greater when total_size is greater");
+        assert!(cur.total_size > nxt.total_size, "total_size should be greater when key_count is greater");
         out.push(cur.clone());
     }
     // last one is the longest prefix, always should be pushed

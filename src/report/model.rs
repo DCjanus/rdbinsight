@@ -42,7 +42,7 @@ pub struct InstanceAggregate {
 }
 
 #[serde_as]
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Eq, PartialEq)]
 pub struct PrefixAggregate {
     #[serde_as(as = "Base64")]
     #[serde(rename = "prefix_base64")]

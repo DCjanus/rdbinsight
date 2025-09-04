@@ -215,11 +215,12 @@ impl ParquetReportProvider {
         for ret in iter {
             let (key, size) = ret.context("failed to get key and size")?;
 
-            let iter = active_prefixes
+            let aggs = active_prefixes
                 .extract_if(|prefix, _| !key.starts_with(prefix))
                 .filter(|(_, aggregate)| aggregate.total_size >= threshold)
-                .map(|(_, aggregate)| aggregate);
-            out.extend(iter);
+                .map(|(_, aggregate)| aggregate)
+                .collect_vec();
+            deduplicate_push(aggs, &mut out);
 
             for new_prefix in (1..key.len()).map(|i| key.slice(0..i)) {
                 let prefix_clone = new_prefix.clone();
@@ -235,60 +236,208 @@ impl ParquetReportProvider {
             }
         }
 
-        out.extend(
-            active_prefixes
-                .into_iter()
-                .filter(|(_, aggregate)| aggregate.total_size >= threshold)
-                .map(|(_, aggregate)| aggregate),
-        );
+        let aggs = active_prefixes
+            .into_iter()
+            .filter(|(_, aggregate)| aggregate.total_size >= threshold)
+            .map(|(_, aggregate)| aggregate)
+            .collect_vec();
+        deduplicate_push(aggs, &mut out);
 
-        Ok(merge_prefix_aggregates(out))
+        out.sort_by(|a, b| a.prefix.cmp(&b.prefix));
+        Ok(out)
     }
 }
 
-/// Merge a list of prefix aggregates for the common case used by this codebase.
-///
-/// Assumptions:
-/// - The input `aggregates` contains no duplicate prefix bytes (each `prefix` is unique).
-/// - Prefixes may be nested (e.g. `b"f"`, `b"fo"`, `b"foo"`) but exact duplicates
-///   are not present.
-///
-/// Behavior:
-/// - Sorts the aggregates by prefix bytes so nested prefixes are adjacent.
-/// - When a longer prefix is a descendant of the previous (shorter) prefix and
-///   they have identical `total_size` and `key_count`, the longer prefix is kept
-///   (we prefer the most-specific prefix) and the shorter is discarded.
-/// - When nested prefixes have different statistics, both entries are kept to
-///   avoid losing information.
-///
-/// This simplified implementation omits handling for exact duplicate prefixes
-/// because callers guarantee uniqueness.
-fn merge_prefix_aggregates(mut aggregates: Vec<PrefixAggregate>) -> Vec<PrefixAggregate> {
-    // Sort by prefix bytes ascending so nested prefixes are adjacent
-    aggregates.sort_by(|a, b| a.prefix.cmp(&b.prefix));
-
-    let mut out: Vec<PrefixAggregate> = Vec::new();
-
-    for agg in aggregates.into_iter() {
-        if let Some(last) = out.last_mut() {
-            // If current prefix is a descendant (longer) of the last prefix
-            if agg.prefix.as_ref().starts_with(last.prefix.as_ref()) {
-                // If stats are identical, prefer the longer (agg) and replace last
-                if agg.total_size == last.total_size && agg.key_count == last.key_count {
-                    *last = agg;
-                    continue;
-                }
-                // Different stats -> keep both
-                out.push(agg);
-                continue;
-            }
-        }
-
-        out.push(agg);
+fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate>) {
+    if agg.len() < 2 {
+        out.extend_from_slice(&agg);
+        return;
     }
 
-    out.sort_by(|a, b| a.prefix.cmp(&b.prefix));
-    out
+    agg.sort_by(|x, y| x.prefix.cmp(&y.prefix));
+
+    for (cur, nxt) in agg.iter().tuple_windows() {
+        // some checks to ensure the invariant is met
+        assert!(
+            cur.prefix.len() < nxt.prefix.len(),
+            "unexpected error found: prefix length invariant violated"
+        );
+        assert!(
+            nxt.prefix.starts_with(&cur.prefix),
+            "unexpected error found: prefix order invariant violated"
+        );
+
+        if cur.key_count == nxt.key_count {
+            assert_eq!(
+                cur.total_size, nxt.total_size,
+                "unexpected error found: total_size should be equal when key_count is equal"
+            );
+            continue;
+        }
+
+        assert!(
+            cur.key_count > nxt.key_count,
+            "unexpected error found: key_count should be greater when total_size is greater"
+        );
+        assert!(
+            cur.total_size > nxt.total_size,
+            "unexpected error found: total_size should be greater when key_count is greater"
+        );
+        out.push(cur.clone());
+    }
+    // last one is the longest prefix, always should be pushed
+    if let Some(last) = agg.last() {
+        out.push(last.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use super::*;
+
+    fn make_prefix(p: &'static [u8], total_size: u64, key_count: u64) -> PrefixAggregate {
+        PrefixAggregate {
+            prefix: Bytes::from_static(p),
+            total_size,
+            key_count,
+        }
+    }
+
+    #[test]
+    fn test_merge_prefix_aggregates_cases() {
+        struct Case {
+            name: &'static str,
+            input: Vec<PrefixAggregate>,
+            expect: Vec<PrefixAggregate>,
+        }
+
+        let cases = vec![
+            Case {
+                name: "nested_identical",
+                input: vec![
+                    make_prefix(b"f", 100, 3),
+                    make_prefix(b"fo", 100, 3),
+                    make_prefix(b"foo", 100, 3),
+                ],
+                expect: vec![make_prefix(b"foo", 100, 3)],
+            },
+            Case {
+                name: "nested_different",
+                input: vec![
+                    make_prefix(b"f", 100, 3),
+                    make_prefix(b"fo", 50, 2),
+                    make_prefix(b"foo", 30, 1),
+                ],
+                expect: vec![
+                    make_prefix(b"f", 100, 3),
+                    make_prefix(b"fo", 50, 2),
+                    make_prefix(b"foo", 30, 1),
+                ],
+            },
+            Case {
+                name: "nested_same_size",
+                input: vec![
+                    make_prefix(b"f", 100, 3),
+                    make_prefix(b"fo", 30, 1),
+                    make_prefix(b"foo", 30, 1),
+                ],
+                expect: vec![make_prefix(b"f", 100, 3), make_prefix(b"foo", 30, 1)],
+            },
+        ];
+
+        for case in cases {
+            let mut out = Vec::new();
+            deduplicate_push(case.input, &mut out);
+            assert_eq!(out, case.expect, "{}: {:?}", case.name, out);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix length invariant violated")]
+    fn dedup_prefix_length_invariant_violation() {
+        let a = PrefixAggregate {
+            prefix: Bytes::from_static(b"aa"),
+            total_size: 1,
+            key_count: 1,
+        };
+        let b = PrefixAggregate {
+            prefix: Bytes::from_static(b"bb"),
+            total_size: 1,
+            key_count: 1,
+        };
+        let mut out = Vec::new();
+        deduplicate_push(vec![a, b], &mut out);
+    }
+
+    #[test]
+    #[should_panic(expected = "prefix order invariant violated")]
+    fn dedup_prefix_order_invariant_violation() {
+        let cur = PrefixAggregate {
+            prefix: Bytes::from_static(b"a"),
+            total_size: 10,
+            key_count: 5,
+        };
+        let nxt = PrefixAggregate {
+            prefix: Bytes::from_static(b"bc"),
+            total_size: 5,
+            key_count: 2,
+        };
+        let mut out = Vec::new();
+        deduplicate_push(vec![cur, nxt], &mut out);
+    }
+
+    #[test]
+    #[should_panic(expected = "total_size should be equal when key_count is equal")]
+    fn dedup_equal_key_count_total_size_mismatch() {
+        let cur = PrefixAggregate {
+            prefix: Bytes::from_static(b"a"),
+            total_size: 10,
+            key_count: 2,
+        };
+        let nxt = PrefixAggregate {
+            prefix: Bytes::from_static(b"ab"),
+            total_size: 5,
+            key_count: 2,
+        };
+        let mut out = Vec::new();
+        deduplicate_push(vec![cur, nxt], &mut out);
+    }
+
+    #[test]
+    #[should_panic(expected = "key_count should be greater when total_size is greater")]
+    fn dedup_key_count_invariant_violation() {
+        let cur = PrefixAggregate {
+            prefix: Bytes::from_static(b"a"),
+            total_size: 100,
+            key_count: 1,
+        };
+        let nxt = PrefixAggregate {
+            prefix: Bytes::from_static(b"ab"),
+            total_size: 50,
+            key_count: 2,
+        };
+        let mut out = Vec::new();
+        deduplicate_push(vec![cur, nxt], &mut out);
+    }
+
+    #[test]
+    #[should_panic(expected = "total_size should be greater when key_count is greater")]
+    fn dedup_total_size_invariant_violation() {
+        let cur = PrefixAggregate {
+            prefix: Bytes::from_static(b"a"),
+            total_size: 10,
+            key_count: 3,
+        };
+        let nxt = PrefixAggregate {
+            prefix: Bytes::from_static(b"ab"),
+            total_size: 20,
+            key_count: 2,
+        };
+        let mut out = Vec::new();
+        deduplicate_push(vec![cur, nxt], &mut out);
+    }
 }
 
 struct DBElementsIterator {
@@ -312,7 +461,7 @@ impl DBElementsIterator {
             .as_binary::<i32>();
         let size_array = batch
             .column_by_name("rdb_size")
-            .ok_or_else(|| anyhow!("can't find field 'size' in parquet file"))?
+            .ok_or_else(|| anyhow!("can't find field 'rdb_size' in parquet file"))?
             .as_primitive::<UInt64Type>();
         for i in 0..key_array.len() {
             let key = key_array.value(i);

@@ -158,6 +158,7 @@ pub struct ParquetChunkWriter {
     final_compression: ParquetCompression,
     run_file_path: PathBuf,
     run_file: Option<tokio::fs::File>,
+    inited_run_file: bool,
     run_index: Vec<crate::output::parquet::run_lz4::ChunkDesc>,
 }
 
@@ -185,6 +186,7 @@ impl ParquetChunkWriter {
             final_compression: compression,
             run_file_path,
             run_file: None,
+            inited_run_file: false,
             run_index: Vec::new(),
         })
     }
@@ -226,14 +228,21 @@ impl ParquetChunkWriter {
     async fn take_run_file(&mut self) -> AnyResult<tokio::fs::File> {
         let f = match self.run_file.take() {
             Some(f) => f,
-            None => tokio::fs::File::create(self.run_file_path.clone())
-                .await
-                .with_context(|| {
-                    format!(
-                        "Failed to create run file: {}",
-                        self.run_file_path.display()
-                    )
-                })?,
+            None => {
+                assert!(
+                    !self.inited_run_file,
+                    "duplicate call to create run file via take_run_file"
+                );
+                self.inited_run_file = true;
+                tokio::fs::File::create(self.run_file_path.clone())
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to create run file: {}",
+                            self.run_file_path.display()
+                        )
+                    })?
+            }
         };
         Ok(f)
     }

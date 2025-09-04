@@ -673,7 +673,7 @@ mod tests {
         struct Case {
             name: &'static str,
             input: Vec<PrefixAggregate>,
-            expect: Vec<(&'static [u8], u64, u64)>,
+            expect: Vec<PrefixAggregate>,
         }
 
         let cases = vec![
@@ -684,34 +684,36 @@ mod tests {
                     make_prefix(b"fo", 100, 3),
                     make_prefix(b"foo", 100, 3),
                 ],
-                expect: vec![(b"foo", 100, 3)],
+                expect: vec![make_prefix(b"foo", 100, 3)],
             },
             Case {
                 name: "nested_different",
                 input: vec![
                     make_prefix(b"f", 100, 3),
-                    make_prefix(b"fo", 50, 1),
+                    make_prefix(b"fo", 50, 2),
                     make_prefix(b"foo", 30, 1),
                 ],
-                expect: vec![(b"f", 100, 3), (b"fo", 50, 1), (b"foo", 30, 1)],
+                expect: vec![
+                    make_prefix(b"f", 100, 3),
+                    make_prefix(b"fo", 50, 2),
+                    make_prefix(b"foo", 30, 1),
+                ],
+            },
+            Case {
+                name: "nested_same_size",
+                input: vec![
+                    make_prefix(b"f", 100, 3),
+                    make_prefix(b"fo", 30, 1),
+                    make_prefix(b"foo", 30, 1),
+                ],
+                expect: vec![make_prefix(b"f", 100, 3), make_prefix(b"foo", 30, 1)],
             },
         ];
 
         for case in cases {
             let mut out = Vec::new();
             deduplicate_push(case.input, &mut out);
-            assert_eq!(out.len(), case.expect.len(), "{}: length", case.name);
-            for (i, (p, s, k)) in case.expect.iter().enumerate() {
-                assert_eq!(
-                    out[i].prefix,
-                    Bytes::from_static(*p),
-                    "{}: prefix {}",
-                    case.name,
-                    i
-                );
-                assert_eq!(out[i].total_size, *s, "{}: total_size {}", case.name, i);
-                assert_eq!(out[i].key_count, *k, "{}: key_count {}", case.name, i);
-            }
+            assert_eq!(out, case.expect, "{}: {:?}", case.name, out);
         }
     }
 }

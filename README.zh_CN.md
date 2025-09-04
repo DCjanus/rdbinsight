@@ -1,8 +1,9 @@
 # RDBInsight
 
+[![CI](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml/badge.svg)](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/DCjanus/rdbinsight/graph/badge.svg?token=KXVIGig53g)](https://codecov.io/gh/DCjanus/rdbinsight)
 [![dependency status](https://deps.rs/repo/github/dcjanus/rdbinsight/status.svg)](https://deps.rs/repo/github/dcjanus/rdbinsight)
-[![CI](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml/badge.svg)](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml)
+[![Lines of Code](https://tokei.rs/b1/github/DCjanus/rdbinsight?)](https://github.com/DCjanus/rdbinsight)
 
 RDBInsight 是面向 Redis 的分析与诊断工具。它将 RDB 快照解析为便于 OLAP 分析的结构化元数据，帮助快速定位内存与性能相关的问题。
 
@@ -111,10 +112,9 @@ ORDER BY key_cnt DESC;
 
 该流程无需在线连接 Redis，后续只需调整 SQL 即可复用。
 
-## 开发计划
-
-### 测试完善
+## TODO
 
 - [ ] 使用 testcontainers 构建 Redis Cluster 集成测试，验证集群场景下的数据解析准确性；
 - [ ] 使用 testcontainers 创建 Codis 集群测试环境（基于 `pikadb/codis:v3.5.5` 镜像），确保 Codis 兼容性；
 - [ ] 使用 DuckDB 实现当 Parquet 元数据缺失或版本不兼容时的降级报告生成逻辑（作为后备方案）。
+- [ ] 将现有的集成测试迁移到 `rdbinsight` crate 的模块中，以便大多数类型/函数可以从 `pub` 改为 `pub(crate)`，更容易发现 dead code。

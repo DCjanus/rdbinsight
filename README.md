@@ -1,8 +1,9 @@
 # RDBInsight
 
+[![CI](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml/badge.svg)](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/DCjanus/rdbinsight/graph/badge.svg?token=KXVIGig53g)](https://codecov.io/gh/DCjanus/rdbinsight)
 [![dependency status](https://deps.rs/repo/github/dcjanus/rdbinsight/status.svg)](https://deps.rs/repo/github/dcjanus/rdbinsight)
-[![CI](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml/badge.svg)](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml)
+[![Lines of Code](https://tokei.rs/b1/github/DCjanus/rdbinsight?)](https://github.com/DCjanus/rdbinsight)
 
 RDBInsight is a Redis analysis and diagnostic tool that converts RDB snapshots into structured data suitable for OLAP workloads, helping engineers investigate memory and performance issues.
 
@@ -114,10 +115,9 @@ ORDER BY key_cnt DESC;
 
 The query-based workflow removes the need for Redis-side commands, and similar tasks can be handled by adjusting the SQL.
 
-## Development Plan
-
-### Testing
+## TODO
 
 - [ ] Use testcontainers to build Redis Cluster integration tests and verify parsing accuracy in cluster scenarios.
 - [ ] Use testcontainers to create a Codis cluster test environment (based on the `pikadb/codis:v3.5.5` image) to ensure compatibility.
 - [ ] Implement DuckDB-based fallback report generation for Parquet when metadata is missing or version is incompatible.
+- [ ] Convert existing integration tests into a module inside the `rdbinsight` crate so most types/functions can be changed from `pub` to `pub(crate)` and dead code is easier to detect.

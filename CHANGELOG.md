@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.4]
+
 ### Breaking
 
 - Parquet adopts Hadoop-style layout with batch-level atomic finalize: `_tmp_batch=<batch>` → `batch=<batch>`.

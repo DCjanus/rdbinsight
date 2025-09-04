@@ -243,7 +243,7 @@ impl ParquetReportProvider {
             .collect_vec();
         deduplicate_push(aggs, &mut out);
 
-        out.sort_by_key(|x| x.prefix.clone());
+        out.sort_by(|a, b| a.prefix.cmp(&b.prefix));
         Ok(out)
     }
 }
@@ -257,6 +257,24 @@ fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate
     agg.sort_by(|x, y| x.prefix.cmp(&y.prefix));
 
     for (cur, nxt) in agg.iter().tuple_windows() {
+        // some checks to ensure the invariant is met
+        assert!(
+            cur.key_count <= nxt.key_count,
+            "key_count invariant violated"
+        );
+        assert!(
+            cur.total_size >= nxt.total_size,
+            "total_size invariant violated"
+        );
+        assert!(
+            cur.prefix.len() < nxt.prefix.len(),
+            "prefix length invariant violated"
+        );
+        assert!(
+            nxt.prefix.starts_with(&cur.prefix),
+            "prefix order invariant violated"
+        );
+
         if cur.key_count == nxt.key_count {
             continue;
         }

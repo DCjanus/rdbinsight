@@ -213,11 +213,12 @@ impl ParquetReportProvider {
         for ret in iter {
             let (key, size) = ret.context("failed to get key and size")?;
 
-            let iter = active_prefixes
+            let aggs = active_prefixes
                 .extract_if(|prefix, _| !key.starts_with(prefix))
                 .filter(|(_, aggregate)| aggregate.total_size >= threshold)
-                .map(|(_, aggregate)| aggregate);
-            out.extend(iter);
+                .map(|(_, aggregate)| aggregate)
+                .collect_vec();
+            deduplicate_push(aggs, &mut out);
 
             for new_prefix in (1..key.len()).map(|i| key.slice(0..i)) {
                 let prefix_clone = new_prefix.clone();
@@ -233,60 +234,30 @@ impl ParquetReportProvider {
             }
         }
 
-        out.extend(
-            active_prefixes
-                .into_iter()
-                .filter(|(_, aggregate)| aggregate.total_size >= threshold)
-                .map(|(_, aggregate)| aggregate),
-        );
+        let aggs = active_prefixes
+            .into_iter()
+            .filter(|(_, aggregate)| aggregate.total_size >= threshold)
+            .map(|(_, aggregate)| aggregate)
+            .collect_vec();
+        deduplicate_push(aggs, &mut out);
 
-        Ok(merge_prefix_aggregates(out))
+        out.sort_by_key(|x| x.prefix.clone());
+        Ok(out)
     }
 }
 
-/// Merge a list of prefix aggregates for the common case used by this codebase.
-///
-/// Assumptions:
-/// - The input `aggregates` contains no duplicate prefix bytes (each `prefix` is unique).
-/// - Prefixes may be nested (e.g. `b"f"`, `b"fo"`, `b"foo"`) but exact duplicates
-///   are not present.
-///
-/// Behavior:
-/// - Sorts the aggregates by prefix bytes so nested prefixes are adjacent.
-/// - When a longer prefix is a descendant of the previous (shorter) prefix and
-///   they have identical `total_size` and `key_count`, the longer prefix is kept
-///   (we prefer the most-specific prefix) and the shorter is discarded.
-/// - When nested prefixes have different statistics, both entries are kept to
-///   avoid losing information.
-///
-/// This simplified implementation omits handling for exact duplicate prefixes
-/// because callers guarantee uniqueness.
-fn merge_prefix_aggregates(mut aggregates: Vec<PrefixAggregate>) -> Vec<PrefixAggregate> {
-    // Sort by prefix bytes ascending so nested prefixes are adjacent
-    aggregates.sort_by(|a, b| a.prefix.cmp(&b.prefix));
-
-    let mut out: Vec<PrefixAggregate> = Vec::new();
-
-    for agg in aggregates.into_iter() {
-        if let Some(last) = out.last_mut() {
-            // If current prefix is a descendant (longer) of the last prefix
-            if agg.prefix.as_ref().starts_with(last.prefix.as_ref()) {
-                // If stats are identical, prefer the longer (agg) and replace last
-                if agg.total_size == last.total_size && agg.key_count == last.key_count {
-                    *last = agg;
-                    continue;
-                }
-                // Different stats -> keep both
-                out.push(agg);
-                continue;
-            }
+fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate>) {
+    agg.sort_by(|x, y| x.prefix.cmp(&y.prefix));
+    for (cur, nxt) in agg.iter().tuple_windows() {
+        if cur.key_count == nxt.key_count {
+            continue;
         }
-
-        out.push(agg);
+        out.push(cur.clone());
     }
-
-    out.sort_by(|a, b| a.prefix.cmp(&b.prefix));
-    out
+    // last one is the longest prefix, always should be pushed
+    if let Some(last) = agg.last() {
+        out.push(last.clone());
+    }
 }
 
 struct DBElementsIterator {
@@ -721,7 +692,8 @@ mod tests {
         ];
 
         for case in cases {
-            let out = merge_prefix_aggregates(case.input);
+            let mut out = Vec::new();
+            deduplicate_push(case.input, &mut out);
             assert_eq!(out.len(), case.expect.len(), "{}: length", case.name);
             for (i, (p, s, k)) in case.expect.iter().enumerate() {
                 assert_eq!(

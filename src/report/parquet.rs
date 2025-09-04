@@ -247,7 +247,13 @@ impl ParquetReportProvider {
 }
 
 fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate>) {
+    if agg.len() < 2 {
+        out.extend_from_slice(&agg);
+        return;
+    }
+
     agg.sort_by(|x, y| x.prefix.cmp(&y.prefix));
+
     for (cur, nxt) in agg.iter().tuple_windows() {
         if cur.key_count == nxt.key_count {
             continue;

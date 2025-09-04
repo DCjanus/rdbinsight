@@ -289,7 +289,7 @@ impl DBElementsIterator {
             .as_binary::<i32>();
         let size_array = batch
             .column_by_name("rdb_size")
-            .ok_or_else(|| anyhow!("can't find field 'size' in parquet file"))?
+            .ok_or_else(|| anyhow!("can't find field 'rdb_size' in parquet file"))?
             .as_primitive::<UInt64Type>();
         for i in 0..key_array.len() {
             let key = key_array.value(i);

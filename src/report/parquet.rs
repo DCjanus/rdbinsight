@@ -263,7 +263,7 @@ fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate
             "key_count invariant violated"
         );
         assert!(
-            cur.total_size >= nxt.total_size,
+            cur.total_size <= nxt.total_size,
             "total_size invariant violated"
         );
         assert!(

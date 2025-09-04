@@ -157,7 +157,8 @@ pub struct ParquetChunkWriter {
     run_buffer: std::collections::BTreeMap<SortKey, crate::record::Record>,
     final_compression: ParquetCompression,
     run_file_path: PathBuf,
-    run_file: tokio::fs::File,
+    run_file: Option<tokio::fs::File>,
+    inited_run_file: bool,
     run_index: Vec<crate::output::parquet::run_lz4::ChunkDesc>,
 }
 
@@ -173,9 +174,6 @@ impl ParquetChunkWriter {
         max_run_rows: usize,
     ) -> AnyResult<Self> {
         let run_file_path = temp_batch_dir.join(format!("{}.run.lz4", instance));
-        let run_file = tokio::fs::File::create(run_file_path.clone())
-            .await
-            .with_context(|| format!("Failed to create run file: {}", run_file_path.display()))?;
 
         Ok(Self {
             instance,
@@ -187,7 +185,8 @@ impl ParquetChunkWriter {
             run_buffer: std::collections::BTreeMap::new(),
             final_compression: compression,
             run_file_path,
-            run_file,
+            run_file: None,
+            inited_run_file: false,
             run_index: Vec::new(),
         })
     }
@@ -202,7 +201,8 @@ impl ParquetChunkWriter {
             .collect_vec();
         let rows = records.len();
 
-        let desc = super::run_lz4::append_chunk(&mut self.run_file, records)
+        let mut file = self.take_run_file().await?;
+        let desc = super::run_lz4::append_chunk(&mut file, records)
             .await
             .with_context(|| {
                 format!(
@@ -210,6 +210,7 @@ impl ParquetChunkWriter {
                     self.run_file_path.display()
                 )
             })?;
+        self.put_run_file(file);
 
         self.run_index.push(desc);
 
@@ -222,6 +223,33 @@ impl ParquetChunkWriter {
         );
 
         Ok(())
+    }
+
+    async fn take_run_file(&mut self) -> AnyResult<tokio::fs::File> {
+        let f = match self.run_file.take() {
+            Some(f) => f,
+            None => {
+                assert!(
+                    !self.inited_run_file,
+                    "duplicate call to create run file via take_run_file"
+                );
+                self.inited_run_file = true;
+                tokio::fs::File::create(self.run_file_path.clone())
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to create run file: {}",
+                            self.run_file_path.display()
+                        )
+                    })?
+            }
+        };
+        Ok(f)
+    }
+
+    fn put_run_file(&mut self, f: tokio::fs::File) {
+        assert!(self.run_file.is_none(), "run file should be none");
+        self.run_file = Some(f);
     }
 }
 
@@ -243,7 +271,8 @@ impl ChunkWriter for ParquetChunkWriter {
             this.flush_run_segment().await?;
         }
 
-        super::run_lz4::write_index(&mut this.run_file, this.run_index)
+        let mut file = this.take_run_file().await?;
+        super::run_lz4::write_index(&mut file, this.run_index)
             .await
             .with_context(|| {
                 format!(

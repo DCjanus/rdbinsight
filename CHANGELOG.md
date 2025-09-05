@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Features
+
+- Report: add periodic progress logs when scanning Parquet files' keys to avoid long silence during report generation.
+- Report: log newly discovered significant prefixes during top-prefix discovery to surface important findings early.
+
 ## [0.1.0-rc.5]
 
 ### Fixed

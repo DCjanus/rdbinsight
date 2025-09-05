@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-rc.6]
+
 ### Added
 - Report: add periodic progress logs when scanning Parquet files' keys to avoid long silence during report generation.
 - Report: log newly discovered significant prefixes during top-prefix discovery to surface important findings early.

@@ -235,27 +235,28 @@ impl ParquetReportProvider {
 
         // Helper: pop nodes deeper than target depth, bubble up totals to parent,
         // and emit significant prefixes using the existing deduplicate_push logic.
-        let pop_to_depth = |target_depth: usize, stack: &mut Vec<Node>, out: &mut Vec<PrefixAggregate>| {
-            let mut agg_candidates: Vec<PrefixAggregate> = Vec::new();
-            while stack.len() > target_depth {
-                let node = stack.pop().expect("stack not empty when popping");
-                // Bubble up to parent so ancestors receive full subtree totals
-                if let Some(parent) = stack.last_mut() {
-                    parent.total_size = parent.total_size.saturating_add(node.total_size);
-                    parent.key_count = parent.key_count.saturating_add(node.key_count);
+        let pop_to_depth =
+            |target_depth: usize, stack: &mut Vec<Node>, out: &mut Vec<PrefixAggregate>| {
+                let mut agg_candidates: Vec<PrefixAggregate> = Vec::new();
+                while stack.len() > target_depth {
+                    let node = stack.pop().expect("stack not empty when popping");
+                    // Bubble up to parent so ancestors receive full subtree totals
+                    if let Some(parent) = stack.last_mut() {
+                        parent.total_size = parent.total_size.saturating_add(node.total_size);
+                        parent.key_count = parent.key_count.saturating_add(node.key_count);
+                    }
+                    if node.total_size >= threshold {
+                        agg_candidates.push(PrefixAggregate {
+                            prefix: node.prefix,
+                            total_size: node.total_size,
+                            key_count: node.key_count,
+                        });
+                    }
                 }
-                if node.total_size >= threshold {
-                    agg_candidates.push(PrefixAggregate {
-                        prefix: node.prefix,
-                        total_size: node.total_size,
-                        key_count: node.key_count,
-                    });
+                if !agg_candidates.is_empty() {
+                    deduplicate_push(agg_candidates, out);
                 }
-            }
-            if !agg_candidates.is_empty() {
-                deduplicate_push(agg_candidates, out);
-            }
-        };
+            };
 
         for ret in iter {
             let (key, size) = ret.context("failed to get key and size")?;

@@ -1,4 +1,4 @@
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, bail};
 
 use crate::{
     helper::AnyResult,
@@ -60,28 +60,17 @@ impl StateParser for SetRecordParser {
 pub struct SetIntSetRecordParser {
     started: u64,
     key: RDBStr,
-    to_skip: u64,
-    member_count: u64,
+    entrust: RDBStrBox<IntSetInnerParser>,
 }
 
 impl InitializableParser for SetIntSetRecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, blob_len) = read_rdb_len(input).context("read intset blob len")?;
-        let blob_len = blob_len
-            .as_u64()
-            .context("intset blob len should be a number")?;
-        ensure!(
-            blob_len >= 8,
-            "intset blob should be at least 8 bytes (header)"
-        );
-        let (input, header) = read_exact(input, 8)?;
-        let member_count = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as u64;
+        let (input, entrust) = RDBStrBox::<IntSetInnerParser>::init(buffer, input)?;
         Ok((input, Self {
             started: buffer.tell(),
             key,
-            to_skip: blob_len - 8,
-            member_count,
+            entrust,
         }))
     }
 }
@@ -92,14 +81,56 @@ impl StateParser for SetIntSetRecordParser {
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
         crate::parser_trace!("intset.raw");
 
-        skip_bytes(buffer, &mut self.to_skip)?;
+        let member_count = self.entrust.call(buffer)?;
 
         Ok(Item::SetRecord {
             key: self.key.clone(),
             rdb_size: buffer.tell() - self.started,
             encoding: SetEncoding::IntSet,
-            member_count: self.member_count,
+            member_count,
         })
+    }
+}
+
+// Inner parser that parses intset header and then skips the payload.
+pub struct IntSetInnerParser {
+    to_skip: u64,
+    member_count: u64,
+}
+
+impl InitializableParser for IntSetInnerParser {
+    fn init<'a>(_buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        // When called inside RDBStrBox, the RDB string length has already been
+        // consumed; here we directly read the intset header (8 bytes) and
+        // compute payload length from element size and member_count.
+        let (input, header) = read_exact(input, 8).context("read intset header")?;
+        let encoding = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+        let member_count = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as u64;
+
+        let elem_size = match encoding {
+            2 => 2u64,
+            4 => 4u64,
+            8 => 8u64,
+            _ => bail!("unknown intset encoding: {}", encoding),
+        };
+
+        let to_skip = elem_size
+            .checked_mul(member_count)
+            .context("intset payload overflow")?;
+
+        Ok((input, Self {
+            to_skip,
+            member_count,
+        }))
+    }
+}
+
+impl StateParser for IntSetInnerParser {
+    type Output = u64;
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        skip_bytes(buffer, &mut self.to_skip)?;
+        Ok(self.member_count)
     }
 }
 

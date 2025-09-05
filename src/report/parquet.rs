@@ -208,8 +208,7 @@ impl ParquetReportProvider {
 
     fn scan_top_prefix(&self, total_size: u64) -> AnyResult<Vec<PrefixAggregate>> {
         let threshold = (total_size / 100).max(1);
-        // report progress every 10,000,000 keys to avoid long silence
-        let progress_interval: u64 = 10_000_000;
+        let progress_interval: u64 = 1_000_000;
         let mut processed: u64 = 0;
         let iter = self.build_group_merge_iterator()?;
         let mut active_prefixes: HashMap<Bytes, PrefixAggregate> = HashMap::new();
@@ -226,7 +225,7 @@ impl ParquetReportProvider {
                     operation = "scan_top_prefix_progress",
                     processed = %processed_fmt,
                     total_size = total_size,
-                    "Scanned {processed_fmt} keys for top-prefix calculation"
+                    "Report scanning progress"
                 );
             }
 

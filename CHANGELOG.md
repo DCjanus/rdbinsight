@@ -1,10 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.1.0-rc.5]
+
 ### Fixed
 
-- Parser: fix incorrect handling of LZF-compressed IntSet strings in RDB files (now correctly unboxes compressed strings and reads intset header).
-
+- Parser: support LZF-encoded RDB strings and fix incorrect handling of LZF-compressed IntSet strings in RDB files (now correctly unboxes compressed strings and reads intset header).
 
 ## [0.1.0-rc.4]
 

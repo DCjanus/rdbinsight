@@ -208,12 +208,27 @@ impl ParquetReportProvider {
 
     fn scan_top_prefix(&self, total_size: u64) -> AnyResult<Vec<PrefixAggregate>> {
         let threshold = (total_size / 100).max(1);
+        // report progress every 10,000,000 keys to avoid long silence
+        let progress_interval: u64 = 10_000_000;
+        let mut processed: u64 = 0;
         let iter = self.build_group_merge_iterator()?;
         let mut active_prefixes: HashMap<Bytes, PrefixAggregate> = HashMap::new();
         let mut out: Vec<PrefixAggregate> = Vec::new();
 
         for ret in iter {
             let (key, size) = ret.context("failed to get key and size")?;
+
+            processed = processed.saturating_add(1);
+            if processed.is_multiple_of(progress_interval) {
+                // Use info! with operation field to match logging conventions
+                let processed_fmt = crate::helper::format_number(processed as f64);
+                tracing::info!(
+                    operation = "scan_top_prefix_progress",
+                    processed = %processed_fmt,
+                    total_size = total_size,
+                    "Scanned {processed_fmt} keys for top-prefix calculation"
+                );
+            }
 
             let aggs = active_prefixes
                 .extract_if(|prefix, _| !key.starts_with(prefix))
@@ -231,6 +246,7 @@ impl ParquetReportProvider {
                         total_size: 0,
                         key_count: 0,
                     });
+
                 item.total_size += size;
                 item.key_count += 1;
             }
@@ -250,6 +266,16 @@ impl ParquetReportProvider {
 
 fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate>) {
     if agg.len() < 2 {
+        for a in &agg {
+            let total_size_fmt = crate::helper::format_number(a.total_size as f64);
+            tracing::info!(
+                operation = "significant_prefix_discovered",
+                prefix = %String::from_utf8_lossy(&a.prefix),
+                total_size = %total_size_fmt,
+                key_count = a.key_count,
+                "Discovered new significant prefix"
+            );
+        }
         out.extend_from_slice(&agg);
         return;
     }
@@ -283,10 +309,28 @@ fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate
             cur.total_size > nxt.total_size,
             "unexpected error found: total_size should be greater when key_count is greater"
         );
+        {
+            let total_size_fmt = crate::helper::format_number(cur.total_size as f64);
+            tracing::info!(
+                operation = "significant_prefix_discovered",
+                prefix = %String::from_utf8_lossy(&cur.prefix),
+                total_size = %total_size_fmt,
+                key_count = cur.key_count,
+                "Discovered new significant prefix"
+            );
+        }
         out.push(cur.clone());
     }
     // last one is the longest prefix, always should be pushed
     if let Some(last) = agg.last() {
+        let total_size_fmt = crate::helper::format_number(last.total_size as f64);
+        tracing::info!(
+            operation = "significant_prefix_discovered",
+            prefix = %String::from_utf8_lossy(&last.prefix),
+            total_size = %total_size_fmt,
+            key_count = last.key_count,
+            "Discovered new significant prefix"
+        );
         out.push(last.clone());
     }
 }

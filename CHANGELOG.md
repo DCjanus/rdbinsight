@@ -7,6 +7,10 @@
 - Report: add periodic progress logs when scanning Parquet files' keys to avoid long silence during report generation.
 - Report: log newly discovered significant prefixes during top-prefix discovery to surface important findings early.
 
+### Performance
+
+- Report (Parquet): switch top-prefix discovery to a single-pass LCP stack algorithm, significantly reducing CPU and speeding up report generation.
+
 ## [0.1.0-rc.5]
 
 ### Fixed

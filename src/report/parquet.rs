@@ -207,19 +207,61 @@ impl ParquetReportProvider {
     }
 
     fn scan_top_prefix(&self, total_size: u64) -> AnyResult<Vec<PrefixAggregate>> {
+        const PROGRESS_INTERVAL: u64 = 10_000_000;
+
         let threshold = (total_size / 100).max(1);
-        let progress_interval: u64 = 1_000_000;
         let mut processed: u64 = 0;
+
         let iter = self.build_group_merge_iterator()?;
-        let mut active_prefixes: HashMap<Bytes, PrefixAggregate> = HashMap::new();
+
+        struct Node {
+            prefix: Bytes,
+            total_size: u64,
+            key_count: u64,
+        }
+
+        let mut stack: Vec<Node> = Vec::new();
+        let mut prev_key: Bytes = Bytes::new();
         let mut out: Vec<PrefixAggregate> = Vec::new();
+
+        fn lcp_len(a: &Bytes, b: &Bytes) -> usize {
+            let min_len = a.len().min(b.len());
+            let mut i = 0;
+            while i < min_len && a[i] == b[i] {
+                i += 1;
+            }
+            i
+        }
+
+        // Helper: pop nodes deeper than target depth, bubble up totals to parent,
+        // and emit significant prefixes using the existing deduplicate_push logic.
+        let pop_to_depth = |target_depth: usize, stack: &mut Vec<Node>, out: &mut Vec<PrefixAggregate>| {
+            let mut agg_candidates: Vec<PrefixAggregate> = Vec::new();
+            while stack.len() > target_depth {
+                let node = stack.pop().expect("stack not empty when popping");
+                // Bubble up to parent so ancestors receive full subtree totals
+                if let Some(parent) = stack.last_mut() {
+                    parent.total_size = parent.total_size.saturating_add(node.total_size);
+                    parent.key_count = parent.key_count.saturating_add(node.key_count);
+                }
+                if node.total_size >= threshold {
+                    agg_candidates.push(PrefixAggregate {
+                        prefix: node.prefix,
+                        total_size: node.total_size,
+                        key_count: node.key_count,
+                    });
+                }
+            }
+            if !agg_candidates.is_empty() {
+                deduplicate_push(agg_candidates, out);
+            }
+        };
 
         for ret in iter {
             let (key, size) = ret.context("failed to get key and size")?;
 
             processed = processed.saturating_add(1);
-            if processed.is_multiple_of(progress_interval) {
-                // Use info! with operation field to match logging conventions
+            if processed.is_multiple_of(PROGRESS_INTERVAL) {
                 let processed_fmt = crate::helper::format_number(processed as f64);
                 tracing::info!(
                     operation = "scan_top_prefix_progress",
@@ -229,34 +271,34 @@ impl ParquetReportProvider {
                 );
             }
 
-            let aggs = active_prefixes
-                .extract_if(|prefix, _| !key.starts_with(prefix))
-                .filter(|(_, aggregate)| aggregate.total_size >= threshold)
-                .map(|(_, aggregate)| aggregate)
-                .collect_vec();
-            deduplicate_push(aggs, &mut out);
-
-            for new_prefix in (1..key.len()).map(|i| key.slice(0..i)) {
-                let prefix_clone = new_prefix.clone();
-                let item = active_prefixes
-                    .entry(new_prefix)
-                    .or_insert_with(|| PrefixAggregate {
-                        prefix: prefix_clone,
-                        total_size: 0,
-                        key_count: 0,
-                    });
-
-                item.total_size += size;
-                item.key_count += 1;
+            if !prev_key.is_empty() {
+                let common = lcp_len(&prev_key, &key);
+                // Close deeper-than-LCP prefixes from previous path
+                pop_to_depth(common, &mut stack, &mut out);
             }
+
+            // Extend stack to match current key length; create nodes lazily.
+            // Only create missing depths above current stack len.
+            let start_depth = stack.len();
+            for depth in (start_depth + 1)..=key.len() {
+                stack.push(Node {
+                    prefix: key.slice(0..depth),
+                    total_size: 0,
+                    key_count: 0,
+                });
+            }
+
+            // Accumulate this key only at the deepest node; totals bubble up on pop
+            if let Some(deepest) = stack.last_mut() {
+                deepest.total_size = deepest.total_size.saturating_add(size);
+                deepest.key_count = deepest.key_count.saturating_add(1);
+            }
+
+            prev_key = key;
         }
 
-        let aggs = active_prefixes
-            .into_iter()
-            .filter(|(_, aggregate)| aggregate.total_size >= threshold)
-            .map(|(_, aggregate)| aggregate)
-            .collect_vec();
-        deduplicate_push(aggs, &mut out);
+        // Flush remaining nodes
+        pop_to_depth(0, &mut stack, &mut out);
 
         out.sort_by(|a, b| a.prefix.cmp(&b.prefix));
         Ok(out)

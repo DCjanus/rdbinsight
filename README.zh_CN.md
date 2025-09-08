@@ -4,6 +4,7 @@
 [![codecov](https://codecov.io/gh/DCjanus/rdbinsight/graph/badge.svg?token=KXVIGig53g)](https://codecov.io/gh/DCjanus/rdbinsight)
 [![dependency status](https://deps.rs/repo/github/dcjanus/rdbinsight/status.svg)](https://deps.rs/repo/github/dcjanus/rdbinsight)
 [![Lines of Code](https://tokei.rs/b1/github/DCjanus/rdbinsight?)](https://github.com/DCjanus/rdbinsight)
+[![Docker Image Version](https://ghcr-badge.egpl.dev/dcjanus/rdbinsight/latest_tag?color=%2344cc11&ignore=latest&label=version&trim=)](https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight)
 
 RDBInsight 是面向 Redis 的分析与诊断工具。它将 RDB 快照解析为便于 OLAP 分析的结构化元数据，帮助快速定位内存与性能相关的问题。
 
@@ -16,6 +17,8 @@ RDBInsight 是面向 Redis 的分析与诊断工具。它将 RDB 快照解析为
 ## 使用示例（Usage）
 
 完整使用手册：[docs/USAGE.zh_CN.md](docs/USAGE.zh_CN.md)
+
+注意：本仓库目前暂不提供预编译二进制。为多个平台提供二进制较为复杂（如 Linux 上的 glibc 版本差异、musl 与 glibc 的权衡）。需要在裸机运行的请自行从源码构建。官方容器镜像在 `https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight`。
 
 ## 为什么选择 RDBInsight
 

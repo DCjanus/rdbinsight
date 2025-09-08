@@ -18,7 +18,9 @@ This project is under active development. Backward compatibility is not guarante
 
 See the full usage guide: [docs/USAGE.md](docs/USAGE.md)
 
-Note: We don't publish precompiled binaries at the moment. Building and distributing cross-platform binaries is tricky (glibc versions on Linux, musl vs glibc trade-offs), so if you need to run on bare metal please build from source. Official Docker images are available at `https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight`.
+Note: We don't publish precompiled binaries at the moment. Building and distributing cross-platform binaries is tricky (glibc versions on Linux, musl vs glibc trade-offs), so if you need to run on bare metal please build from source.
+
+But official Docker images are available at [ghcr.io](https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight).
 
 ## Why RDBInsight?
 

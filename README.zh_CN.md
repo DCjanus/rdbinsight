@@ -18,7 +18,9 @@ RDBInsight 是面向 Redis 的分析与诊断工具。它将 RDB 快照解析为
 
 完整使用手册：[docs/USAGE.zh_CN.md](docs/USAGE.zh_CN.md)
 
-注意：本仓库目前暂不提供预编译二进制。为多个平台提供二进制较为复杂（如 Linux 上的 glibc 版本差异、musl 与 glibc 的权衡）。需要在裸机运行的请自行从源码构建。官方容器镜像在 `https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight`。
+注意：本仓库目前暂不提供预编译二进制。为多个平台提供二进制较为复杂（如 Linux 上的 glibc 版本差异、musl 与 glibc 的权衡）。需要在裸机运行的请自行从源码构建。
+
+但提供了 Docker 镜像托管在 [ghcr.io](https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight)。
 
 ## 为什么选择 RDBInsight
 

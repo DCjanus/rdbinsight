@@ -3605,18 +3605,18 @@ dependencies = [
 
 [[package]]
 name = "spire_enum"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c45cb4ee936549a8faeef2ad75c190e774daed0ba74ebbc4c4e87124f82b5c24"
+checksum = "ade1dbb1571300b6c7dcbe5b1c21fe9eb022a20e051407c61d73cb309fbb701b"
 dependencies = [
  "spire_enum_macros",
 ]
 
 [[package]]
 name = "spire_enum_macros"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "683fd82232721e732422569e92e6f49eabede0acef74414f0e255ca6a8ef476e"
+checksum = "ed8691b6d8b27751154a083029799dc1578cb84ed545824566208d7d28fd6402"
 dependencies = [
  "convert_case",
  "itertools",

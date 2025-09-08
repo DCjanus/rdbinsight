@@ -7,19 +7,12 @@ use crate::{
 };
 
 /// Internal state machine wrapper used by `seq_parser!` macro.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum ParserPhase<P: StateParser> {
+    #[default]
     Init,
     Call(P),
     Done(P::Output),
-}
-
-impl<P> Default for ParserPhase<P>
-where P: StateParser
-{
-    fn default() -> Self {
-        Self::Init
-    }
 }
 
 impl<P> ParserPhase<P>

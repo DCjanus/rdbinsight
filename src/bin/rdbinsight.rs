@@ -133,7 +133,9 @@ struct DumpClusterArgs {
     #[arg(long)]
     password: Option<String>,
 
-    /// Require reading from slave nodes only
+    /// Prefer reading from slave nodes.
+    /// Default: read from slaves; if a shard has no slave, fall back to master.
+    /// When set to true, enforce slave-only reads; if any shard lacks a slave, exit with an error.
     #[arg(long)]
     require_slave: bool,
 
@@ -181,7 +183,9 @@ struct DumpCodisArgs {
     #[arg(long)]
     password: Option<String>,
 
-    /// Require reading from slave nodes only
+    /// Prefer reading from slave nodes.
+    /// Default: read from slaves; if a shard has no slave, fall back to master.
+    /// When set to true, enforce slave-only reads; if any shard lacks a slave, exit with an error.
     #[arg(long)]
     require_slave: bool,
 

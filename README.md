@@ -3,7 +3,8 @@
 [![CI](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml/badge.svg)](https://github.com/DCjanus/rdbinsight/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/DCjanus/rdbinsight/graph/badge.svg?token=KXVIGig53g)](https://codecov.io/gh/DCjanus/rdbinsight)
 [![dependency status](https://deps.rs/repo/github/dcjanus/rdbinsight/status.svg)](https://deps.rs/repo/github/dcjanus/rdbinsight)
-[![Lines of Code](https://tokei.rs/b1/github/DCjanus/rdbinsight?)](https://github.com/DCjanus/rdbinsight)
+[![Docker Image Version](https://ghcr-badge.egpl.dev/dcjanus/rdbinsight/latest_tag?color=%2344cc11&ignore=latest&label=docker+image&trim=)](https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight)
+[![Lines of Code](https://tokei.rs/b1/github/DCjanus/rdbinsight?style=flat)](https://github.com/DCjanus/rdbinsight)
 
 RDBInsight is a Redis analysis and diagnostic tool that converts RDB snapshots into structured data suitable for OLAP workloads, helping engineers investigate memory and performance issues.
 
@@ -15,18 +16,11 @@ This project is under active development. Backward compatibility is not guarante
 
 ## Usage
 
-Minimal example (installation omitted):
+See the full usage guide: [docs/USAGE.md](docs/USAGE.md)
 
-```bash
-rdbinsight dump from-cluster \
-  --nodes 127.0.0.1:7000,127.0.0.1:7001 \
-  --cluster your_cluster \
-  into-clickhouse \
-  --url http://username:password@127.0.0.1:8124/rdbinsight \
-  --auto-create-tables
-```
+Note: We don't publish precompiled binaries at the moment. Building and distributing cross-platform binaries is tricky (glibc versions on Linux, musl vs glibc trade-offs), so if you need to run on bare metal please build from source.
 
-For detailed usage, run `rdbinsight --help` or `rdbinsight <subcommand> --help`.
+But official Docker images are available at [ghcr.io](https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight).
 
 ## Why RDBInsight?
 

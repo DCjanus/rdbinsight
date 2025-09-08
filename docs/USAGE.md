@@ -105,7 +105,7 @@ Flags:
 - `--cluster`: Cluster name (required)
 - `--username`: Username (optional, default empty)
 - `--password`: Password (optional)
-- `--require-slave`: Prefer reading from slaves by default; falls back to master when a shard has no slave. If specified, enforce slave-only reads and error out when any shard lacks a slave.
+  -- `--require-slave` (optional): Defaults to False — fall back to master when no replica exists; when True, read from replicas only and fail if a shard has no replica.
 - `--batch-timestamp`: RFC3339, defaults to now
 
 #### from-file
@@ -149,7 +149,7 @@ Flags:
 - `--dashboard`: Codis Dashboard address (required)
 - `--cluster`: Cluster name (optional; will be fetched from Dashboard product name if omitted)
 - `--password`: Password (optional)
-- `--require-slave`: Prefer reading from slaves by default; falls back to master when a shard has no slave. If specified, enforce slave-only reads and error out when any shard lacks a slave.
+  -- `--require-slave` (optional): Defaults to False — fall back to master when no replica exists; when True, read from replicas only and fail if a shard has no replica.
 - `--batch-timestamp`: RFC3339, defaults to now
 
 ### output

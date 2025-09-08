@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0-rc.7]
 
-### Changed
+### Added
 - Enable `time` crate `large-dates` feature to support very large TTL values.
 
 ## [0.1.0-rc.6]

@@ -15,18 +15,7 @@ This project is under active development. Backward compatibility is not guarante
 
 ## Usage
 
-Minimal example (installation omitted):
-
-```bash
-rdbinsight dump from-cluster \
-  --nodes 127.0.0.1:7000,127.0.0.1:7001 \
-  --cluster your_cluster \
-  into-clickhouse \
-  --url http://username:password@127.0.0.1:8124/rdbinsight \
-  --auto-create-tables
-```
-
-For detailed usage, run `rdbinsight --help` or `rdbinsight <subcommand> --help`.
+See the full usage guide: [docs/USAGE.md](docs/USAGE.md)
 
 ## Why RDBInsight?
 

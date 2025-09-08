@@ -105,7 +105,7 @@ rdbinsight dump from-cluster \
 - `--cluster`：集群名（必填）
 - `--username`：用户名（可选，默认空）
 - `--password`：密码（可选）
-- `--require-slave`：仅从从节点读取（可选）
+- `--require-slave`：默认优先从从节点读取；若某个分片无从节点，则回退到其主节点。若显式指定该参数，则强制仅从从节点读取；若任一分片无从节点则直接报错。
 - `--batch-timestamp`：RFC3339 时间戳，默认当前时间
 
 #### from-file
@@ -149,7 +149,7 @@ rdbinsight dump from-codis \
 - `--dashboard`：Codis Dashboard 地址（必填）
 - `--cluster`：集群名（可选，未提供时将尝试从 Dashboard 获取）
 - `--password`：密码（可选）
-- `--require-slave`：仅从从节点读取（可选）
+- `--require-slave`：默认优先从从节点读取；若某个分片无从节点，则回退到其主节点。若显式指定该参数，则强制仅从从节点读取；若任一分片无从节点则直接报错。
 - `--batch-timestamp`：RFC3339 时间戳，默认当前时间
 
 ### 输出（output）

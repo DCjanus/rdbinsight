@@ -309,7 +309,7 @@ impl ParquetReportProvider {
 fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate>) {
     if agg.len() < 2 {
         for a in &agg {
-            let total_size_fmt = crate::helper::format_number(a.total_size as f64);
+            let total_size_fmt = crate::helper::format_bytesize(a.total_size);
             tracing::info!(
                 operation = "significant_prefix_discovered",
                 prefix = %String::from_utf8_lossy(&a.prefix),
@@ -352,7 +352,7 @@ fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate
             "unexpected error found: total_size should be greater when key_count is greater"
         );
         {
-            let total_size_fmt = crate::helper::format_number(cur.total_size as f64);
+            let total_size_fmt = crate::helper::format_bytesize(cur.total_size);
             tracing::info!(
                 operation = "significant_prefix_discovered",
                 prefix = %String::from_utf8_lossy(&cur.prefix),
@@ -365,7 +365,7 @@ fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate
     }
     // last one is the longest prefix, always should be pushed
     if let Some(last) = agg.last() {
-        let total_size_fmt = crate::helper::format_number(last.total_size as f64);
+        let total_size_fmt = crate::helper::format_bytesize(last.total_size);
         tracing::info!(
             operation = "significant_prefix_discovered",
             prefix = %String::from_utf8_lossy(&last.prefix),

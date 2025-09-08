@@ -89,6 +89,31 @@ pub fn format_number(num: f64) -> String {
     }
 }
 
+/// Format byte sizes into human-readable SI format using 1024 base
+/// Units: B, KB, MB, GB, TB, PB
+pub fn format_bytesize(bytes: u64) -> String {
+    if bytes == 0 {
+        return "0B".to_string();
+    }
+
+    let mut value = bytes as f64;
+    let units = ["B", "KB", "MB", "GB", "TB", "PB"];
+    let mut idx = 0usize;
+
+    while value >= 1024.0 && idx < units.len() - 1 {
+        value /= 1024.0;
+        idx += 1;
+    }
+
+    // Keep two decimal places like format_number
+    if idx == 0 {
+        // Bytes - show as integer
+        format!("{}{}", value as u64, units[idx])
+    } else {
+        format!("{:.2}{}", value, units[idx])
+    }
+}
+
 /// Calculate Codis slot for a given key
 pub fn codis_slot(key: &[u8]) -> u16 {
     let key = key
@@ -393,5 +418,19 @@ mod tests {
         // Hashtag at different positions
         assert_eq!(redis_slot(b"prefix:{user}"), 5474);
         assert_eq!(redis_slot(b"app:cache:{session123}:user:456"), 568);
+    }
+
+    #[test]
+    fn test_format_bytesize() {
+        assert_eq!(format_bytesize(0), "0B");
+        assert_eq!(format_bytesize(1), "1B");
+        assert_eq!(format_bytesize(1023), "1023B");
+        assert_eq!(format_bytesize(1024), "1.00KB");
+        assert_eq!(format_bytesize(1536), "1.50KB");
+        assert_eq!(format_bytesize(1024 * 1024), "1.00MB");
+        assert_eq!(format_bytesize(5 * 1024 * 1024 + 512 * 1024), "5.50MB");
+        assert_eq!(format_bytesize(1024u64.pow(3)), "1.00GB");
+        assert_eq!(format_bytesize(1024u64.pow(4)), "1.00TB");
+        assert_eq!(format_bytesize(1024u64.pow(5)), "1.00PB");
     }
 }

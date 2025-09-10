@@ -5,6 +5,9 @@ pub mod sort_merge;
 
 use crc::{CRC_16_XMODEM, CRC_32_ISO_HDLC, Crc};
 pub use sort_merge::SortMergeIterator;
+use time::{Date, OffsetDateTime, Time};
+
+pub const MAX_DATETIME: OffsetDateTime = OffsetDateTime::new_utc(Date::MAX, Time::MAX);
 
 pub fn wrapping_to_usize(value: u64) -> usize {
     value.try_into().unwrap_or(usize::MAX)

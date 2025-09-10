@@ -5,9 +5,13 @@ use bytes::Bytes;
 use clickhouse::{Client, Row, insert::Insert};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-use tracing::info;
+use tracing::{info, warn};
 
-use crate::{config::ClickHouseConfig, helper::AnyResult, output::ChunkWriterEnum};
+use crate::{
+    config::ClickHouseConfig,
+    helper::{AnyResult, MAX_DATETIME},
+    output::ChunkWriterEnum,
+};
 
 #[derive(Debug, Clone, Row, Serialize, Deserialize)]
 pub struct RedisRecordRow {
@@ -200,6 +204,7 @@ impl crate::output::Output for ClickHouseOutput {
                 instance: instance.to_string(),
                 insert,
                 pending_rows: 0,
+                max_overflow_expire_ms: 0,
             },
         )))
     }
@@ -247,6 +252,7 @@ pub struct ClickHouseChunkWriter {
     instance: String,
     insert: Insert<RedisRecordRow>,
     pending_rows: u64,
+    max_overflow_expire_ms: u64,
 }
 
 #[async_trait::async_trait]
@@ -270,15 +276,21 @@ impl crate::output::ChunkWriter for ClickHouseChunkWriter {
             rdb_size: record.rdb_size,
             encoding: record.encoding_name(),
             expire_at: record.expire_at_ms.map(|ms| {
-                OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000).unwrap_or_else(
-                    |err| {
-                        panic!(
-                            "failed to convert expire_at_ms to OffsetDateTime, value is {}, error: {}",
+                let nanos = (ms as i128) * 1_000_000;
+                match OffsetDateTime::from_unix_timestamp_nanos(nanos) {
+                    Ok(dt) => dt,
+                    Err(e) => {
+                        assert_eq!(
+                            e.name(),
+                            "timestamp",
+                            "unexpected error: failed to convert expire_at_ms to OffsetDateTime, value: {}, error: {}",
                             ms,
-                            err
-                        )
+                            e
+                        );
+                        self.max_overflow_expire_ms = self.max_overflow_expire_ms.max(ms);
+                        MAX_DATETIME
                     }
-                )
+                }
             }),
             idle_seconds: record.idle_seconds,
             freq: record.freq,
@@ -301,6 +313,16 @@ impl crate::output::ChunkWriter for ClickHouseChunkWriter {
 
     async fn finalize_instance(mut self) -> AnyResult<()> {
         self.insert.end().await.context("Failed to end instance")?;
+        if self.max_overflow_expire_ms > 0 {
+            warn!(
+                operation = "expire_at_ms_saturated",
+                cluster = %self.cluster,
+                instance = %self.instance,
+                max_overflow_expire_ms = self.max_overflow_expire_ms,
+                adjusted_to = %MAX_DATETIME,
+                "Encountered expire_at_ms larger than supported range; saturated to max time"
+            );
+        }
         Ok(())
     }
 }

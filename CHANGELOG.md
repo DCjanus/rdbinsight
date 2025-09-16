@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Report (HTML): flame graph card now offers a CSV export of top prefixes with decoded and base64 columns.
+
 ### Changed
 
+- Report (HTML): top key/top prefix CSV exports use snake_case headers, include both human-readable and base64 values, and share the same count formatting helper.
 - Report (Parquet): progress logs now include average rows-per-second throughput when scanning top prefixes.
 
 ## [0.1.0-rc.8]

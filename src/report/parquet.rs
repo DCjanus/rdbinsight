@@ -233,11 +233,14 @@ impl ParquetReportProvider {
             i
         }
 
+        let mut scratch: Vec<PrefixAggregate> = Vec::new();
+
         // Helper: pop nodes deeper than target depth, bubble up totals to parent,
-        // and emit significant prefixes using the existing deduplicate_push logic.
-        let pop_to_depth =
+        // and emit significant prefixes using the existing deduplicate logic while
+        // reusing a scratch buffer to avoid repeated allocations.
+        let mut pop_to_depth =
             |target_depth: usize, stack: &mut Vec<Node>, out: &mut Vec<PrefixAggregate>| {
-                let mut agg_candidates: Vec<PrefixAggregate> = Vec::new();
+                scratch.clear();
                 while stack.len() > target_depth {
                     let node = stack.pop().expect("stack not empty when popping");
                     // Bubble up to parent so ancestors receive full subtree totals
@@ -246,15 +249,16 @@ impl ParquetReportProvider {
                         parent.key_count = parent.key_count.saturating_add(node.key_count);
                     }
                     if node.total_size >= threshold {
-                        agg_candidates.push(PrefixAggregate {
+                        scratch.push(PrefixAggregate {
                             prefix: node.prefix,
                             total_size: node.total_size,
                             key_count: node.key_count,
                         });
                     }
                 }
-                if !agg_candidates.is_empty() {
-                    deduplicate_push(agg_candidates, out);
+                if !scratch.is_empty() {
+                    deduplicate_push(&scratch, out);
+                    scratch.clear();
                 }
             };
 
@@ -306,75 +310,62 @@ impl ParquetReportProvider {
     }
 }
 
-fn deduplicate_push(mut agg: Vec<PrefixAggregate>, out: &mut Vec<PrefixAggregate>) {
-    if agg.len() < 2 {
-        for a in &agg {
-            let total_size_fmt = crate::helper::format_bytesize(a.total_size);
-            tracing::info!(
-                operation = "significant_prefix_discovered",
-                prefix = %String::from_utf8_lossy(&a.prefix),
-                total_size = %total_size_fmt,
-                key_count = a.key_count,
-                "Discovered new significant prefix"
-            );
-        }
-        out.extend_from_slice(&agg);
+fn deduplicate_push(agg: &[PrefixAggregate], out: &mut Vec<PrefixAggregate>) {
+    if agg.is_empty() {
         return;
     }
 
-    agg.sort_by(|x, y| x.prefix.cmp(&y.prefix));
-
-    for (cur, nxt) in agg.iter().tuple_windows() {
-        // some checks to ensure the invariant is met
+    // Aggregates are provided deepest-first; iterate shallow -> deep to keep lexicographic order
+    for idx in (1..agg.len()).rev() {
+        let child = &agg[idx];
+        let parent = &agg[idx - 1];
         assert!(
-            cur.prefix.len() < nxt.prefix.len(),
+            child.prefix.len() < parent.prefix.len(),
             "unexpected error found: prefix length invariant violated"
         );
         assert!(
-            nxt.prefix.starts_with(&cur.prefix),
+            parent.prefix.starts_with(&child.prefix),
             "unexpected error found: prefix order invariant violated"
         );
 
-        if cur.key_count == nxt.key_count {
+        if child.key_count == parent.key_count {
             assert_eq!(
-                cur.total_size, nxt.total_size,
+                child.total_size, parent.total_size,
                 "unexpected error found: total_size should be equal when key_count is equal"
             );
             continue;
         }
 
         assert!(
-            cur.key_count > nxt.key_count,
+            child.key_count > parent.key_count,
             "unexpected error found: key_count should be greater when total_size is greater"
         );
         assert!(
-            cur.total_size > nxt.total_size,
+            child.total_size > parent.total_size,
             "unexpected error found: total_size should be greater when key_count is greater"
         );
-        {
-            let total_size_fmt = crate::helper::format_bytesize(cur.total_size);
-            tracing::info!(
-                operation = "significant_prefix_discovered",
-                prefix = %String::from_utf8_lossy(&cur.prefix),
-                total_size = %total_size_fmt,
-                key_count = cur.key_count,
-                "Discovered new significant prefix"
-            );
-        }
-        out.push(cur.clone());
-    }
-    // last one is the longest prefix, always should be pushed
-    if let Some(last) = agg.last() {
-        let total_size_fmt = crate::helper::format_bytesize(last.total_size);
+
+        let total_size_fmt = crate::helper::format_bytesize(child.total_size);
         tracing::info!(
             operation = "significant_prefix_discovered",
-            prefix = %String::from_utf8_lossy(&last.prefix),
+            prefix = %String::from_utf8_lossy(&child.prefix),
             total_size = %total_size_fmt,
-            key_count = last.key_count,
+            key_count = child.key_count,
             "Discovered new significant prefix"
         );
-        out.push(last.clone());
+        out.push(child.clone());
     }
+
+    let last = agg.first().cloned().expect("agg not empty");
+    let total_size_fmt = crate::helper::format_bytesize(last.total_size);
+    tracing::info!(
+        operation = "significant_prefix_discovered",
+        prefix = %String::from_utf8_lossy(&last.prefix),
+        total_size = %total_size_fmt,
+        key_count = last.key_count,
+        "Discovered new significant prefix"
+    );
+    out.push(last);
 }
 
 #[cfg(test)]
@@ -403,18 +394,18 @@ mod tests {
             Case {
                 name: "nested_identical",
                 input: vec![
-                    make_prefix(b"f", 100, 3),
-                    make_prefix(b"fo", 100, 3),
                     make_prefix(b"foo", 100, 3),
+                    make_prefix(b"fo", 100, 3),
+                    make_prefix(b"f", 100, 3),
                 ],
                 expect: vec![make_prefix(b"foo", 100, 3)],
             },
             Case {
                 name: "nested_different",
                 input: vec![
-                    make_prefix(b"f", 100, 3),
-                    make_prefix(b"fo", 50, 2),
                     make_prefix(b"foo", 30, 1),
+                    make_prefix(b"fo", 50, 2),
+                    make_prefix(b"f", 100, 3),
                 ],
                 expect: vec![
                     make_prefix(b"f", 100, 3),
@@ -425,17 +416,18 @@ mod tests {
             Case {
                 name: "nested_same_size",
                 input: vec![
-                    make_prefix(b"f", 100, 3),
-                    make_prefix(b"fo", 30, 1),
                     make_prefix(b"foo", 30, 1),
+                    make_prefix(b"fo", 30, 1),
+                    make_prefix(b"f", 100, 3),
                 ],
                 expect: vec![make_prefix(b"f", 100, 3), make_prefix(b"foo", 30, 1)],
             },
         ];
 
         for case in cases {
+            let input = case.input;
             let mut out = Vec::new();
-            deduplicate_push(case.input, &mut out);
+            deduplicate_push(&input, &mut out);
             assert_eq!(out, case.expect, "{}: {:?}", case.name, out);
         }
     }
@@ -453,25 +445,27 @@ mod tests {
             total_size: 1,
             key_count: 1,
         };
+        let input = vec![a, b];
         let mut out = Vec::new();
-        deduplicate_push(vec![a, b], &mut out);
+        deduplicate_push(&input, &mut out);
     }
 
     #[test]
     #[should_panic(expected = "prefix order invariant violated")]
     fn dedup_prefix_order_invariant_violation() {
         let cur = PrefixAggregate {
-            prefix: Bytes::from_static(b"a"),
+            prefix: Bytes::from_static(b"bc"),
             total_size: 10,
             key_count: 5,
         };
         let nxt = PrefixAggregate {
-            prefix: Bytes::from_static(b"bc"),
+            prefix: Bytes::from_static(b"a"),
             total_size: 5,
             key_count: 2,
         };
+        let input = vec![cur, nxt];
         let mut out = Vec::new();
-        deduplicate_push(vec![cur, nxt], &mut out);
+        deduplicate_push(&input, &mut out);
     }
 
     #[test]
@@ -487,42 +481,45 @@ mod tests {
             total_size: 5,
             key_count: 2,
         };
+        let input = vec![nxt, cur];
         let mut out = Vec::new();
-        deduplicate_push(vec![cur, nxt], &mut out);
+        deduplicate_push(&input, &mut out);
     }
 
     #[test]
     #[should_panic(expected = "key_count should be greater when total_size is greater")]
     fn dedup_key_count_invariant_violation() {
-        let cur = PrefixAggregate {
-            prefix: Bytes::from_static(b"a"),
-            total_size: 100,
-            key_count: 1,
-        };
-        let nxt = PrefixAggregate {
+        let deeper = PrefixAggregate {
             prefix: Bytes::from_static(b"ab"),
             total_size: 50,
             key_count: 2,
         };
+        let shallower = PrefixAggregate {
+            prefix: Bytes::from_static(b"a"),
+            total_size: 100,
+            key_count: 1,
+        };
+        let input = vec![deeper, shallower];
         let mut out = Vec::new();
-        deduplicate_push(vec![cur, nxt], &mut out);
+        deduplicate_push(&input, &mut out);
     }
 
     #[test]
     #[should_panic(expected = "total_size should be greater when key_count is greater")]
     fn dedup_total_size_invariant_violation() {
-        let cur = PrefixAggregate {
+        let deeper = PrefixAggregate {
+            prefix: Bytes::from_static(b"ab"),
+            total_size: 50,
+            key_count: 1,
+        };
+        let shallower = PrefixAggregate {
             prefix: Bytes::from_static(b"a"),
-            total_size: 10,
+            total_size: 40,
             key_count: 3,
         };
-        let nxt = PrefixAggregate {
-            prefix: Bytes::from_static(b"ab"),
-            total_size: 20,
-            key_count: 2,
-        };
+        let input = vec![deeper, shallower];
         let mut out = Vec::new();
-        deduplicate_push(vec![cur, nxt], &mut out);
+        deduplicate_push(&input, &mut out);
     }
 }
 

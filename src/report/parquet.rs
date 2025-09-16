@@ -4,6 +4,7 @@ use std::{
     fs,
     ops::AddAssign,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -211,6 +212,7 @@ impl ParquetReportProvider {
 
         let threshold = (total_size / 100).max(1);
         let mut processed: u64 = 0;
+        let start = Instant::now();
 
         let iter = self.build_group_merge_iterator()?;
 
@@ -264,9 +266,16 @@ impl ParquetReportProvider {
             processed = processed.saturating_add(1);
             if processed.is_multiple_of(PROGRESS_INTERVAL) {
                 let processed_fmt = crate::helper::format_number(processed as f64);
+                let elapsed_secs = start.elapsed().as_secs_f64();
+                let rows_per_second_fmt = if elapsed_secs > 0.0 {
+                    crate::helper::format_number(processed as f64 / elapsed_secs)
+                } else {
+                    "inf".to_string()
+                };
                 tracing::info!(
                     operation = "scan_top_prefix_progress",
                     processed = %processed_fmt,
+                    rows_per_second = %rows_per_second_fmt,
                     total_size = total_size,
                     "Report scanning progress"
                 );

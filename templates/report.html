@@ -273,6 +273,10 @@
                     <div class="flex items-center space-x-2">
                         <input type="text" v-model="searchTerm" @input="onSearchInput" placeholder="Search prefixes" class="input input-bordered input-sm w-full md:w-auto">
                         <button class="btn btn-sm btn-outline" @click="resetZoom">Reset Zoom</button>
+                        <button class="btn btn-ghost btn-sm" @click="exportTopPrefixesCSV">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                            Export CSV
+                        </button>
                     </div>
                 </div>
                 <div class="bg-base-200 rounded-lg p-1 min-h-[400px] flex items-end">
@@ -788,17 +792,21 @@
                 };
 
                 const exportTopKeysCSV = () => {
-                    // CSV header - updated to include raw numeric columns
+                    // CSV header - snake_case for easier downstream processing
                     const headers = [
-                        'Key Name', 'RDB Size (Bytes)', 'RDB Size (Human)', 'Type', 'Instance', 'DB', 
-                        'Member Count (Raw)', 'Member Count (Human)', 'Encoding', 'Expires'
+                        'key_human', 'key_base64', 'rdb_size_bytes', 'rdb_size_human', 'type', 'instance', 'db',
+                        'member_count_raw', 'member_count_human', 'encoding', 'expires'
                     ];
                     const csvContent = [headers.join(',')];
                     
                     // Export all top keys (sortedTopKeys includes filtering and sorting)
                     sortedTopKeys.value.forEach(key => {
+                        const decodedKey = decodeAndFormatKey(key.key_base64 || '');
+                        const safeKeyHuman = `"${decodedKey.replace(/"/g, '""')}"`;
+                        const safeKeyBase64 = `"${(key.key_base64 || '').replace(/"/g, '""')}"`;
                         const row = [
-                            `"${decodeAndFormatKey(key.key_base64).replace(/"/g, '""')}"`, // Escape quotes in CSV
+                            safeKeyHuman,
+                            safeKeyBase64,
                             key.rdb_size, // Raw bytes (already numeric)
                             `"${formatSize(key.rdb_size)}"`, // Human readable size
                             key.type,
@@ -818,6 +826,55 @@
                     const link = document.createElement('a');
                     const safe_batch = raw.value.batch.replace(/[:.]/g, '-').replace(/\+/g, '_');
                     link.download = `rdb_top_keys_${raw.value.cluster}_${safe_batch}.csv`;
+                    link.href = url;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                };
+
+                const exportTopPrefixesCSV = () => {
+                    if (!Array.isArray(raw.value.top_prefixes) || raw.value.top_prefixes.length === 0) {
+                        return;
+                    }
+
+                    const headers = [
+                        'prefix_human',
+                        'prefix_base64',
+                        'total_size_bytes',
+                        'total_size_human',
+                        'key_count_raw',
+                        'key_count_human'
+                    ];
+                    const csvContent = [headers.join(',')];
+
+                    const sortedPrefixes = [...raw.value.top_prefixes].sort((a, b) => (b.total_size || 0) - (a.total_size || 0));
+
+                    sortedPrefixes.forEach(prefix => {
+                        const decodedPrefix = decodeAndFormatPrefix(prefix.prefix_base64 || '');
+                        const safePrefixHuman = `"${decodedPrefix.replace(/"/g, '""')}"`;
+                        const safePrefixBase64 = `"${(prefix.prefix_base64 || '').replace(/"/g, '""')}"`;
+                        const totalSizeBytes = prefix.total_size != null ? prefix.total_size : '';
+                        const totalSizeHuman = `"${formatSize(prefix.total_size)}"`;
+                        const keyCount = prefix.key_count != null ? prefix.key_count : '';
+                        const keyCountHumanValue = formatMemberCount(prefix.key_count);
+                        const keyCountHuman = `"${keyCountHumanValue.replace(/"/g, '""')}"`;
+
+                        const row = [
+                            safePrefixHuman,
+                            safePrefixBase64,
+                            totalSizeBytes,
+                            totalSizeHuman,
+                            keyCount,
+                            keyCountHuman
+                        ];
+                        csvContent.push(row.join(','));
+                    });
+
+                    const csvStr = csvContent.join('\n');
+                    const blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    const safe_batch = raw.value.batch.replace(/[:.]/g, '-').replace(/\+/g, '_');
+                    link.download = `rdb_top_prefixes_${raw.value.cluster}_${safe_batch}.csv`;
                     link.href = url;
                     link.click();
                     URL.revokeObjectURL(url);
@@ -865,7 +922,7 @@
                     topKeysTableColumns, sortedTopKeys,
                     formatSize, formatMemberCount, getTypeTagColor, decodeAndFormatKey, decodeAndFormatPrefix,
                     formatExpireTimeForDisplay, getExpireTimeForCopy,
-                    resetZoom, onSearchInput, exportJsonData, exportTopKeysCSV, setSort
+                    resetZoom, onSearchInput, exportJsonData, exportTopKeysCSV, exportTopPrefixesCSV, setSort
                 };
             }
         });

@@ -72,6 +72,7 @@ Retains existing report features, refactoring with DaisyUI components.
   - **Tooltip:** On hover, displays the full prefix, key count, memory size, and percentage of total memory.
   - **Info Bar:** Displays detailed information for the hovered node in real-time.
   - **Search:** Performs a case-insensitive search by full prefix path (e.g., `a:b:c`) and highlights matches.
+  - **Export:** A CSV export button provides a `top_prefixes` download sorted by memory usage.
 - **Performance:**
   - **Responsive Width:** Adapts to window changes.
   - **Rendering:** Limits the minimum render size to avoid displaying excessively small memory blocks.
@@ -84,6 +85,14 @@ Retains existing report features, refactoring with DaisyUI components.
   - For `top_prefixes`: Adds decoded `prefix` field alongside original `prefix_base64`.
   - Uses `decodeAndFormatKey()` and `decodeAndFormatPrefix()` functions for consistent binary-safe decoding.
   - File naming convention: `rdb_report_{cluster}_{batch}.json`.
+- **CSV Export (Top Prefixes):**
+  - Accessible from the flame graph card.
+  - Output columns: `prefix_human`, `prefix_base64`, `total_size_bytes`, `total_size_human`, `key_count_raw`, `key_count_human`.
+  - Rows are sorted in descending order by `total_size_bytes`.
+- **CSV Export (Top Keys):**
+  - Accessible from the Top 100 Big Keys card.
+  - Output columns: `key_human`, `key_base64`, `rdb_size_bytes`, `rdb_size_human`, `type`, `instance`, `db`, `member_count_raw`, `member_count_human`, `encoding`, `expires`.
+  - Respects current filtering and sorting state.
 
 ### 4.5. Top 100 Big Keys
 
@@ -106,6 +115,8 @@ Retains existing report features, refactoring with DaisyUI components.
     - Includes both raw numeric values and human-readable formatted data:
       - RDB Size: Raw bytes and human-readable format (e.g., `1048576` and `1.0 MB`)
       - Member Count: Raw numbers and formatted counts (e.g., `15000` and `15.0K`)
+      - Key name: Both decoded (`key_human`) and base64-encoded (`key_base64`) strings.
+    - Uses `formatMemberCount()` to format counts consistently (e.g., `15.0K`).
     - Properly handles CSV escaping for special characters in key names and instance names.
     - File naming convention: `rdb_top_keys_{cluster}_{batch}.csv`.
 

@@ -611,28 +611,32 @@ impl ReportDataProvider for ParquetReportProvider {
             let meta = Self::parse_file_metadata(&path)
                 .with_context(|| format!("Failed to parse metadata for {}", path.display()))?;
 
-            if inferred_batch_nanos.is_none() {
+            if let Some(first_batch_nanos) = inferred_batch_nanos {
+                if first_batch_nanos != meta.batch_unix_nanos {
+                    // Different files report different batch timestamps -> hard error
+                    bail!(
+                        "Parquet file {} reports batch_unix_nanos={} which differs from first file's batch_unix_nanos={}",
+                        path.display(),
+                        meta.batch_unix_nanos,
+                        first_batch_nanos
+                    );
+                }
+            } else {
                 inferred_batch_nanos = Some(meta.batch_unix_nanos);
-            } else if inferred_batch_nanos != Some(meta.batch_unix_nanos) {
-                // Different files report different batch timestamps -> hard error
-                bail!(
-                    "Parquet file {} reports batch_unix_nanos={} which differs from first file's batch_unix_nanos={}",
-                    path.display(),
-                    meta.batch_unix_nanos,
-                    inferred_batch_nanos.unwrap()
-                );
             }
 
-            if inferred_cluster.is_none() {
+            if let Some(first_cluster) = &inferred_cluster {
+                if first_cluster.as_str() != meta.cluster.as_str() {
+                    // Different files report different cluster -> hard error
+                    bail!(
+                        "Parquet file {} reports cluster='{}' which differs from first file's cluster='{}'",
+                        path.display(),
+                        meta.cluster,
+                        first_cluster
+                    );
+                }
+            } else {
                 inferred_cluster = Some(meta.cluster.clone());
-            } else if inferred_cluster.as_deref() != Some(meta.cluster.as_str()) {
-                // Different files report different cluster -> hard error
-                bail!(
-                    "Parquet file {} reports cluster='{}' which differs from first file's cluster='{}'",
-                    path.display(),
-                    meta.cluster,
-                    inferred_cluster.as_ref().unwrap()
-                );
             }
 
             keys_statistics.add_assign(meta.keys_statistics.clone());

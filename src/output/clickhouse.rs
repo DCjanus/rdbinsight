@@ -195,7 +195,7 @@ impl crate::output::Output for ClickHouseOutput {
             .config
             .create_client()
             .context("Failed to create ClickHouse client for writer")?;
-        let insert: Insert<RedisRecordRow> = create_redis_record_insert(&client);
+        let insert: Insert<RedisRecordRow> = create_redis_record_insert(&client).await?;
         Ok(ChunkWriterEnum::ClickHouse(Box::new(
             ClickHouseChunkWriter {
                 client,
@@ -225,7 +225,10 @@ impl crate::output::Output for ClickHouseOutput {
             operation = "clickhouse_finalize_batch",
             "Writing batch completion row"
         );
-        let mut insert: Insert<BatchCompletedRow> = client.insert("import_batches_completed")?;
+        let mut insert: Insert<BatchCompletedRow> = client
+            .insert("import_batches_completed")
+            .await
+            .context("Failed to create batch completion insert")?;
         insert
             .write(&completion_row)
             .await
@@ -238,11 +241,12 @@ impl crate::output::Output for ClickHouseOutput {
     }
 }
 
-fn create_redis_record_insert(client: &Client) -> Insert<RedisRecordRow> {
-    client
+async fn create_redis_record_insert(client: &Client) -> AnyResult<Insert<RedisRecordRow>> {
+    let insert = client
         .insert("redis_records_raw")
-        .expect("unexpected error: failed to create RedisRecordRow insert")
-        .with_timeouts(Some(Duration::from_secs(10)), None)
+        .await
+        .context("Failed to create RedisRecordRow insert")?;
+    Ok(insert.with_timeouts(Some(Duration::from_secs(10)), None))
 }
 
 pub struct ClickHouseChunkWriter {
@@ -303,8 +307,8 @@ impl crate::output::ChunkWriter for ClickHouseChunkWriter {
             .context("Failed to write record")?;
         self.pending_rows += 1;
         if self.pending_rows >= 1000 * 1000 {
-            let insert = create_redis_record_insert(&self.client);
-            let insert = std::mem::replace(&mut self.insert, insert);
+            let new_insert = create_redis_record_insert(&self.client).await?;
+            let insert = std::mem::replace(&mut self.insert, new_insert);
             insert.end().await.context("Failed to end instance")?;
             self.pending_rows = 0;
         }

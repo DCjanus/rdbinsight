@@ -12,15 +12,13 @@ arrow = "56.1.0"
 async-trait = "0.1.88"
 async_async_io = "0.2.3"
 axum = "0.8.4"
-backoff = { version = "0.4.0", features = ["tokio"] }
+backon = { version = "1.5.2", default-features = false, features = ["std"] }
 base64 = { version = "0.22.1", features = ["alloc"] }
 bincode = { version = "2.0.1", features = ["serde"] }
 bytes = { version = "1.10.1", features = ["serde"] }
 clap = { version = "4.5.0", features = ["derive", "env"] }
 clap_complete = "4.5.56"
-clickhouse = { git = "https://github.com/ClickHouse/clickhouse-rs.git", features = [
-    "time",
-] } # relay on https://github.com/ClickHouse/clickhouse-rs/pull/250, not included in v0.13.3
+clickhouse = { version = "0.14.0", features = ["time"] }
 crc = "3.3.0"
 futures-util = "0.3.31"
 hex = "0.4.3"

@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context as AnyhowContext, anyhow, bail, ensure};
 use async_async_io::read::{AsyncAsyncRead, PollRead};
 use async_trait::async_trait;
-use backoff::{ExponentialBackoff, backoff::Backoff};
+use backon::{BackoffBuilder, ExponentialBuilder};
 use memchr::memmem;
 use redis_protocol::{
     codec::resp2_encode_command,
@@ -439,11 +439,11 @@ pub async fn perform_rdb_handshake_with_retry(
 ) -> AnyResult<()> {
     use tracing::debug;
 
-    let mut backoff = ExponentialBackoff {
-        max_elapsed_time: Some(Duration::from_secs(30)),
-        max_interval: Duration::from_secs(5),
-        ..Default::default()
-    };
+    let mut backoff = ExponentialBuilder::default()
+        .with_min_delay(Duration::from_millis(500))
+        .with_max_delay(Duration::from_secs(5))
+        .with_total_delay(Some(Duration::from_secs(30)))
+        .build();
 
     let mut attempt = 0;
 
@@ -475,7 +475,7 @@ pub async fn perform_rdb_handshake_with_retry(
                     "RDB handshake attempt failed (retryable)"
                 );
 
-                if let Some(delay) = backoff.next_backoff() {
+                if let Some(delay) = backoff.next() {
                     debug!(
                         operation = "rdb_handshake_retry_delay",
                         delay_ms = delay.as_millis() as u64,

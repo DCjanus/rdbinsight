@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report (HTML): top key/top prefix CSV exports use snake_case headers, include both human-readable and base64 values, and share the same count formatting helper.
 - Report (Parquet): progress logs now include average rows-per-second throughput when scanning top prefixes.
 - Dependencies: bump `typed-builder` to 0.22.0.
+- Dependencies: migrate retry logic from unmaintained `backoff` crate to `backon`.
+- Dependencies: use crates.io `clickhouse` 0.14.0 release and adopt its async insert API.
 
 ## [0.1.0-rc.8]
 

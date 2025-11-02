@@ -2,6 +2,7 @@ use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use redis::Client;
+use semver::Version;
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
     core::{Healthcheck, IntoContainerPort, WaitFor},
@@ -9,7 +10,7 @@ use testcontainers::{
 };
 use tokio::process::Command;
 
-use super::{RedisLaunchOptions, RedisVersion, image};
+use super::{RedisLaunchOptions, image};
 
 const REDIS_PORT: u16 = 6379;
 
@@ -23,7 +24,7 @@ pub struct RedisContainer {
 impl RedisContainer {
     /// Build the target image if necessary and start a container.
     pub async fn start(options: RedisLaunchOptions) -> Result<Self> {
-        let image = image::build_image(options.version, true).await?;
+        let image = image::build_image(&options.version, true).await?;
 
         let mut request = image
             .with_wait_for(WaitFor::healthcheck())
@@ -58,8 +59,8 @@ impl RedisContainer {
         &self.connection_string
     }
 
-    pub fn version(&self) -> RedisVersion {
-        self.options.version
+    pub fn version(&self) -> &Version {
+        &self.options.version
     }
 
     pub fn container(&self) -> &ContainerAsync<GenericImage> {

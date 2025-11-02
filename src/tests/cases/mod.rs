@@ -1,5 +1,6 @@
 use anyhow::{bail, ensure};
 use async_trait::async_trait;
+use semver::Version;
 
 use crate::{
     helper::AnyResult,
@@ -8,7 +9,6 @@ use crate::{
         model::{StreamEncoding, StringEncoding},
     },
     record::{Record, RecordEncoding, RecordType},
-    tests::redis::RedisVersion,
 };
 
 const DEFAULT_DB: u64 = 0;
@@ -27,7 +27,7 @@ pub trait TestDataItem {
     async fn init(&self, conn: &mut redis::aio::MultiplexedConnection) -> AnyResult<()>;
 
     /// Return `true` if this data item is supported on the provided Redis version.
-    fn supports(&self, version: RedisVersion) -> bool;
+    fn supports(&self, version: Version) -> bool;
 
     /// Validate parsed records against expectations.
     fn assert_expected(&self, records: &[Record]) -> AnyResult<()>;

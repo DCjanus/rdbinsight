@@ -1,13 +1,12 @@
+use semver::Version;
 use typed_builder::TypedBuilder;
-
-use super::RedisVersion;
 
 /// Finalized configuration handed to the new launch pipeline.
 #[derive(Clone, Debug, TypedBuilder)]
 #[builder(field_defaults(setter(into)))]
 pub struct RedisLaunchOptions {
     /// Explicit Redis version to launch.
-    pub version: RedisVersion,
+    pub version: Version,
     /// Diskless replication toggle.
     #[builder(default = false)]
     pub diskless: bool,

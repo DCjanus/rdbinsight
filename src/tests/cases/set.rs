@@ -19,7 +19,7 @@ impl TestDataItem for SetItem {
         Ok(())
     }
 
-    fn supports(&self, _version: RedisVersion) -> bool {
+    fn supports(&self, _version: Version) -> bool {
         true
     }
 

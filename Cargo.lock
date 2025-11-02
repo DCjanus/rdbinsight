@@ -2713,6 +2713,7 @@ dependencies = [
  "redis-protocol",
  "reqwest",
  "rmp-serde",
+ "semver",
  "serde",
  "serde_bytes",
  "serde_json",

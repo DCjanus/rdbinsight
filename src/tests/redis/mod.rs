@@ -7,4 +7,3 @@ pub mod version;
 pub use config::RedisLaunchOptions;
 #[allow(unused_imports)]
 pub use instance::RedisContainer;
-pub use version::RedisVersion;

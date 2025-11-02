@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use redis::AsyncCommands;
+use semver::Version;
 
 use super::*;
 
@@ -22,7 +23,7 @@ impl TestDataItem for HashItem {
         Ok(())
     }
 
-    fn supports(&self, _version: RedisVersion) -> bool {
+    fn supports(&self, _version: Version) -> bool {
         true
     }
 

@@ -4,14 +4,17 @@ use anyhow::{Context, Result, bail};
 use redis::Client;
 use semver::Version;
 use testcontainers::{
-    ContainerAsync, GenericImage, ImageExt,
-    core::{Healthcheck, IntoContainerPort, WaitFor},
-    runners::AsyncRunner,
+    ContainerAsync, GenericBuildableImage, GenericImage, ImageExt,
+    core::{BuildImageOptions, Healthcheck, IntoContainerPort, WaitFor},
+    runners::{AsyncBuilder, AsyncRunner},
 };
 use tokio::process::Command;
 
-use super::{RedisLaunchOptions, image};
+use super::version::REDIS_IMAGE_NAME;
+use crate::tests::utils::redis::config::RedisLaunchOptions;
 
+/// Inline copy of the Redis Dockerfile used to build test containers at runtime.
+pub const DOCKERFILE_TEMPLATE: &str = include_str!("Dockerfile");
 const REDIS_PORT: u16 = 6379;
 
 /// Represents a Redis container launched via the new infrastructure.
@@ -24,7 +27,16 @@ pub struct RedisContainer {
 impl RedisContainer {
     /// Build the target image if necessary and start a container.
     pub async fn start(options: RedisLaunchOptions) -> Result<Self> {
-        let image = image::build_image(&options.version, true).await?;
+        let tag = options.version.to_string();
+        let image = GenericBuildableImage::new(REDIS_IMAGE_NAME.to_string(), tag.clone())
+            .with_dockerfile_string(DOCKERFILE_TEMPLATE.to_owned())
+            .build_image_with(
+                BuildImageOptions::new()
+                    .with_skip_if_exists(true)
+                    .with_build_arg("REDIS_VERSION", tag),
+            )
+            .await
+            .context("build redis docker image via testcontainers")?;
 
         let mut request = image
             .with_wait_for(WaitFor::healthcheck())

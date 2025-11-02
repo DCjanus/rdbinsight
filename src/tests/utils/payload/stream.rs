@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 
 use super::*;
-use crate::tests::redis::version::REDIS_V5_0_14;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StreamItem;

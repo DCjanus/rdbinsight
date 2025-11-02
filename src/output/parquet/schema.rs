@@ -1,5 +1,5 @@
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use parquet::format::SortingColumn;
+use parquet::file::metadata::SortingColumn;
 
 /// Create the Arrow schema for Redis records in Parquet format
 pub fn create_redis_record_schema() -> Schema {
@@ -30,9 +30,7 @@ pub fn create_redis_record_schema() -> Schema {
 }
 
 /// Create sorting_columns metadata for (db ASC, key ASC) by field names.
-pub fn create_db_key_sorting_columns(
-    schema: &Schema,
-) -> anyhow::Result<Vec<parquet::format::SortingColumn>> {
+pub fn create_db_key_sorting_columns(schema: &Schema) -> anyhow::Result<Vec<SortingColumn>> {
     use anyhow::anyhow;
     let cluster_idx = find_field_index(schema, "cluster")
         .ok_or_else(|| anyhow!("Field 'cluster' not found in Redis record schema"))?;
@@ -45,11 +43,31 @@ pub fn create_db_key_sorting_columns(
     let key_idx = find_field_index(schema, "key")
         .ok_or_else(|| anyhow!("Field 'key' not found in Redis record schema"))?;
     Ok(vec![
-        SortingColumn::new(cluster_idx as i32, false, false),
-        SortingColumn::new(batch_idx as i32, false, false),
-        SortingColumn::new(instance_idx as i32, false, false),
-        SortingColumn::new(db_idx as i32, false, false),
-        SortingColumn::new(key_idx as i32, false, false),
+        SortingColumn {
+            column_idx: cluster_idx as i32,
+            descending: false,
+            nulls_first: false,
+        },
+        SortingColumn {
+            column_idx: batch_idx as i32,
+            descending: false,
+            nulls_first: false,
+        },
+        SortingColumn {
+            column_idx: instance_idx as i32,
+            descending: false,
+            nulls_first: false,
+        },
+        SortingColumn {
+            column_idx: db_idx as i32,
+            descending: false,
+            nulls_first: false,
+        },
+        SortingColumn {
+            column_idx: key_idx as i32,
+            descending: false,
+            nulls_first: false,
+        },
     ])
 }
 

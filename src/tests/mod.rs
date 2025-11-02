@@ -3,3 +3,4 @@
 
 #![allow(dead_code)]
 pub mod redis;
+pub mod cases;

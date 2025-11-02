@@ -1,7 +1,7 @@
 /// Canonical list of Redis releases we support in integration tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RedisVersion {
-    V8_0_0,
+    V8_2_3,
     V7_0_15,
     V7_2_4,
     V6_0_20,
@@ -21,7 +21,7 @@ impl RedisVersion {
     /// Suggested image tag for the `repository()` above.
     pub fn image_tag(&self) -> &'static str {
         match self {
-            RedisVersion::V8_0_0 => "8.0.0",
+            RedisVersion::V8_2_3 => "8.2.3",
             RedisVersion::V7_0_15 => "7.0.15",
             RedisVersion::V7_2_4 => "7.2.4",
             RedisVersion::V6_0_20 => "6.0.20",

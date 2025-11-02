@@ -9,3 +9,5 @@ pub mod parser;
 pub mod record;
 pub mod report;
 pub mod source;
+#[cfg(test)]
+mod tests;

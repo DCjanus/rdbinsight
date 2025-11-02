@@ -8,13 +8,14 @@ This directory ships a generic `Dockerfile` that builds a test image for any Red
 
 ```bash
 docker build \
-  -f tests/image/Dockerfile \
-  -t rdbinsight/redis:6.2.11 \
+  -f src/tests/image/Dockerfile \
+  -t localhost/rdbinsight/redis:6.2.11 \
   --build-arg REDIS_VERSION=6.2.11 \
   .
 ```
 
 - `REDIS_VERSION` is required and controls which tarball is fetched from <https://download.redis.io/releases/>.
+- Keeping the repository prefix `localhost/` ensures the locally built image never conflicts with Docker Hub tags.
 - The resulting image tag is up to you; matching the Redis version keeps Testcontainers configuration readable.
 
 - When compiling Redis 1.x, `make install` might be unavailable. The Dockerfile automatically falls back to copying binaries into `/opt/redis/bin`.
@@ -24,7 +25,7 @@ docker build \
 After building, reference the tag directly in Testcontainers:
 
 ```rust
-GenericImage::new("rdbinsight/redis", "2.4.18")
+GenericImage::new("localhost/rdbinsight/redis", "2.4.18")
 ```
 
 Make sure all required versions are built locally before running tests; otherwise the container startup will fail when the image pull falls back to a missing tag.

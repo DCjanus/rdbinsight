@@ -17,14 +17,6 @@ docker build \
 - `REDIS_VERSION` is required and controls which tarball is fetched from <https://download.redis.io/releases/>.
 - The resulting image tag is up to you; matching the Redis version keeps Testcontainers configuration readable.
 
-## Common Use Cases
-
-- Build another version:
-
-  ```bash
-  docker build -f tests/image/Dockerfile -t rdbinsight/redis:7.2.4 --build-arg REDIS_VERSION=7.2.4 .
-  ```
-
 - When compiling Redis 1.x, `make install` might be unavailable. The Dockerfile automatically falls back to copying binaries into `/opt/redis/bin`.
 
 ## Integration Tests
@@ -36,3 +28,9 @@ GenericImage::new("rdbinsight/redis", "2.4.18")
 ```
 
 Make sure all required versions are built locally before running tests; otherwise the container startup will fail when the image pull falls back to a missing tag.
+
+## Testcontainers Reference
+
+Rust Testcontainers can build custom Dockerfiles like this one via `GenericBuildableImage` and `BuildImageOptions`. Refer to the official guide for usage examples and optional flags such as `skip_if_exists` or `no_cache`:
+
+<https://rust.testcontainers.org/features/building_images/>

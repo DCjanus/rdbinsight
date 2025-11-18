@@ -79,8 +79,8 @@ VOLUME ["/data"]
 
 EXPOSE 6379
 
-ENTRYPOINT ["/opt/redis/bin/redis-server"]
-CMD []
+# Use redis-server as default cmd; no explicit ENTRYPOINT so users can override easily
+CMD ["/opt/redis/bin/redis-server"]
 
 LABEL org.opencontainers.image.source="https://download.redis.io/releases/" \
       redis.version="${REDIS_VERSION}"

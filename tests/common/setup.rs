@@ -26,7 +26,9 @@ pub enum RedisVariant {
 impl RedisVariant {
     fn image(&self) -> (String, String) {
         match self {
-            RedisVariant::StackLatest => ("redis/redis-stack-server".to_string(), "latest".to_string()),
+            RedisVariant::StackLatest => {
+                ("redis/redis-stack-server".to_string(), "latest".to_string())
+            }
             RedisVariant::Redis8_0 => {
                 let repo = env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
                     .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
@@ -160,6 +162,9 @@ impl RedisInstance {
         let mut cmd: Vec<String> = Vec::new();
 
         cmd.push("--appendonly".into());
+        cmd.push("no".into());
+        // Disable protected mode so test instances accept external connections
+        cmd.push("--protected-mode".into());
         cmd.push("no".into());
 
         if cfg.diskless {

@@ -1,4 +1,5 @@
 use std::{
+    env,
     future::Future,
     path::PathBuf,
     pin::Pin,
@@ -7,7 +8,11 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use redis::{Client, aio::MultiplexedConnection as AsyncConnection};
-use testcontainers::{ContainerAsync, GenericImage, core::ImageExt, runners::AsyncRunner};
+use testcontainers::{
+    ContainerAsync, GenericImage,
+    core::{ImageExt, IntoContainerPort},
+    runners::AsyncRunner,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RedisVariant {
@@ -19,13 +24,20 @@ pub enum RedisVariant {
 }
 
 impl RedisVariant {
-    fn image(&self) -> &'static str {
+    fn image(&self) -> String {
         match self {
-            RedisVariant::Redis8_0 => "redis:8.0",
-            RedisVariant::Redis7_0 => "redis:7.0",
-            RedisVariant::Redis6_0 => "redis:6.0",
-            RedisVariant::Redis2_8 => "redis:2.8",
-            RedisVariant::StackLatest => "redis/redis-stack-server:latest",
+            RedisVariant::StackLatest => "redis/redis-stack-server:latest".to_string(),
+            _ => {
+                let repo = env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
+                    .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
+                match self {
+                    RedisVariant::Redis8_0 => format!("{repo}:8.0.5"),
+                    RedisVariant::Redis7_0 => format!("{repo}:7.0.15"),
+                    RedisVariant::Redis6_0 => format!("{repo}:6.0.20"),
+                    RedisVariant::Redis2_8 => format!("{repo}:2.8.24"),
+                    RedisVariant::StackLatest => unreachable!("handled above"),
+                }
+            }
         }
     }
 
@@ -174,7 +186,8 @@ impl RedisInstance {
 
         // Build container with appropriate entrypoint when arguments are present
         let redis_image = {
-            let base = GenericImage::new(repo, tag);
+            // testcontainers does not automatically read EXPOSE from the image; add 6379 explicitly
+            let base = GenericImage::new(repo, tag).with_exposed_port(6379.tcp());
             let full_cmd: Vec<String> = if cmd.is_empty() {
                 vec![]
             } else {

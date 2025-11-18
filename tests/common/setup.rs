@@ -24,19 +24,28 @@ pub enum RedisVariant {
 }
 
 impl RedisVariant {
-    fn image(&self) -> String {
+    fn image(&self) -> (String, String) {
         match self {
-            RedisVariant::StackLatest => "redis/redis-stack-server:latest".to_string(),
-            _ => {
+            RedisVariant::StackLatest => ("redis/redis-stack-server".to_string(), "latest".to_string()),
+            RedisVariant::Redis8_0 => {
                 let repo = env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
                     .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
-                match self {
-                    RedisVariant::Redis8_0 => format!("{repo}:8.0.5"),
-                    RedisVariant::Redis7_0 => format!("{repo}:7.0.15"),
-                    RedisVariant::Redis6_0 => format!("{repo}:6.0.20"),
-                    RedisVariant::Redis2_8 => format!("{repo}:2.8.24"),
-                    RedisVariant::StackLatest => unreachable!("handled above"),
-                }
+                (repo, "8.0.5".to_string())
+            }
+            RedisVariant::Redis7_0 => {
+                let repo = env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
+                    .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
+                (repo, "7.0.15".to_string())
+            }
+            RedisVariant::Redis6_0 => {
+                let repo = env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
+                    .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
+                (repo, "6.0.20".to_string())
+            }
+            RedisVariant::Redis2_8 => {
+                let repo = env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
+                    .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
+                (repo, "2.8.24".to_string())
             }
         }
     }
@@ -147,8 +156,7 @@ impl RedisInstance {
     }
 
     async fn from_config(cfg: RedisConfig) -> Result<Self> {
-        let image = cfg.variant.image();
-        let (repo, tag) = image.split_once(':').expect("image must contain a tag");
+        let (repo, tag) = cfg.variant.image();
         let mut cmd: Vec<String> = Vec::new();
 
         cmd.push("--appendonly".into());
@@ -187,7 +195,7 @@ impl RedisInstance {
         // Build container with appropriate entrypoint when arguments are present
         let redis_image = {
             // testcontainers does not automatically read EXPOSE from the image; add 6379 explicitly
-            let base = GenericImage::new(repo, tag).with_exposed_port(6379.tcp());
+            let base = GenericImage::new(repo.clone(), tag.clone()).with_exposed_port(6379.tcp());
             let full_cmd: Vec<String> = if cmd.is_empty() {
                 vec![]
             } else {
@@ -210,7 +218,7 @@ impl RedisInstance {
         let instance = Self {
             container,
             connection_string,
-            redis_version: image.replace([':', '/'], "_"),
+            redis_version: format!("{repo}:{tag}").replace([':', '/'], "_"),
         };
 
         // If both username and password are configured, create ACL user after startup

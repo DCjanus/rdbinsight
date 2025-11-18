@@ -27,30 +27,17 @@ pub enum RedisVariant {
 
 impl RedisVariant {
     fn image(&self) -> (String, String) {
+        let repo = env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
+            .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
+
         match self {
             RedisVariant::StackLatest => {
                 ("redis/redis-stack-server".to_string(), "latest".to_string())
             }
-            RedisVariant::Redis8_0 => {
-                let repo = env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
-                    .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
-                (repo, "8.0.5".to_string())
-            }
-            RedisVariant::Redis7_0 => {
-                let repo = env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
-                    .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
-                (repo, "7.0.15".to_string())
-            }
-            RedisVariant::Redis6_0 => {
-                let repo = env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
-                    .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
-                (repo, "6.0.20".to_string())
-            }
-            RedisVariant::Redis2_8 => {
-                let repo = env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
-                    .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
-                (repo, "2.8.24".to_string())
-            }
+            RedisVariant::Redis8_0 => (repo.clone(), "8.0.5".to_string()),
+            RedisVariant::Redis7_0 => (repo.clone(), "7.0.15".to_string()),
+            RedisVariant::Redis6_0 => (repo.clone(), "6.0.20".to_string()),
+            RedisVariant::Redis2_8 => (repo.clone(), "2.8.24".to_string()),
         }
     }
 

@@ -1,12 +1,7 @@
 name: Publish Redis Test Images
 
-# NOTE: Before merging to master, switch back to workflow_dispatch-only to avoid publishing automatically.
+# NOTE: This workflow is intentionally manual-only to avoid automatic image publishing.
 on:
-  push:
-    branches:
-      - master
-      - "**" # 临时允许分支测试，合并前请收紧
-  pull_request:
   workflow_dispatch:
 
 permissions:

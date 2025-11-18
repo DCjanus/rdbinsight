@@ -34,10 +34,10 @@ impl RedisVariant {
             RedisVariant::StackLatest => {
                 ("redis/redis-stack-server".to_string(), "latest".to_string())
             }
-            RedisVariant::Redis8_0 => (repo.clone(), "8.0.5".to_string()),
-            RedisVariant::Redis7_0 => (repo.clone(), "7.0.15".to_string()),
-            RedisVariant::Redis6_0 => (repo.clone(), "6.0.20".to_string()),
-            RedisVariant::Redis2_8 => (repo.clone(), "2.8.24".to_string()),
+            RedisVariant::Redis8_0 => (repo, "8.0.5".to_string()),
+            RedisVariant::Redis7_0 => (repo, "7.0.15".to_string()),
+            RedisVariant::Redis6_0 => (repo, "6.0.20".to_string()),
+            RedisVariant::Redis2_8 => (repo, "2.8.24".to_string()),
         }
     }
 

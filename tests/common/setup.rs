@@ -1,4 +1,5 @@
 use std::{
+    env,
     future::Future,
     path::PathBuf,
     pin::Pin,
@@ -7,7 +8,13 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use redis::{Client, aio::MultiplexedConnection as AsyncConnection};
-use testcontainers::{ContainerAsync, GenericImage, core::ImageExt, runners::AsyncRunner};
+use testcontainers::{
+    ContainerAsync, GenericImage,
+    core::{ImageExt, IntoContainerPort},
+    runners::AsyncRunner,
+};
+
+const LOG_OUTPUT_LIMIT: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RedisVariant {
@@ -19,13 +26,18 @@ pub enum RedisVariant {
 }
 
 impl RedisVariant {
-    fn image(&self) -> &'static str {
+    fn image(&self) -> (String, String) {
+        let repo = env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
+            .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
+
         match self {
-            RedisVariant::Redis8_0 => "redis:8.0",
-            RedisVariant::Redis7_0 => "redis:7.0",
-            RedisVariant::Redis6_0 => "redis:6.0",
-            RedisVariant::Redis2_8 => "redis:2.8",
-            RedisVariant::StackLatest => "redis/redis-stack-server:latest",
+            RedisVariant::StackLatest => {
+                ("redis/redis-stack-server".to_string(), "latest".to_string())
+            }
+            RedisVariant::Redis8_0 => (repo, "8.0.5".to_string()),
+            RedisVariant::Redis7_0 => (repo, "7.0.15".to_string()),
+            RedisVariant::Redis6_0 => (repo, "6.0.20".to_string()),
+            RedisVariant::Redis2_8 => (repo, "2.8.24".to_string()),
         }
     }
 
@@ -38,6 +50,25 @@ impl RedisVariant {
             RedisVariant::StackLatest => "redis-stack-server",
         }
     }
+}
+
+fn truncate_to_bytes(input: &str, max_bytes: usize) -> String {
+    if input.len() <= max_bytes {
+        return input.to_string();
+    }
+
+    let mut acc = String::with_capacity(max_bytes + 20);
+    let mut used = 0usize;
+    for ch in input.chars() {
+        let len = ch.len_utf8();
+        if used + len > max_bytes {
+            break;
+        }
+        acc.push(ch);
+        used += len;
+    }
+    acc.push_str("\n...<truncated>...");
+    acc
 }
 
 pub struct RedisConfig {
@@ -114,33 +145,20 @@ pub struct RedisInstance {
 impl RedisInstance {
     /// Get the container logs (stdout and stderr)
     pub async fn get_logs(&self) -> Result<String> {
-        let container_id = self.container.id();
-        let logs_cmd = format!("docker logs {}", container_id);
-
-        let output = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(&logs_cmd)
-            .output()
-            .await?;
-
-        let stdout = String::from_utf8(output.stdout)
-            .map_err(|e| anyhow!("Invalid UTF-8 in stdout: {}", e))?;
-        let stderr = String::from_utf8(output.stderr)
-            .map_err(|e| anyhow!("Invalid UTF-8 in stderr: {}", e))?;
-
-        Ok(format!(
-            "=== STDOUT ===\n{}\n=== STDERR ===\n{}",
-            stdout, stderr
-        ))
+        Self::collect_logs(&self.container).await
     }
 
     async fn from_config(cfg: RedisConfig) -> Result<Self> {
-        let image = cfg.variant.image();
-        let (repo, tag) = image.split_once(':').expect("image must contain a tag");
+        let (repo, tag) = cfg.variant.image();
         let mut cmd: Vec<String> = Vec::new();
 
         cmd.push("--appendonly".into());
         cmd.push("no".into());
+        // Disable protected mode so test instances accept external connections (unsupported on Redis 2.8)
+        if cfg.variant != RedisVariant::Redis2_8 {
+            cmd.push("--protected-mode".into());
+            cmd.push("no".into());
+        }
 
         if cfg.diskless {
             cmd.push("--repl-diskless-sync".into());
@@ -174,7 +192,8 @@ impl RedisInstance {
 
         // Build container with appropriate entrypoint when arguments are present
         let redis_image = {
-            let base = GenericImage::new(repo, tag);
+            // testcontainers does not automatically read EXPOSE from the image; add 6379 explicitly
+            let base = GenericImage::new(repo.clone(), tag.clone()).with_exposed_port(6379.tcp());
             let full_cmd: Vec<String> = if cmd.is_empty() {
                 vec![]
             } else {
@@ -188,27 +207,91 @@ impl RedisInstance {
 
         let container: ContainerAsync<GenericImage> = redis_image.start().await?;
 
-        let host = container.get_host().await?;
-        let port = container.get_host_port_ipv4(6379).await?;
+        let host = match container.get_host().await {
+            Ok(host) => host,
+            Err(err) => {
+                return Err(
+                    Self::error_with_logs(&container, "Failed to get container host", err).await,
+                );
+            }
+        };
+        let port = match container.get_host_port_ipv4(6379).await {
+            Ok(port) => port,
+            Err(err) => {
+                return Err(Self::error_with_logs(
+                    &container,
+                    "Failed to get mapped port 6379/tcp",
+                    err,
+                )
+                .await);
+            }
+        };
         let connection_string = format!("redis://{}:{}", host, port);
 
-        Self::wait_for_redis_ready(&connection_string).await?;
-
-        let instance = Self {
-            container,
-            connection_string,
-            redis_version: image.replace([':', '/'], "_"),
-        };
+        if let Err(err) = Self::wait_for_redis_ready(&connection_string).await {
+            return Err(
+                Self::error_with_logs(&container, "Redis failed to become ready", err).await,
+            );
+        }
 
         // If both username and password are configured, create ACL user after startup
         if !cfg.username.is_empty() && cfg.password.is_some() {
             let password = cfg.password.as_ref().unwrap();
-            instance
-                .create_acl_user(&cfg.username, password, cfg.password.as_deref())
-                .await?;
+            if let Err(err) = Self::create_acl_user(
+                &connection_string,
+                &cfg.username,
+                password,
+                cfg.password.as_deref(),
+            )
+            .await
+            {
+                return Err(
+                    Self::error_with_logs(&container, "Failed to create ACL user", err).await,
+                );
+            }
         }
 
-        Ok(instance)
+        Ok(Self {
+            container,
+            connection_string,
+            redis_version: format!("{repo}:{tag}").replace([':', '/'], "_"),
+        })
+    }
+
+    async fn collect_logs(container: &ContainerAsync<GenericImage>) -> Result<String> {
+        let container_id = container.id();
+        let logs_cmd = format!("docker logs {}", container_id);
+
+        let output = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(&logs_cmd)
+            .output()
+            .await?;
+
+        let stdout = String::from_utf8(output.stdout)
+            .map_err(|e| anyhow!("Invalid UTF-8 in stdout: {}", e))?;
+        let stderr = String::from_utf8(output.stderr)
+            .map_err(|e| anyhow!("Invalid UTF-8 in stderr: {}", e))?;
+
+        Ok(format!(
+            "=== STDOUT ===\n{}\n=== STDERR ===\n{}",
+            stdout, stderr
+        ))
+    }
+
+    async fn error_with_logs(
+        container: &ContainerAsync<GenericImage>,
+        context: &str,
+        err: impl std::fmt::Display,
+    ) -> anyhow::Error {
+        let logs = Self::collect_logs(container)
+            .await
+            .unwrap_or_else(|e| format!("<failed to fetch logs: {e}>"));
+        let truncated_logs = truncate_to_bytes(&logs, LOG_OUTPUT_LIMIT);
+        anyhow!(
+            "{context}: {err}\n--- container logs (truncated to {LOG_OUTPUT_LIMIT} bytes) ---\n{}",
+            truncated_logs
+        )
     }
 
     pub async fn generate_rdb<F>(&self, test_case_name: &str, data_seeder: F) -> Result<PathBuf>
@@ -295,12 +378,12 @@ impl RedisInstance {
     }
 
     async fn create_acl_user(
-        &self,
+        connection_string: &str,
         username: &str,
         password: &str,
         default_password: Option<&str>,
     ) -> Result<()> {
-        let client = Client::open(self.connection_string.as_str())?;
+        let client = Client::open(connection_string)?;
         let mut conn = client.get_multiplexed_tokio_connection().await?;
 
         // First authenticate with the default password if it exists

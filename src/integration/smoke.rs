@@ -1,4 +1,4 @@
-use anyhow::ensure;
+use anyhow::{ensure, Context as AnyhowContext};
 use rstest::rstest;
 
 use super::{
@@ -23,32 +23,30 @@ async fn redis_smoke_suite(#[case] preset: RedisPreset) -> AnyResult<()> {
     );
 
     let env = RedisConfig::from_preset(preset).build().await?;
-    let mut executed = 0usize;
+    let mut conn = env.connection().await?;
 
     for fixture in &fixtures {
         if !fixture.supported(env.version()) {
             continue;
         }
 
-        let artifacts = env.run_fixture(fixture.as_ref()).await?;
-        assert!(
-            artifacts.items().iter().any(|item| item.is_string_record()),
-            "{} should produce at least one string record",
-            fixture.name()
-        );
-        assert!(
-            artifacts.redis_version().major >= 2,
-            "unexpected redis major version {:?}",
-            artifacts.redis_version()
-        );
-        executed += 1;
+        fixture
+            .load(&mut conn)
+            .await
+            .with_context(|| format!("load fixture {}", fixture.name()))?;
     }
 
-    ensure!(
-        executed > 0,
-        "no fixtures executed for Redis {}",
-        env.version()
-    );
+    drop(conn);
+    let artifacts = env.collect_artifacts().await?;
+    for fixture in &fixtures {
+        if !fixture.supported(env.version()) {
+            continue;
+        }
+
+        fixture
+            .assert(&artifacts)
+            .with_context(|| format!("assert fixture {}", fixture.name()))?;
+    }
 
     Ok(())
 }

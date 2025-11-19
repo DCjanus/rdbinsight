@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as AnyhowContext, anyhow, ensure};
+use anyhow::{Context as AnyhowContext, anyhow};
 use redis::{Client, aio::MultiplexedConnection};
 use semver::Version;
 use testcontainers::{
@@ -256,7 +256,7 @@ impl RedisTestEnv {
             .context("connect to redis test env")?)
     }
 
-    async fn collect_artifacts(&self) -> AnyResult<ParsedRdbArtifacts> {
+    pub async fn collect_artifacts(&self) -> AnyResult<ParsedRdbArtifacts> {
         let mut stream = RedisRdbStream::new(
             self.address.clone(),
             self.username.clone(),
@@ -268,32 +268,6 @@ impl RedisTestEnv {
         Ok(ParsedRdbArtifacts::new(self.redis_version.clone(), items))
     }
 
-    pub async fn apply_fixture<F>(&self, fixture: &F) -> AnyResult<ParsedRdbArtifacts>
-    where F: TestFixture + ?Sized {
-        ensure!(
-            fixture.supported(self.version()),
-            "fixture {} does not support redis {}",
-            fixture.name(),
-            self.version()
-        );
-
-        let mut conn = self.connection().await?;
-        fixture
-            .load(&mut conn)
-            .await
-            .with_context(|| format!("load fixture {}", fixture.name()))?;
-
-        self.collect_artifacts().await
-    }
-
-    pub async fn run_fixture<F>(&self, fixture: &F) -> AnyResult<ParsedRdbArtifacts>
-    where F: TestFixture + ?Sized {
-        let artifacts = self.apply_fixture(fixture).await?;
-        fixture
-            .assert(&artifacts)
-            .with_context(|| format!("assert fixture {}", fixture.name()))?;
-        Ok(artifacts)
-    }
 }
 
 fn connection_url(address: &str, username: &str, password: Option<&str>) -> String {

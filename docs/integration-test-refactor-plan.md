@@ -50,6 +50,9 @@
 3. 选择一组代表性的测试案例迁移，验证对内部模块的依赖方式，并确保使用 Redis SYNC 流程而非本地落盘。
 4. 统计现有标记为 `pub` 但仅供测试使用的 API，为后续 `pub(crate)` 收紧提供清单。
 
+## TODO
+- [ ] 在新架构稳定后，移除 `justfile` 中 `test` 任务以及 `.github/workflows/ci.yml` 覆盖步骤里针对 `cargo nextest` 的 `-E 'not kind(test)'` 过滤器，恢复对 `tests/` 目录的全量执行。
+
 ## 附注
 - 迁移过程中，可借助 `#[cfg(test)]` gate 将新旧测试并存，保证 CI 稳定。
 - 若测试依赖耗时初始化（如数据库），考虑在 `integration` 模块内提供复用的全局设施，避免每个测试重复搭建。

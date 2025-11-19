@@ -59,7 +59,8 @@ jobs:
           CARGO_LLVM_COV_SETUP=yes \
           cargo +nightly llvm-cov nextest \
             --all-features --workspace \
-            --branch --codecov --output-path codecov.json
+            --branch --codecov --output-path codecov.json \
+            -E 'not kind(test)'
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5

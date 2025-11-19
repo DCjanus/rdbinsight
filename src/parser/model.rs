@@ -97,6 +97,28 @@ pub enum Item {
     },
 }
 
+impl Item {
+    /// Returns the logical Redis key if this item represents a key-value record.
+    pub fn key(&self) -> Option<&RDBStr> {
+        match self {
+            Item::StringRecord { key, .. }
+            | Item::ListRecord { key, .. }
+            | Item::SetRecord { key, .. }
+            | Item::ZSetRecord { key, .. }
+            | Item::ZSet2Record { key, .. }
+            | Item::StreamRecord { key, .. }
+            | Item::HashRecord { key, .. }
+            | Item::ModuleRecord { key, .. } => Some(key),
+            _ => None,
+        }
+    }
+
+    /// Returns true if the item represents a string record.
+    pub fn is_string_record(&self) -> bool {
+        matches!(self, Item::StringRecord { .. })
+    }
+}
+
 impl_serde_str_conversion!(StringEncoding);
 impl_serde_str_conversion!(ListEncoding);
 impl_serde_str_conversion!(SetEncoding);

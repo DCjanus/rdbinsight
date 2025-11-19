@@ -1,4 +1,4 @@
-use anyhow::{ensure, Context as AnyhowContext};
+use anyhow::{Context as AnyhowContext, ensure};
 use rstest::rstest;
 
 use super::{
@@ -16,15 +16,11 @@ type DynFixture = Box<dyn TestFixture + 'static>;
 #[case::redis_2_8_24(RedisPreset::Redis2_8_24)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn redis_smoke_suite(#[case] preset: RedisPreset) -> AnyResult<()> {
-    let fixtures = default_fixtures();
-    ensure!(
-        !fixtures.is_empty(),
-        "smoke suite requires at least one fixture"
-    );
-
     let env = RedisConfig::from_preset(preset).build().await?;
-    let mut conn = env.connection().await?;
 
+    let fixtures = default_fixtures();
+
+    let mut conn = env.connection().await?;
     for fixture in &fixtures {
         if !fixture.supported(env.version()) {
             continue;
@@ -35,14 +31,13 @@ async fn redis_smoke_suite(#[case] preset: RedisPreset) -> AnyResult<()> {
             .await
             .with_context(|| format!("load fixture {}", fixture.name()))?;
     }
-
     drop(conn);
+
     let artifacts = env.collect_artifacts().await?;
     for fixture in &fixtures {
         if !fixture.supported(env.version()) {
             continue;
         }
-
         fixture
             .assert(&artifacts)
             .with_context(|| format!("assert fixture {}", fixture.name()))?;

@@ -11,8 +11,7 @@ pub trait TestFixture: Send + Sync {
 
     async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()>;
 
-    fn supported(&self, version: &Version) -> bool {
-        let _ = version;
+    fn supported(&self, _: &Version) -> bool {
         true
     }
 

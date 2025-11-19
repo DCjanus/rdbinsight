@@ -2,7 +2,7 @@ use anyhow::Context as AnyhowContext;
 use rstest::rstest;
 
 use super::{
-    fixtures::{SimpleStringFixture, TestFixture},
+    fixtures::{SimpleSetFixture, SimpleStringFixture, SimpleZSetFixture, TestFixture},
     redis::{RedisConfig, RedisPreset},
 };
 use crate::helper::AnyResult;
@@ -39,7 +39,7 @@ async fn redis_smoke_suite(#[case] preset: RedisPreset) -> AnyResult<()> {
             continue;
         }
         fixture
-            .assert(&items)
+            .assert(env.version(), &items)
             .with_context(|| format!("assert fixture {}", fixture.name()))?;
     }
 
@@ -47,5 +47,9 @@ async fn redis_smoke_suite(#[case] preset: RedisPreset) -> AnyResult<()> {
 }
 
 fn default_fixtures() -> Vec<DynFixture> {
-    vec![Box::new(SimpleStringFixture::new())]
+    vec![
+        Box::new(SimpleStringFixture::new()),
+        Box::new(SimpleSetFixture::new()),
+        Box::new(SimpleZSetFixture::new()),
+    ]
 }

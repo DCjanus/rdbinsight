@@ -14,8 +14,12 @@ pub trait TestFixture: Send + Sync {
         true
     }
 
-    fn assert(&self, items: &[Item]) -> AnyResult<()>;
+    fn assert(&self, version: &Version, items: &[Item]) -> AnyResult<()>;
 }
 
+pub mod simple_set;
 pub mod simple_string;
+pub mod simple_zset;
+pub use simple_set::SimpleSetFixture;
 pub use simple_string::SimpleStringFixture;
+pub use simple_zset::SimpleZSetFixture;

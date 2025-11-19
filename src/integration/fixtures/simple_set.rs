@@ -1,6 +1,7 @@
 use anyhow::{anyhow, ensure};
 use async_trait::async_trait;
 use redis::aio::MultiplexedConnection;
+use semver::Version;
 
 use super::TestFixture;
 use crate::{
@@ -43,7 +44,7 @@ impl TestFixture for SimpleSetFixture {
         Ok(())
     }
 
-    fn assert(&self, items: &[Item]) -> AnyResult<()> {
+    fn assert(&self, _: &Version, items: &[Item]) -> AnyResult<()> {
         let item = items
             .iter()
             .filter(|item| matches!(item, Item::SetRecord { .. }))

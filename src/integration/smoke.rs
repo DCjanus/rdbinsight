@@ -3,10 +3,10 @@ use rstest::rstest;
 
 use super::{
     fixtures::{
-        TestFixture, simple_expiry::ExpiringStringFixture, simple_hash::SimpleHashFixture,
-        simple_list::SimpleListFixture, simple_set::SimpleSetFixture,
-        simple_stream::SimpleStreamFixture, simple_string::SimpleStringFixture,
-        simple_zset::SimpleZSetFixture,
+        TestFixture, function_record::FunctionRecordFixture, simple_expiry::ExpiringStringFixture,
+        simple_hash::SimpleHashFixture, simple_list::SimpleListFixture,
+        simple_set::SimpleSetFixture, simple_stream::SimpleStreamFixture,
+        simple_string::SimpleStringFixture, simple_zset::SimpleZSetFixture,
     },
     redis::{RedisConfig, RedisPreset},
 };
@@ -53,6 +53,7 @@ async fn redis_smoke_suite(#[case] preset: RedisPreset) -> AnyResult<()> {
 
 fn default_fixtures() -> Vec<DynFixture> {
     vec![
+        Box::new(FunctionRecordFixture::new()),
         Box::new(SimpleStringFixture::new()),
         Box::new(ExpiringStringFixture::new()),
         Box::new(SimpleListFixture::new()),

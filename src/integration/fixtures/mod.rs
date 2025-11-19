@@ -17,6 +17,7 @@ pub trait TestFixture: Send + Sync {
     fn assert(&self, version: &Version, items: &[Item]) -> AnyResult<()>;
 }
 
+pub mod function_record;
 pub mod simple_expiry;
 pub mod simple_hash;
 pub mod simple_list;

@@ -15,10 +15,14 @@ use crate::helper::AnyResult;
 type DynFixture = Box<dyn TestFixture + 'static>;
 
 #[rstest]
-#[case::redis_8_0_5(RedisPreset::Redis8_0_5)]
-#[case::redis_7_0_15(RedisPreset::Redis7_0_15)]
-#[case::redis_6_0_20(RedisPreset::Redis6_0_20)]
+#[case::redis_8_4_0(RedisPreset::Redis8_4_0)]
+#[case::redis_7_4_7(RedisPreset::Redis7_4_7)]
+#[case::redis_6_2_21(RedisPreset::Redis6_2_21)]
+#[case::redis_5_0_14(RedisPreset::Redis5_0_14)]
+#[case::redis_4_0_14(RedisPreset::Redis4_0_14)]
+#[case::redis_3_2_13(RedisPreset::Redis3_2_13)]
 #[case::redis_2_8_24(RedisPreset::Redis2_8_24)]
+#[case::redis_1_2_6(RedisPreset::Redis1_2_6)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn redis_smoke_suite(#[case] preset: RedisPreset) -> AnyResult<()> {
     let env = RedisConfig::from_preset(preset).build().await?;

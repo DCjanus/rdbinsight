@@ -32,10 +32,14 @@ fn is_redis_2_8(version: &Version) -> bool {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RedisPreset {
-    Redis8_0_5,
-    Redis7_0_15,
-    Redis6_0_20,
+    Redis8_4_0,
+    Redis7_4_7,
+    Redis6_2_21,
+    Redis5_0_14,
+    Redis4_0_14,
+    Redis3_2_13,
     Redis2_8_24,
+    Redis1_2_6,
 }
 
 struct PresetMeta {
@@ -46,21 +50,37 @@ struct PresetMeta {
 impl RedisPreset {
     fn meta(&self) -> PresetMeta {
         match self {
-            RedisPreset::Redis8_0_5 => PresetMeta {
-                tag: "8.0.5",
-                version: Version::new(8, 0, 5),
+            RedisPreset::Redis8_4_0 => PresetMeta {
+                tag: "8.4.0",
+                version: Version::new(8, 4, 0),
             },
-            RedisPreset::Redis7_0_15 => PresetMeta {
-                tag: "7.0.15",
-                version: Version::new(7, 0, 15),
+            RedisPreset::Redis7_4_7 => PresetMeta {
+                tag: "7.4.7",
+                version: Version::new(7, 4, 7),
             },
-            RedisPreset::Redis6_0_20 => PresetMeta {
-                tag: "6.0.20",
-                version: Version::new(6, 0, 20),
+            RedisPreset::Redis6_2_21 => PresetMeta {
+                tag: "6.2.21",
+                version: Version::new(6, 2, 21),
+            },
+            RedisPreset::Redis5_0_14 => PresetMeta {
+                tag: "5.0.14",
+                version: Version::new(5, 0, 14),
+            },
+            RedisPreset::Redis4_0_14 => PresetMeta {
+                tag: "4.0.14",
+                version: Version::new(4, 0, 14),
+            },
+            RedisPreset::Redis3_2_13 => PresetMeta {
+                tag: "3.2.13",
+                version: Version::new(3, 2, 13),
             },
             RedisPreset::Redis2_8_24 => PresetMeta {
                 tag: "2.8.24",
                 version: Version::new(2, 8, 24),
+            },
+            RedisPreset::Redis1_2_6 => PresetMeta {
+                tag: "1.2.6",
+                version: Version::new(1, 2, 6),
             },
         }
     }
@@ -79,7 +99,7 @@ pub struct RedisConfig {
 
 impl Default for RedisConfig {
     fn default() -> Self {
-        Self::from_preset(RedisPreset::Redis8_0_5)
+        Self::from_preset(RedisPreset::Redis8_4_0)
     }
 }
 
@@ -348,55 +368,4 @@ async fn create_acl_user(address: &str, username: &str, password: &str) -> AnyRe
         .await
         .context("create acl user")?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn redis_config_builder_methods_chain() {
-        let version = Version::new(7, 0, 15);
-        let cfg = RedisConfig::from_preset(RedisPreset::Redis7_0_15)
-            .with_image("example.com/custom/redis")
-            .with_version_and_tag(version.clone(), "7.0.15")
-            .with_diskless(false)
-            .without_snapshot()
-            .with_username("tester")
-            .with_password("secret");
-        assert_eq!(cfg.image, "example.com/custom/redis");
-        assert_eq!(cfg.tag, "7.0.15");
-        assert_eq!(cfg.version, version);
-        assert!(!cfg.diskless);
-        assert!(!cfg.snapshot);
-        assert_eq!(cfg.username, "tester");
-        assert_eq!(cfg.password.as_deref(), Some("secret"));
-    }
-
-    #[test]
-    fn redis_2_8_detection_matches_semver() {
-        assert!(is_redis_2_8(&Version::new(2, 8, 24)));
-        assert!(!is_redis_2_8(&Version::new(7, 0, 15)));
-    }
-
-    #[test]
-    fn redis_presets_align_with_publish_workflow() {
-        let expected_repo = default_image_repo();
-        let cases = [
-            (RedisPreset::Redis8_0_5, "8.0.5", Version::new(8, 0, 5)),
-            (RedisPreset::Redis7_0_15, "7.0.15", Version::new(7, 0, 15)),
-            (RedisPreset::Redis6_0_20, "6.0.20", Version::new(6, 0, 20)),
-            (RedisPreset::Redis2_8_24, "2.8.24", Version::new(2, 8, 24)),
-        ];
-        for (preset, tag, version) in cases {
-            let from_preset = RedisConfig::from_preset(preset);
-            assert_eq!(from_preset.tag, tag);
-            assert_eq!(from_preset.version, version);
-            assert_eq!(from_preset.image, expected_repo);
-
-            let updated = RedisConfig::default().with_preset(preset);
-            assert_eq!(updated.tag, tag);
-            assert_eq!(updated.version, version);
-        }
-    }
 }

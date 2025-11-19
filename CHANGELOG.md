@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Dependencies: upgrade Arrow/Parquet to 57.0.0 and update Parquet sorting metadata construction to use `parquet::file::metadata::SortingColumn`.
+- Dependencies: bump `lz4_flex` to 0.12.0.
 
 ## [0.1.0]
 

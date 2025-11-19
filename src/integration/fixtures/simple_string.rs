@@ -2,7 +2,7 @@ use anyhow::{anyhow, ensure};
 use async_trait::async_trait;
 use redis::aio::MultiplexedConnection;
 
-use super::{super::artifacts::ParsedRdbArtifacts, TestFixture};
+use super::TestFixture;
 use crate::{
     helper::AnyResult,
     parser::{Item, model::StringEncoding},
@@ -34,9 +34,8 @@ impl TestFixture for SimpleStringFixture {
         Ok(())
     }
 
-    fn assert(&self, artifacts: &ParsedRdbArtifacts) -> AnyResult<()> {
-        let item = artifacts
-            .items()
+    fn assert(&self, items: &[Item]) -> AnyResult<()> {
+        let item = items
             .iter()
             .filter(|item| item.is_string_record())
             .filter(|item| item.key().is_some_and(|k| k == KEY))
@@ -45,7 +44,7 @@ impl TestFixture for SimpleStringFixture {
                 anyhow!(
                     "Expected to find string record with key '{}', but none found. Total items: {}",
                     KEY,
-                    artifacts.items().len()
+                    items.len()
                 )
             })?;
 

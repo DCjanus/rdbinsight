@@ -1,4 +1,4 @@
-use anyhow::{Context as AnyhowContext, ensure};
+use anyhow::Context as AnyhowContext;
 use rstest::rstest;
 
 use super::{
@@ -33,13 +33,13 @@ async fn redis_smoke_suite(#[case] preset: RedisPreset) -> AnyResult<()> {
     }
     drop(conn);
 
-    let artifacts = env.collect_artifacts().await?;
+    let items = env.collect_items().await?;
     for fixture in &fixtures {
         if !fixture.supported(env.version()) {
             continue;
         }
         fixture
-            .assert(&artifacts)
+            .assert(&items)
             .with_context(|| format!("assert fixture {}", fixture.name()))?;
     }
 

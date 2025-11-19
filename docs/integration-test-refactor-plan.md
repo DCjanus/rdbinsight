@@ -35,7 +35,7 @@
 - 定义 `TestFixture` trait，抽象“如何写入”“版本是否支持”“如何校验”：
   - `fn load(&self, conn: &mut RedisClient)`：向指定版本的 Redis 写入本 fixture 所需数据。
   - `fn supported(&self, version: &semver::Version) -> bool`：利用 semver 精确判断某类型在目标版本是否可用。
-  - `fn assert(&self, parsed: &ParsedRdbArtifacts) -> crate::helper::AnyResult<()>`：复用 `src/helper.rs` 中的 `AnyResult`，对解析结果进行结构化校验并返回标准化错误。
+  - `fn assert(&self, parsed: &[crate::parser::Item]) -> crate::helper::AnyResult<()>`：复用 `src/helper.rs` 中的 `AnyResult`，对解析结果进行结构化校验并返回标准化错误。
 - 根据 Redis 版本特性维护 payload 清单（示例：模块化 Redis 类型、特定编码 only-on-older-version），集中管理哪些 payload 需要在特定版本启用。
 - 构建版本矩阵时，优先使用自建镜像（publish-test-images workflow）提供的版本标签，保证可控且具备 patch 级粒度。
 

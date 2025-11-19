@@ -2,8 +2,7 @@ use async_trait::async_trait;
 use redis::aio::MultiplexedConnection;
 use semver::Version;
 
-use super::artifacts::ParsedRdbArtifacts;
-use crate::helper::AnyResult;
+use crate::{helper::AnyResult, parser::Item};
 
 #[async_trait]
 pub trait TestFixture: Send + Sync {
@@ -15,7 +14,7 @@ pub trait TestFixture: Send + Sync {
         true
     }
 
-    fn assert(&self, artifacts: &ParsedRdbArtifacts) -> AnyResult<()>;
+    fn assert(&self, items: &[Item]) -> AnyResult<()>;
 }
 
 pub mod simple_string;

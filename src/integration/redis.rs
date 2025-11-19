@@ -13,9 +13,10 @@ use testcontainers::{
 };
 use tokio::time::sleep;
 
-use super::{artifacts::ParsedRdbArtifacts, fixtures::TestFixture, helpers};
+use super::helpers;
 use crate::{
     helper::AnyResult,
+    parser::Item,
     source::{RDBStream, SourceType, redis_stream::RedisRdbStream},
 };
 
@@ -256,7 +257,7 @@ impl RedisTestEnv {
             .context("connect to redis test env")?)
     }
 
-    pub async fn collect_artifacts(&self) -> AnyResult<ParsedRdbArtifacts> {
+    pub async fn collect_items(&self) -> AnyResult<Vec<Item>> {
         let mut stream = RedisRdbStream::new(
             self.address.clone(),
             self.username.clone(),
@@ -265,9 +266,8 @@ impl RedisTestEnv {
         );
         stream.prepare().await?;
         let items = helpers::collect_items(stream).await?;
-        Ok(ParsedRdbArtifacts::new(self.redis_version.clone(), items))
+        Ok(items)
     }
-
 }
 
 fn connection_url(address: &str, username: &str, password: Option<&str>) -> String {

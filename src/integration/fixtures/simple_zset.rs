@@ -30,19 +30,14 @@ impl TestFixture for SimpleZSetFixture {
     }
 
     async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
-        let mut cmd = redis::cmd("ZADD");
-        cmd.arg(SMALL_KEY);
-        for (score, member) in SMALL_MEMBERS.iter().copied() {
-            cmd.arg(score).arg(member);
-        }
-        cmd.query_async::<()>(conn).await?;
+        let small_members: Vec<(f64, String)> = SMALL_MEMBERS
+            .iter()
+            .map(|(score, member)| (*score, (*member).to_string()))
+            .collect();
+        zadd_compat(conn, SMALL_KEY, &small_members).await?;
 
-        let mut cmd = redis::cmd("ZADD");
-        cmd.arg(SKIPLIST_KEY);
-        for (score, member) in large_members() {
-            cmd.arg(score).arg(member);
-        }
-        cmd.query_async::<()>(conn).await?;
+        let skiplist_members = large_members();
+        zadd_compat(conn, SKIPLIST_KEY, &skiplist_members).await?;
 
         Ok(())
     }
@@ -93,8 +88,10 @@ impl SimpleZSetFixture {
                 );
                 let expected_encoding = if version.major >= 7 {
                     ZSetEncoding::ListPack
-                } else {
+                } else if version.major >= 2 {
                     ZSetEncoding::ZipList
+                } else {
+                    ZSetEncoding::SkipList
                 };
                 ensure!(
                     *encoding == expected_encoding,
@@ -108,7 +105,7 @@ impl SimpleZSetFixture {
     }
 
     fn assert_skiplist(&self, version: &Version, item: &Item) -> AnyResult<()> {
-        let expect_zset2 = version.major >= 6;
+        let expect_zset2 = version.major >= 4;
 
         match (expect_zset2, item) {
             (
@@ -163,4 +160,39 @@ fn large_members() -> Vec<(f64, String)> {
     (0..SKIPLIST_MEMBER_COUNT)
         .map(|idx| (idx as f64, format!("member-{idx:04}")))
         .collect()
+}
+
+async fn zadd_compat(
+    conn: &mut MultiplexedConnection,
+    key: &str,
+    members: &[(f64, String)],
+) -> AnyResult<()> {
+    let mut cmd = redis::cmd("ZADD");
+    cmd.arg(key);
+    for (score, member) in members {
+        cmd.arg(*score).arg(member);
+    }
+    match cmd.query_async::<()>(conn).await {
+        Ok(_) => Ok(()),
+        Err(err) if is_legacy_zadd_multi_error(&err) => {
+            for (score, member) in members {
+                redis::cmd("ZADD")
+                    .arg(key)
+                    .arg(*score)
+                    .arg(member)
+                    .query_async::<()>(conn)
+                    .await?;
+            }
+            Ok(())
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn is_legacy_zadd_multi_error(err: &redis::RedisError) -> bool {
+    err.kind() == redis::ErrorKind::ResponseError
+        && err
+            .to_string()
+            .to_lowercase()
+            .contains("wrong number of arguments for 'zadd'")
 }

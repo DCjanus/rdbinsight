@@ -69,10 +69,16 @@ impl TestFixture for SimpleStreamFixture {
                     *message_count == MESSAGE_COUNT as u64,
                     "unexpected message count {message_count}, expected {MESSAGE_COUNT}"
                 );
-                let expected_encoding = match version.major {
-                    0..=6 => StreamEncoding::ListPacks,
-                    7 => StreamEncoding::ListPacks2,
-                    _ => StreamEncoding::ListPacks3,
+                let expected_encoding = if version.major >= 8 {
+                    StreamEncoding::ListPacks3
+                } else if version.major == 7 {
+                    if version.minor >= 4 {
+                        StreamEncoding::ListPacks3
+                    } else {
+                        StreamEncoding::ListPacks2
+                    }
+                } else {
+                    StreamEncoding::ListPacks
                 };
                 ensure!(
                     *encoding == expected_encoding,

@@ -28,17 +28,33 @@ impl TestFixture for SimpleListFixture {
     }
 
     async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
+        let payloads: Vec<String> = (0..ELEMENT_COUNT)
+            .map(|idx| {
+                format!(
+                    "list-entry-{idx:04}-value-with-padding-to-avoid-ziplist--------------------------------",
+                )
+            })
+            .collect();
+
         let mut cmd = redis::cmd("RPUSH");
         cmd.arg(KEY);
-        for idx in 0..ELEMENT_COUNT {
-            let payload = format!(
-                "list-entry-{idx:04}-value-with-padding-to-avoid-ziplist--------------------------------",
-            );
+        for payload in &payloads {
             cmd.arg(payload);
         }
-        cmd.query_async::<()>(conn).await?;
-
-        Ok(())
+        match cmd.query_async::<()>(conn).await {
+            Ok(_) => Ok(()),
+            Err(err) if is_legacy_rpush_multi_error(&err) => {
+                for payload in &payloads {
+                    redis::cmd("RPUSH")
+                        .arg(KEY)
+                        .arg(payload)
+                        .query_async::<()>(conn)
+                        .await?;
+                }
+                Ok(())
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     fn assert(&self, version: &Version, items: &[Item]) -> AnyResult<()> {
@@ -86,4 +102,12 @@ impl TestFixture for SimpleListFixture {
 
         Ok(())
     }
+}
+
+fn is_legacy_rpush_multi_error(err: &redis::RedisError) -> bool {
+    err.kind() == redis::ErrorKind::ResponseError
+        && err
+            .to_string()
+            .to_lowercase()
+            .contains("wrong number of arguments for 'rpush'")
 }

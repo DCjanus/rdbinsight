@@ -26,8 +26,24 @@ fn default_image_repo() -> String {
     env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO").unwrap_or_else(|_| DEFAULT_REPO.to_string())
 }
 
-fn is_redis_2_8(version: &Version) -> bool {
-    version.major == 2 && version.minor == 8
+fn supports_protected_mode(version: &Version) -> bool {
+    (version.major > 3) || (version.major == 3 && version.minor >= 2)
+}
+
+fn supports_diskless_replication(version: &Version) -> bool {
+    (version.major > 2) || (version.major == 2 && version.minor >= 8)
+}
+
+fn supports_inline_config_args(version: &Version) -> bool {
+    version.major >= 2
+}
+
+fn is_legacy_info_args_error(err: &redis::RedisError) -> bool {
+    err.kind() == redis::ErrorKind::ResponseError
+        && err
+            .to_string()
+            .to_lowercase()
+            .contains("wrong number of arguments")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,53 +133,6 @@ impl RedisConfig {
         }
     }
 
-    pub fn with_image(mut self, image: impl Into<String>) -> Self {
-        self.image = image.into();
-        self
-    }
-
-    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
-        self.tag = tag.into();
-        self
-    }
-
-    pub fn with_version(mut self, version: Version) -> Self {
-        self.version = version;
-        self
-    }
-
-    pub fn with_version_and_tag(self, version: Version, tag: impl Into<String>) -> Self {
-        self.with_version(version).with_tag(tag)
-    }
-
-    pub fn with_preset(mut self, preset: RedisPreset) -> Self {
-        let meta = preset.meta();
-        self.image = default_image_repo();
-        self.tag = meta.tag.to_string();
-        self.version = meta.version;
-        self
-    }
-
-    pub fn with_diskless(mut self, diskless: bool) -> Self {
-        self.diskless = diskless;
-        self
-    }
-
-    pub fn without_snapshot(mut self) -> Self {
-        self.snapshot = false;
-        self
-    }
-
-    pub fn with_username(mut self, username: impl Into<String>) -> Self {
-        self.username = username.into();
-        self
-    }
-
-    pub fn with_password(mut self, password: impl Into<String>) -> Self {
-        self.password = Some(password.into());
-        self
-    }
-
     pub async fn build(self) -> AnyResult<RedisTestEnv> {
         RedisTestEnv::start(self).await
     }
@@ -186,46 +155,51 @@ impl RedisTestEnv {
         }
 
         let mut args: Vec<String> = Vec::new();
-
-        args.push("--appendonly".into());
-        args.push("no".into());
-
-        if !is_redis_2_8(&cfg.version) {
-            args.push("--protected-mode".into());
+        if supports_inline_config_args(&cfg.version) {
+            args.push("--appendonly".into());
             args.push("no".into());
+
+            if supports_protected_mode(&cfg.version) {
+                args.push("--protected-mode".into());
+                args.push("no".into());
+            }
+
+            if supports_diskless_replication(&cfg.version) {
+                if cfg.diskless {
+                    args.push("--repl-diskless-sync".into());
+                    args.push("yes".into());
+                    args.push("--repl-diskless-sync-delay".into());
+                    args.push("0".into());
+                } else {
+                    args.push("--repl-diskless-sync".into());
+                    args.push("no".into());
+                }
+            }
+
+            if !cfg.snapshot {
+                args.push("--save".into());
+                args.push(String::new());
+            }
+
+            if let Some(password) = &cfg.password {
+                args.push("--requirepass".into());
+                args.push(password.clone());
+            }
         }
 
-        if cfg.diskless {
-            args.push("--repl-diskless-sync".into());
-            args.push("yes".into());
-            args.push("--repl-diskless-sync-delay".into());
-            args.push("0".into());
-        } else {
-            args.push("--repl-diskless-sync".into());
-            args.push("no".into());
-        }
-
-        if !cfg.snapshot {
-            args.push("--save".into());
-            args.push(String::new());
-        }
-
-        if let Some(password) = &cfg.password {
-            args.push("--requirepass".into());
-            args.push(password.clone());
-        }
-
-        let base_image =
-            GenericImage::new(cfg.image.clone(), cfg.tag.clone()).with_exposed_port(6379.tcp());
-        let full_cmd: Vec<String> = if args.is_empty() {
-            vec![]
-        } else {
-            let mut v = Vec::with_capacity(args.len() + 1);
-            v.push("redis-server".to_string());
-            v.extend(args);
-            v
+        let redis_image = {
+            let base_image =
+                GenericImage::new(cfg.image.clone(), cfg.tag.clone()).with_exposed_port(6379.tcp());
+            let full_cmd: Vec<String> = if args.is_empty() {
+                vec![]
+            } else {
+                let mut v = Vec::with_capacity(args.len() + 1);
+                v.push("redis-server".to_string());
+                v.extend(args);
+                v
+            };
+            base_image.with_cmd(&full_cmd)
         };
-        let redis_image = base_image.with_cmd(&full_cmd);
 
         let container = redis_image.start().await.context("start redis container")?;
         let host = container.get_host().await.context("get container host")?;
@@ -332,11 +306,23 @@ async fn fetch_semver(address: &str, username: &str, password: Option<&str>) -> 
         .get_multiplexed_tokio_connection()
         .await
         .context("connect to redis for version probe")?;
-    let info: String = redis::cmd("INFO")
+    let info: String = match redis::cmd("INFO")
         .arg("SERVER")
         .query_async(&mut conn)
         .await
-        .context("fetch INFO SERVER")?;
+    {
+        Ok(info) => info,
+        Err(err) => {
+            if is_legacy_info_args_error(&err) {
+                redis::cmd("INFO")
+                    .query_async(&mut conn)
+                    .await
+                    .context("fetch legacy INFO")?
+            } else {
+                return Err(err).context("fetch INFO SERVER");
+            }
+        }
+    };
     let version_line = info
         .lines()
         .find(|line| line.starts_with("redis_version:"))

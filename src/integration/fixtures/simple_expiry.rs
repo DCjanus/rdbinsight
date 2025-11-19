@@ -1,4 +1,7 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::Mutex,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{bail, ensure};
 use async_trait::async_trait;
@@ -14,6 +17,7 @@ use crate::{
 #[derive(Debug)]
 pub struct ExpiringStringFixture {
     expire_at_ms: u64,
+    command: Mutex<ExpiryCommand>,
 }
 
 impl Default for ExpiringStringFixture {
@@ -26,12 +30,26 @@ impl ExpiringStringFixture {
     pub fn new() -> Self {
         Self {
             expire_at_ms: compute_expire_at_ms(),
+            command: Mutex::new(ExpiryCommand::PExpireAt),
+        }
+    }
+
+    fn expected_expire_ms(&self) -> u64 {
+        match *self.command.lock().expect("poisoned expiry command") {
+            ExpiryCommand::PExpireAt => self.expire_at_ms,
+            ExpiryCommand::ExpireAt => (self.expire_at_ms / 1000) * 1000,
         }
     }
 }
 
 const KEY: &str = "integration:expiry";
 const VALUE: &str = "expiring-value";
+
+#[derive(Debug, Clone, Copy)]
+enum ExpiryCommand {
+    PExpireAt,
+    ExpireAt,
+}
 
 #[async_trait]
 impl TestFixture for ExpiringStringFixture {
@@ -45,16 +63,32 @@ impl TestFixture for ExpiringStringFixture {
             .arg(VALUE)
             .query_async::<()>(conn)
             .await?;
-        redis::cmd("PEXPIREAT")
+        match redis::cmd("PEXPIREAT")
             .arg(KEY)
             .arg(self.expire_at_ms)
             .query_async::<()>(conn)
-            .await?;
+            .await
+        {
+            Ok(_) => {
+                *self.command.lock().expect("poisoned expiry command") = ExpiryCommand::PExpireAt;
+            }
+            Err(err) if is_legacy_expiry_error(&err) => {
+                let expire_at_s = self.expire_at_ms / 1000;
+                redis::cmd("EXPIREAT")
+                    .arg(KEY)
+                    .arg(expire_at_s)
+                    .query_async::<()>(conn)
+                    .await?;
+                *self.command.lock().expect("poisoned expiry command") = ExpiryCommand::ExpireAt;
+            }
+            Err(err) => return Err(err.into()),
+        }
         Ok(())
     }
 
     fn assert(&self, _: &Version, items: &[Item]) -> AnyResult<()> {
         let mut matched = false;
+        let expected_expire_at_ms = self.expected_expire_ms();
 
         for idx in 0..items.len().saturating_sub(1) {
             if let Item::ExpiryMs { expire_at_ms } = &items[idx] {
@@ -62,9 +96,9 @@ impl TestFixture for ExpiringStringFixture {
                     && next.key().is_some_and(|key| key == KEY)
                 {
                     ensure!(
-                        *expire_at_ms == self.expire_at_ms,
+                        *expire_at_ms == expected_expire_at_ms,
                         "unexpected expire timestamp {expire_at_ms}, expected {}",
-                        self.expire_at_ms
+                        expected_expire_at_ms
                     );
                     if let Item::StringRecord { encoding, .. } = next {
                         ensure!(
@@ -102,4 +136,12 @@ fn compute_expire_at_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_secs(0));
     duration.as_millis().try_into().unwrap_or(u64::MAX)
+}
+
+fn is_legacy_expiry_error(err: &redis::RedisError) -> bool {
+    err.kind() == redis::ErrorKind::ResponseError
+        && err
+            .to_string()
+            .to_lowercase()
+            .contains("unknown command 'pexpireat'")
 }

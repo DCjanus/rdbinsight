@@ -37,9 +37,20 @@ impl TestFixture for SimpleSetFixture {
         for member in MEMBERS {
             cmd.arg(member);
         }
-        cmd.query_async::<()>(conn).await?;
-
-        Ok(())
+        match cmd.query_async::<()>(conn).await {
+            Ok(_) => Ok(()),
+            Err(err) if is_legacy_sadd_multi_error(&err) => {
+                for member in MEMBERS {
+                    redis::cmd("SADD")
+                        .arg(KEY)
+                        .arg(member)
+                        .query_async::<()>(conn)
+                        .await?;
+                }
+                Ok(())
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     fn assert(&self, _: &Version, items: &[Item]) -> AnyResult<()> {
@@ -76,4 +87,12 @@ impl TestFixture for SimpleSetFixture {
 
         Ok(())
     }
+}
+
+fn is_legacy_sadd_multi_error(err: &redis::RedisError) -> bool {
+    err.kind() == redis::ErrorKind::ResponseError
+        && err
+            .to_string()
+            .to_lowercase()
+            .contains("wrong number of arguments for 'sadd'")
 }

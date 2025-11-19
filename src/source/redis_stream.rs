@@ -587,17 +587,30 @@ async fn perform_rdb_handshake_internal(
         operation = "redis_replconf_eof_start",
         "Sending REPLCONF capa eof command"
     );
-    send_command(stream, "REPLCONF capa eof")
-        .await
-        .context("send replconf command")?;
-    let response = read_response(buf, stream, Duration::from_secs(1))
-        .await
-        .context("read replconf response")?;
-    ensure!(
-        response.as_bytes() == Some(b"OK"),
-        "unexpected response from replconf: {:?}",
-        response
-    );
+    let replconf_supported = {
+        send_command(stream, "REPLCONF capa eof")
+            .await
+            .context("send replconf command")?;
+        let response = read_response(buf, stream, Duration::from_secs(1))
+            .await
+            .context("read replconf response")?;
+        match response {
+            OwnedFrame::SimpleString(s) if s == b"OK" => true,
+            OwnedFrame::Error(err) if is_unknown_replconf_command(err.as_bytes()) => false,
+            _ => anyhow::bail!("unexpected response from replconf: {:?}", response),
+        }
+    };
+    if !replconf_supported {
+        parser_trace!("replconf.legacy_sync");
+        debug!(
+            operation = "redis_replconf_legacy",
+            "REPLCONF unsupported, falling back to SYNC handshake"
+        );
+        send_command(stream, "SYNC")
+            .await
+            .context("send legacy SYNC command")?;
+        return Ok(());
+    }
     debug!(
         operation = "redis_replconf_eof_success",
         "REPLCONF capa eof successful"
@@ -813,4 +826,9 @@ pub async fn read_response(
             }
         }
     }
+}
+
+fn is_unknown_replconf_command(err: &[u8]) -> bool {
+    let lower = String::from_utf8_lossy(err).to_ascii_lowercase();
+    lower.contains("unknown command 'replconf'")
 }

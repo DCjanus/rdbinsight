@@ -28,6 +28,10 @@ impl TestFixture for SimpleHashFixture {
         "simple_hash_fixture"
     }
 
+    fn supported(&self, version: &Version) -> bool {
+        version.major >= 2
+    }
+
     async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
         // Redis 2.x only supports single field/value per HSET invocation, so
         // pipeline the individual commands for compatibility across versions.

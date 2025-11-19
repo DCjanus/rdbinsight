@@ -1,6 +1,6 @@
 use anyhow::{anyhow, ensure};
 use async_trait::async_trait;
-use redis::aio::MultiplexedConnection;
+use redis::{aio::MultiplexedConnection, pipe};
 use semver::Version;
 
 use super::TestFixture;
@@ -32,25 +32,12 @@ impl TestFixture for SetRecordFixture {
     }
 
     async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
-        let mut cmd = redis::cmd("SADD");
-        cmd.arg(KEY);
+        let mut pipe = pipe();
         for member in MEMBERS {
-            cmd.arg(member);
+            pipe.cmd("SADD").arg(KEY).arg(member).ignore();
         }
-        match cmd.query_async::<()>(conn).await {
-            Ok(_) => Ok(()),
-            Err(err) if is_legacy_sadd_multi_error(&err) => {
-                for member in MEMBERS {
-                    redis::cmd("SADD")
-                        .arg(KEY)
-                        .arg(member)
-                        .query_async::<()>(conn)
-                        .await?;
-                }
-                Ok(())
-            }
-            Err(err) => Err(err.into()),
-        }
+        pipe.query_async::<()>(&mut *conn).await?;
+        Ok(())
     }
 
     fn assert(&self, _: &Version, items: &[Item]) -> AnyResult<()> {
@@ -87,12 +74,4 @@ impl TestFixture for SetRecordFixture {
 
         Ok(())
     }
-}
-
-fn is_legacy_sadd_multi_error(err: &redis::RedisError) -> bool {
-    err.kind() == redis::ErrorKind::ResponseError
-        && err
-            .to_string()
-            .to_lowercase()
-            .contains("wrong number of arguments for 'sadd'")
 }

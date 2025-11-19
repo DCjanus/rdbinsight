@@ -1,6 +1,6 @@
 use anyhow::{anyhow, ensure};
 use async_trait::async_trait;
-use redis::aio::MultiplexedConnection;
+use redis::{aio::MultiplexedConnection, pipe};
 use semver::Version;
 
 use super::TestFixture;
@@ -36,25 +36,12 @@ impl TestFixture for ListRecordFixture {
             })
             .collect();
 
-        let mut cmd = redis::cmd("RPUSH");
-        cmd.arg(KEY);
+        let mut pipe = pipe();
         for payload in &payloads {
-            cmd.arg(payload);
+            pipe.cmd("RPUSH").arg(KEY).arg(payload).ignore();
         }
-        match cmd.query_async::<()>(conn).await {
-            Ok(_) => Ok(()),
-            Err(err) if is_legacy_rpush_multi_error(&err) => {
-                for payload in &payloads {
-                    redis::cmd("RPUSH")
-                        .arg(KEY)
-                        .arg(payload)
-                        .query_async::<()>(conn)
-                        .await?;
-                }
-                Ok(())
-            }
-            Err(err) => Err(err.into()),
-        }
+        pipe.query_async::<()>(&mut *conn).await?;
+        Ok(())
     }
 
     fn assert(&self, version: &Version, items: &[Item]) -> AnyResult<()> {
@@ -102,12 +89,4 @@ impl TestFixture for ListRecordFixture {
 
         Ok(())
     }
-}
-
-fn is_legacy_rpush_multi_error(err: &redis::RedisError) -> bool {
-    err.kind() == redis::ErrorKind::ResponseError
-        && err
-            .to_string()
-            .to_lowercase()
-            .contains("wrong number of arguments for 'rpush'")
 }

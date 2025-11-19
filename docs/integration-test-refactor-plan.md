@@ -39,16 +39,22 @@
 - 根据 Redis 版本特性维护 payload 清单（示例：模块化 Redis 类型、特定编码 only-on-older-version），集中管理哪些 payload 需要在特定版本启用。
 - 构建版本矩阵时，优先使用自建镜像（publish-test-images workflow）提供的版本标签，保证可控且具备 patch 级粒度。
 
+## 近期成果
+- `src/integration` 模块已创建，包含 fixtures/helpers/redis/smoke 子模块，可在 crate 内直接访问内部实现。
+- `TestFixture` trait 已投入使用，当前提供 `SimpleStringFixture`、`SimpleSetFixture`、`SimpleZSetFixture`，覆盖 string/set/zset 三类基础类型。
+- `redis_smoke_suite` 使用 rstest 驱动 Redis 8.0.5/7.0.15/6.0.20/2.8.24 镜像，按 fixture 顺序写入 Redis、通过 SYNC 拉取 RDB 并断言解析结果，验证基础流程可运行。
+- fixture 负载刻意包含长 key/member，确保命中 RAW / SkipList 等常见编码路径，并为扩展 list/hash/stream 等类型提供模板。
+
 ## 当前进度
-- [ ] 阶段 1：初始 `integration` 模块（未开始）
-- [ ] 阶段 2：迁移现有集成测试（未开始）
-- [ ] 阶段 3：收尾与可见性收紧（未开始）
+- [x] 阶段 1：初始 `integration` 模块 —— 已完成模块骨架、Redis 容器 helper、基础 smoke suite 以及首批 fixture；仍需补充更丰富的共享 helper 与编码覆盖。
+- [ ] 阶段 2：迁移现有集成测试 —— 尚未从 `tests/` 目录迁移具体用例，需要在现有基础上挑选代表场景并逐步搬迁。
+- [ ] 阶段 3：收尾与可见性收紧 —— 待迁移完成后启动，包括移除旧目录与收紧 `pub` API。
 
 ## 下一步建议
-1. 设计 `integration` 模块的目录结构（示例：`integration/helpers.rs`、`integration/fixtures/mod.rs`、`integration/cases.rs`）并提交基础骨架。
-2. 实现 `TestFixture` trait（含 SYNC 写入、semver 判定、校验接口），并迁移首批 fixture 以验证流程。
-3. 选择一组代表性的测试案例迁移，验证对内部模块的依赖方式，并确保使用 Redis SYNC 流程而非本地落盘。
-4. 统计现有标记为 `pub` 但仅供测试使用的 API，为后续 `pub(crate)` 收紧提供清单。
+1. 按类型扩展 fixture：补充 list/hash/stream/expiry 等，针对旧版本特有编码实现 `supported` 过滤，并沉淀常用断言 helper。
+2. 基于新的 fixture 套件迁移 `tests/` 目录的代表性用例（优先 Parser 相关），验证断言语义与内部依赖是否在 crate 内可达。
+3. 梳理当前暴露为 `pub` 但仅被旧测试使用的 API，记录在案，为阶段 3 的可见性收紧提供输入。
+4. 在迁移趋于稳定后，调整 CI / just 任务，去掉对 `tests/` 目录的特殊处理，确保新旧路径切换顺滑。
 
 ## TODO
 - [ ] 在新架构稳定后，移除 `justfile` 中 `test` 任务以及 `.github/workflows/ci.yml` 覆盖步骤里针对 `cargo nextest` 的 `-E 'not kind(test)'` 过滤器，恢复对 `tests/` 目录的全量执行。

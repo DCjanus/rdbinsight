@@ -27,15 +27,15 @@ fn default_image_repo() -> String {
 }
 
 fn supports_protected_mode(version: &Version) -> bool {
-    (version.major > 3) || (version.major == 3 && version.minor >= 2)
+    version >= &Version::new(3, 2, 0)
 }
 
 fn supports_diskless_replication(version: &Version) -> bool {
-    (version.major > 2) || (version.major == 2 && version.minor >= 8)
+    version >= &Version::new(2, 8, 0)
 }
 
 fn supports_inline_config_args(version: &Version) -> bool {
-    version.major >= 2
+    version >= &Version::new(2, 6, 0)
 }
 
 fn is_legacy_info_args_error(err: &redis::RedisError) -> bool {
@@ -195,15 +195,10 @@ impl RedisTestEnv {
         let redis_image = {
             let base_image =
                 GenericImage::new(cfg.image.clone(), cfg.tag.clone()).with_exposed_port(6379.tcp());
-            let full_cmd: Vec<String> = if args.is_empty() {
-                vec![]
-            } else {
-                let mut v = Vec::with_capacity(args.len() + 1);
-                v.push("redis-server".to_string());
-                v.extend(args);
-                v
-            };
-            base_image.with_cmd(&full_cmd)
+            let mut full_cmd = Vec::with_capacity(args.len() + 1);
+            full_cmd.push("redis-server".to_string());
+            full_cmd.extend(args);
+            base_image.with_cmd(full_cmd)
         };
 
         let container = redis_image.start().await.context("start redis container")?;
@@ -359,4 +354,19 @@ async fn create_acl_user(address: &str, username: &str, password: &str) -> AnyRe
         .await
         .context("create acl user")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use semver::Version;
+
+    use super::supports_inline_config_args;
+
+    #[test]
+    fn inline_config_requires_redis_2_6_or_newer() {
+        assert!(!supports_inline_config_args(&Version::new(1, 2, 6)));
+        assert!(!supports_inline_config_args(&Version::new(2, 4, 18)));
+        assert!(supports_inline_config_args(&Version::new(2, 6, 0)));
+        assert!(supports_inline_config_args(&Version::new(3, 0, 0)));
+    }
 }

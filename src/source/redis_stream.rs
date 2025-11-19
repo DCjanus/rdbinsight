@@ -830,5 +830,5 @@ pub async fn read_response(
 
 fn is_unknown_replconf_command(err: &[u8]) -> bool {
     let lower = String::from_utf8_lossy(err).to_ascii_lowercase();
-    lower.contains("unknown command 'replconf'")
+    lower.contains("unknown command 'replconf'") || lower.contains("unrecognized replconf option")
 }

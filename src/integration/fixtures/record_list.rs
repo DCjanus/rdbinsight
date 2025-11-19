@@ -10,9 +10,9 @@ use crate::{
 };
 
 #[derive(Debug, Default)]
-pub struct SimpleListFixture;
+pub struct ListRecordFixture;
 
-impl SimpleListFixture {
+impl ListRecordFixture {
     pub fn new() -> Self {
         Self
     }
@@ -22,9 +22,9 @@ const KEY: &str = "integration:list";
 const ELEMENT_COUNT: usize = 2048;
 
 #[async_trait]
-impl TestFixture for SimpleListFixture {
+impl TestFixture for ListRecordFixture {
     fn name(&self) -> &'static str {
-        "simple_list_fixture"
+        "list_record_fixture"
     }
 
     async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {

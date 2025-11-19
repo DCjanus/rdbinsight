@@ -18,10 +18,10 @@ pub trait TestFixture: Send + Sync {
 }
 
 pub mod function_record;
-pub mod simple_expiry;
-pub mod simple_hash;
-pub mod simple_list;
-pub mod simple_set;
-pub mod simple_stream;
-pub mod simple_string;
-pub mod simple_zset;
+pub mod record_expiry;
+pub mod record_hash;
+pub mod record_list;
+pub mod record_set;
+pub mod record_stream;
+pub mod record_string;
+pub mod record_zset;

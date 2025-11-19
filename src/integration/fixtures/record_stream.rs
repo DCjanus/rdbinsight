@@ -10,9 +10,9 @@ use crate::{
 };
 
 #[derive(Debug, Default)]
-pub struct SimpleStreamFixture;
+pub struct StreamRecordFixture;
 
-impl SimpleStreamFixture {
+impl StreamRecordFixture {
     pub fn new() -> Self {
         Self
     }
@@ -22,9 +22,9 @@ const KEY: &str = "integration:stream";
 const MESSAGE_COUNT: usize = 64;
 
 #[async_trait]
-impl TestFixture for SimpleStreamFixture {
+impl TestFixture for StreamRecordFixture {
     fn name(&self) -> &'static str {
-        "simple_stream_fixture"
+        "stream_record_fixture"
     }
 
     fn supported(&self, version: &Version) -> bool {

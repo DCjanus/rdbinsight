@@ -41,7 +41,7 @@
 
 ## 近期成果
 - `src/integration` 模块已创建，包含 fixtures/helpers/redis/smoke 子模块，可在 crate 内直接访问内部实现。
-- `TestFixture` trait 已投入使用，当前提供 `SimpleStringFixture`、`SimpleSetFixture`、`SimpleZSetFixture`，覆盖 string/set/zset 三类基础类型。
+- `TestFixture` trait 已投入使用，当前提供 `RawStringRecordFixture`、`IntStringRecordFixture`、`SetRecordFixture`、`SmallZSetRecordFixture`、`SkipListZSetRecordFixture` 等，覆盖 string/set/zset 三类基础类型。
 - `redis_smoke_suite` 使用 rstest 驱动 Redis 8.0.5/7.0.15/6.0.20/2.8.24 镜像，按 fixture 顺序写入 Redis、通过 SYNC 拉取 RDB 并断言解析结果，验证基础流程可运行。
 - fixture 负载刻意包含长 key/member，确保命中 RAW / SkipList 等常见编码路径，并为扩展 list/hash/stream 等类型提供模板。
 

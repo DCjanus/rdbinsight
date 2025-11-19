@@ -3,10 +3,15 @@ use rstest::rstest;
 
 use super::{
     fixtures::{
-        TestFixture, function_record::FunctionRecordFixture, simple_expiry::ExpiringStringFixture,
-        simple_hash::SimpleHashFixture, simple_list::SimpleListFixture,
-        simple_set::SimpleSetFixture, simple_stream::SimpleStreamFixture,
-        simple_string::SimpleStringFixture, simple_zset::SimpleZSetFixture,
+        TestFixture,
+        function_record::FunctionRecordFixture,
+        record_expiry::{ExpireAtRecordFixture, PExpireAtRecordFixture},
+        record_hash::HashRecordFixture,
+        record_list::ListRecordFixture,
+        record_set::SetRecordFixture,
+        record_stream::StreamRecordFixture,
+        record_string::{IntStringRecordFixture, RawStringRecordFixture},
+        record_zset::{SkipListZSetRecordFixture, SmallZSetRecordFixture},
     },
     redis::{RedisConfig, RedisPreset},
 };
@@ -58,12 +63,15 @@ async fn redis_smoke_suite(#[case] preset: RedisPreset) -> AnyResult<()> {
 fn default_fixtures() -> Vec<DynFixture> {
     vec![
         Box::new(FunctionRecordFixture::new()),
-        Box::new(SimpleStringFixture::new()),
-        Box::new(ExpiringStringFixture::new()),
-        Box::new(SimpleListFixture::new()),
-        Box::new(SimpleSetFixture::new()),
-        Box::new(SimpleHashFixture::new()),
-        Box::new(SimpleZSetFixture::new()),
-        Box::new(SimpleStreamFixture::new()),
+        Box::new(RawStringRecordFixture::new()),
+        Box::new(IntStringRecordFixture::new()),
+        Box::new(PExpireAtRecordFixture::new()),
+        Box::new(ExpireAtRecordFixture::new()),
+        Box::new(ListRecordFixture::new()),
+        Box::new(SetRecordFixture::new()),
+        Box::new(HashRecordFixture::new()),
+        Box::new(SmallZSetRecordFixture::new()),
+        Box::new(SkipListZSetRecordFixture::new()),
+        Box::new(StreamRecordFixture::new()),
     ]
 }

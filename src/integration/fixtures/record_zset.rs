@@ -9,67 +9,44 @@ use crate::{
     parser::{Item, model::ZSetEncoding},
 };
 
-#[derive(Debug, Default)]
-pub struct SimpleZSetFixture;
-
-impl SimpleZSetFixture {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
 const SMALL_KEY: &str = "integration:zset:small";
 const SMALL_MEMBERS: &[(f64, &str)] = &[(1.0, "bronze"), (2.0, "silver"), (3.0, "gold")];
 const SKIPLIST_KEY: &str = "integration:zset:skiplist";
 const SKIPLIST_MEMBER_COUNT: usize = 256;
 
-#[async_trait]
-impl TestFixture for SimpleZSetFixture {
-    fn name(&self) -> &'static str {
-        "simple_zset_fixture"
-    }
+#[derive(Debug, Default)]
+pub struct SmallZSetRecordFixture;
 
-    async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
-        let small_members: Vec<(f64, String)> = SMALL_MEMBERS
-            .iter()
-            .map(|(score, member)| (*score, (*member).to_string()))
-            .collect();
-        zadd_compat(conn, SMALL_KEY, &small_members).await?;
-
-        let skiplist_members = large_members();
-        zadd_compat(conn, SKIPLIST_KEY, &skiplist_members).await?;
-
-        Ok(())
-    }
-
-    fn assert(&self, version: &Version, items: &[Item]) -> AnyResult<()> {
-        let item = items
-            .iter()
-            .filter(|item| matches!(item, Item::ZSetRecord { .. } | Item::ZSet2Record { .. }))
-            .collect::<Vec<_>>();
-
-        let find_by_key = |key: &str| -> AnyResult<&Item> {
-            item.iter()
-                .copied()
-                .find(|item| item.key().is_some_and(|k| k == key))
-                .ok_or_else(|| {
-                    anyhow!(
-                        "Expected to find zset record with key '{}' but none found. Total items: {}",
-                        key,
-                        items.len()
-                    )
-                })
-        };
-
-        self.assert_small(version, find_by_key(SMALL_KEY)?)?;
-        self.assert_skiplist(version, find_by_key(SKIPLIST_KEY)?)?;
-
-        Ok(())
+impl SmallZSetRecordFixture {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-impl SimpleZSetFixture {
-    fn assert_small(&self, version: &Version, item: &Item) -> AnyResult<()> {
+#[async_trait]
+impl TestFixture for SmallZSetRecordFixture {
+    fn name(&self) -> &'static str {
+        "small_zset_record_fixture"
+    }
+
+    async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
+        let members: Vec<(f64, String)> = SMALL_MEMBERS
+            .iter()
+            .map(|(score, member)| (*score, (*member).to_string()))
+            .collect();
+        zadd_compat(conn, SMALL_KEY, &members).await
+    }
+
+    fn assert(&self, version: &Version, items: &[Item]) -> AnyResult<()> {
+        let item = find_by_key(items, SMALL_KEY)?;
+        let expected_encoding = if version.major >= 7 {
+            ZSetEncoding::ListPack
+        } else if version.major >= 2 {
+            ZSetEncoding::ZipList
+        } else {
+            ZSetEncoding::SkipList
+        };
+
         match item {
             Item::ZSetRecord {
                 encoding,
@@ -86,25 +63,47 @@ impl SimpleZSetFixture {
                     "unexpected member count {member_count}, expected {}",
                     SMALL_MEMBERS.len()
                 );
-                let expected_encoding = if version.major >= 7 {
-                    ZSetEncoding::ListPack
-                } else if version.major >= 2 {
-                    ZSetEncoding::ZipList
+                if version.major == 7 {
+                    ensure!(
+                        matches!(encoding, ZSetEncoding::ZipList | ZSetEncoding::ListPack),
+                        "unexpected zset encoding {encoding:?} for Redis {version}"
+                    );
                 } else {
-                    ZSetEncoding::SkipList
-                };
-                ensure!(
-                    *encoding == expected_encoding,
-                    "unexpected zset encoding {encoding:?}, expected {expected_encoding:?} for Redis {version}"
-                );
+                    ensure!(
+                        *encoding == expected_encoding,
+                        "unexpected zset encoding {encoding:?}, expected {expected_encoding:?} for Redis {version}"
+                    );
+                }
             }
             _ => unreachable!("checked zset variants"),
         }
 
         Ok(())
     }
+}
 
-    fn assert_skiplist(&self, version: &Version, item: &Item) -> AnyResult<()> {
+#[derive(Debug, Default)]
+pub struct SkipListZSetRecordFixture;
+
+impl SkipListZSetRecordFixture {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl TestFixture for SkipListZSetRecordFixture {
+    fn name(&self) -> &'static str {
+        "skiplist_zset_record_fixture"
+    }
+
+    async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
+        let members = large_members();
+        zadd_compat(conn, SKIPLIST_KEY, &members).await
+    }
+
+    fn assert(&self, version: &Version, items: &[Item]) -> AnyResult<()> {
+        let item = find_by_key(items, SKIPLIST_KEY)?;
         let expect_zset2 = version.major >= 4;
 
         match (expect_zset2, item) {
@@ -154,6 +153,19 @@ impl SimpleZSetFixture {
 
         Ok(())
     }
+}
+
+fn find_by_key<'a>(items: &'a [Item], key: &str) -> AnyResult<&'a Item> {
+    items
+        .iter()
+        .filter(|item| matches!(item, Item::ZSetRecord { .. } | Item::ZSet2Record { .. }))
+        .find(|item| item.key().is_some_and(|candidate| candidate == key))
+        .ok_or_else(|| {
+            anyhow!(
+                "Expected to find zset record with key '{key}' but none found. Total items: {}",
+                items.len()
+            )
+        })
 }
 
 fn large_members() -> Vec<(f64, String)> {

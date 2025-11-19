@@ -10,9 +10,9 @@ use crate::{
 };
 
 #[derive(Debug, Default)]
-pub struct SimpleSetFixture;
+pub struct SetRecordFixture;
 
-impl SimpleSetFixture {
+impl SetRecordFixture {
     pub fn new() -> Self {
         Self
     }
@@ -26,9 +26,9 @@ const MEMBERS: [&str; 3] = [
 ];
 
 #[async_trait]
-impl TestFixture for SimpleSetFixture {
+impl TestFixture for SetRecordFixture {
     fn name(&self) -> &'static str {
-        "simple_set_fixture"
+        "set_record_fixture"
     }
 
     async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {

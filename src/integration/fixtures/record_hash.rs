@@ -10,9 +10,9 @@ use crate::{
 };
 
 #[derive(Debug, Default)]
-pub struct SimpleHashFixture;
+pub struct HashRecordFixture;
 
-impl SimpleHashFixture {
+impl HashRecordFixture {
     pub fn new() -> Self {
         Self
     }
@@ -23,9 +23,9 @@ const FIELD_COUNT: usize = 700;
 const VALUE_PAD: &str = "hash-value-padding-to-force-raw-encoding--------------------------------";
 
 #[async_trait]
-impl TestFixture for SimpleHashFixture {
+impl TestFixture for HashRecordFixture {
     fn name(&self) -> &'static str {
-        "simple_hash_fixture"
+        "hash_record_fixture"
     }
 
     fn supported(&self, version: &Version) -> bool {

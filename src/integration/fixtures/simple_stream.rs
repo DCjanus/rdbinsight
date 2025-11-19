@@ -32,8 +32,6 @@ impl TestFixture for SimpleStreamFixture {
     }
 
     async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
-        redis::cmd("DEL").arg(KEY).query_async::<()>(conn).await?;
-
         let mut pipe = redis::pipe();
         for idx in 0..MESSAGE_COUNT {
             let payload = format!("stream-payload-{idx:04}");

@@ -29,8 +29,6 @@ impl TestFixture for SimpleHashFixture {
     }
 
     async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
-        redis::cmd("DEL").arg(KEY).query_async::<()>(conn).await?;
-
         // Redis 2.x only supports single field/value per HSET invocation, so
         // pipeline the individual commands for compatibility across versions.
         let mut pipe = redis::pipe();

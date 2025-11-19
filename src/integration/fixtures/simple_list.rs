@@ -28,8 +28,6 @@ impl TestFixture for SimpleListFixture {
     }
 
     async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
-        redis::cmd("DEL").arg(KEY).query_async::<()>(conn).await?;
-
         let mut cmd = redis::cmd("RPUSH");
         cmd.arg(KEY);
         for idx in 0..ELEMENT_COUNT {

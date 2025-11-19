@@ -32,8 +32,6 @@ impl TestFixture for SimpleSetFixture {
     }
 
     async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
-        redis::cmd("DEL").arg(KEY).query_async::<()>(conn).await?;
-
         let mut cmd = redis::cmd("SADD");
         cmd.arg(KEY);
         for member in MEMBERS {

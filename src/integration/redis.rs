@@ -269,7 +269,7 @@ impl RedisTestEnv {
     }
 
     pub async fn apply_fixture<F>(&self, fixture: &F) -> AnyResult<ParsedRdbArtifacts>
-    where F: TestFixture {
+    where F: TestFixture + ?Sized {
         ensure!(
             fixture.supported(self.version()),
             "fixture {} does not support redis {}",
@@ -287,7 +287,7 @@ impl RedisTestEnv {
     }
 
     pub async fn run_fixture<F>(&self, fixture: &F) -> AnyResult<ParsedRdbArtifacts>
-    where F: TestFixture {
+    where F: TestFixture + ?Sized {
         let artifacts = self.apply_fixture(fixture).await?;
         fixture
             .assert(&artifacts)

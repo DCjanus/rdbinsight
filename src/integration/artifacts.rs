@@ -2,6 +2,7 @@ use semver::Version;
 
 use crate::parser::Item;
 
+#[derive(Debug)]
 pub struct ParsedRdbArtifacts {
     redis_version: Version,
     items: Vec<Item>,

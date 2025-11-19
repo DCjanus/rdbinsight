@@ -2,7 +2,12 @@ use anyhow::Context as AnyhowContext;
 use rstest::rstest;
 
 use super::{
-    fixtures::{SimpleSetFixture, SimpleStringFixture, SimpleZSetFixture, TestFixture},
+    fixtures::{
+        TestFixture, simple_expiry::ExpiringStringFixture, simple_hash::SimpleHashFixture,
+        simple_list::SimpleListFixture, simple_set::SimpleSetFixture,
+        simple_stream::SimpleStreamFixture, simple_string::SimpleStringFixture,
+        simple_zset::SimpleZSetFixture,
+    },
     redis::{RedisConfig, RedisPreset},
 };
 use crate::helper::AnyResult;
@@ -49,7 +54,11 @@ async fn redis_smoke_suite(#[case] preset: RedisPreset) -> AnyResult<()> {
 fn default_fixtures() -> Vec<DynFixture> {
     vec![
         Box::new(SimpleStringFixture::new()),
+        Box::new(ExpiringStringFixture::new()),
+        Box::new(SimpleListFixture::new()),
         Box::new(SimpleSetFixture::new()),
+        Box::new(SimpleHashFixture::new()),
         Box::new(SimpleZSetFixture::new()),
+        Box::new(SimpleStreamFixture::new()),
     ]
 }

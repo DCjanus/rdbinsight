@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         redis:
-          [
+          &redis_versions [
             "8.4.0",
             "7.4.7",
             "6.2.21",
@@ -86,17 +86,7 @@ jobs:
       fail-fast: false
       matrix:
         redis:
-          [
-            "8.4.0",
-            "7.4.7",
-            "6.2.21",
-            "5.0.14",
-            "4.0.14",
-            "3.2.13",
-            "2.8.24",
-            "2.4.18",
-            "1.2.6",
-          ]
+          *redis_versions
     runs-on: ubuntu-latest
     permissions:
       contents: read

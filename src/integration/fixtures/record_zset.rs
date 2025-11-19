@@ -1,6 +1,6 @@
 use anyhow::{anyhow, ensure};
 use async_trait::async_trait;
-use redis::aio::MultiplexedConnection;
+use redis::{aio::MultiplexedConnection, pipe};
 use semver::Version;
 
 use super::TestFixture;
@@ -179,32 +179,10 @@ async fn zadd_compat(
     key: &str,
     members: &[(f64, String)],
 ) -> AnyResult<()> {
-    let mut cmd = redis::cmd("ZADD");
-    cmd.arg(key);
+    let mut pipe = pipe();
     for (score, member) in members {
-        cmd.arg(*score).arg(member);
+        pipe.cmd("ZADD").arg(key).arg(*score).arg(member).ignore();
     }
-    match cmd.query_async::<()>(conn).await {
-        Ok(_) => Ok(()),
-        Err(err) if is_legacy_zadd_multi_error(&err) => {
-            for (score, member) in members {
-                redis::cmd("ZADD")
-                    .arg(key)
-                    .arg(*score)
-                    .arg(member)
-                    .query_async::<()>(conn)
-                    .await?;
-            }
-            Ok(())
-        }
-        Err(err) => Err(err.into()),
-    }
-}
-
-fn is_legacy_zadd_multi_error(err: &redis::RedisError) -> bool {
-    err.kind() == redis::ErrorKind::ResponseError
-        && err
-            .to_string()
-            .to_lowercase()
-            .contains("wrong number of arguments for 'zadd'")
+    pipe.query_async::<()>(&mut *conn).await?;
+    Ok(())
 }

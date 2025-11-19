@@ -41,7 +41,7 @@ impl TestFixture for PExpireAtRecordFixture {
     }
 
     fn supported(&self, version: &Version) -> bool {
-        supports_pexpireat(version)
+        version >= &Version::new(2, 6, 0)
     }
 
     async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
@@ -154,8 +154,4 @@ fn compute_expire_at_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_secs(0));
     duration.as_millis().try_into().unwrap_or(u64::MAX)
-}
-
-fn supports_pexpireat(version: &Version) -> bool {
-    version.major > 2 || (version.major == 2 && version.minor >= 6)
 }

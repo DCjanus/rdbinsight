@@ -6,7 +6,10 @@ use super::{
         TestFixture,
         function_record::FunctionRecordFixture,
         record_expiry::{ExpireAtRecordFixture, PExpireAtRecordFixture},
-        record_hash::{HashRecordFixture, HashZipListRecordFixture},
+        record_hash::{
+            HashListPackExRecordFixture, HashListPackRecordFixture, HashRecordFixture,
+            HashZipListRecordFixture, HashZipMapRecordFixture,
+        },
         record_list::ListRecordFixture,
         record_set::SetRecordFixture,
         record_stream::StreamRecordFixture,
@@ -27,6 +30,7 @@ type DynFixture = Box<dyn TestFixture + 'static>;
 #[case::redis_4_0_14(RedisPreset::Redis4_0_14)]
 #[case::redis_3_2_13(RedisPreset::Redis3_2_13)]
 #[case::redis_2_8_24(RedisPreset::Redis2_8_24)]
+#[case::redis_2_4_18(RedisPreset::Redis2_4_18)]
 #[case::redis_1_2_6(RedisPreset::Redis1_2_6)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn redis_smoke_suite(#[case] preset: RedisPreset) -> AnyResult<()> {
@@ -71,6 +75,9 @@ fn default_fixtures() -> Vec<DynFixture> {
         Box::new(SetRecordFixture::new()),
         Box::new(HashRecordFixture::new()),
         Box::new(HashZipListRecordFixture::new()),
+        Box::new(HashListPackRecordFixture::new()),
+        Box::new(HashListPackExRecordFixture::new()),
+        Box::new(HashZipMapRecordFixture::new()),
         Box::new(SmallZSetRecordFixture::new()),
         Box::new(SkipListZSetRecordFixture::new()),
         Box::new(StreamRecordFixture::new()),

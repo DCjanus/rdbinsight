@@ -55,6 +55,7 @@ pub enum RedisPreset {
     Redis4_0_14,
     Redis3_2_13,
     Redis2_8_24,
+    Redis2_4_18,
     Redis1_2_6,
 }
 
@@ -93,6 +94,10 @@ impl RedisPreset {
             RedisPreset::Redis2_8_24 => PresetMeta {
                 tag: "2.8.24",
                 version: Version::new(2, 8, 24),
+            },
+            RedisPreset::Redis2_4_18 => PresetMeta {
+                tag: "2.4.18",
+                version: Version::new(2, 4, 18),
             },
             RedisPreset::Redis1_2_6 => PresetMeta {
                 tag: "1.2.6",

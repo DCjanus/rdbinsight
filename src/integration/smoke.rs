@@ -12,7 +12,7 @@ use super::{
         },
         record_list::ListRecordFixture,
         record_set::SetRecordFixture,
-        record_stream::StreamRecordFixture,
+        record_stream::{StreamConsumerGroupFixture, StreamRecordFixture},
         record_string::{IntStringRecordFixture, RawStringRecordFixture},
         record_zset::{SkipListZSetRecordFixture, SmallZSetRecordFixture},
     },
@@ -82,5 +82,6 @@ fn default_fixtures() -> Vec<DynFixture> {
         Box::new(SmallZSetRecordFixture::new()),
         Box::new(SkipListZSetRecordFixture::new()),
         Box::new(StreamRecordFixture::new()),
+        Box::new(StreamConsumerGroupFixture::new()),
     ]
 }

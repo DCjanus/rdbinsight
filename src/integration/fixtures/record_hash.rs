@@ -54,6 +54,15 @@ impl HashZipMapRecordFixture {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct HashMetadataRecordFixture;
+
+impl HashMetadataRecordFixture {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
 const KEY: &str = "integration:hash";
 const FIELD_COUNT: usize = 700;
 const VALUE_PAD: &str = "hash-value-padding-to-force-raw-encoding--------------------------------";
@@ -79,6 +88,9 @@ const ZIPMAP_FIELDS: [(&str, &str); 3] = [
     ("zipmap-field-b", "zipmap-value-b"),
     ("zipmap-field-c", "zipmap-value-c"),
 ];
+const METADATA_KEY: &str = "integration:hash:metadata";
+const METADATA_FIELD_COUNT: usize = 600;
+const METADATA_TTL_SECS: usize = 3600;
 
 #[async_trait]
 impl TestFixture for HashRecordFixture {
@@ -386,6 +398,72 @@ impl TestFixture for HashZipMapRecordFixture {
                     *pair_count == ZIPMAP_FIELDS.len() as u64,
                     "unexpected hash pair count {pair_count}, expected {}",
                     ZIPMAP_FIELDS.len()
+                );
+            }
+            _ => unreachable!("checked hash record variant"),
+        }
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl TestFixture for HashMetadataRecordFixture {
+    fn name(&self) -> &'static str {
+        "hash_metadata_record_fixture"
+    }
+
+    fn supported(&self, version: &Version) -> bool {
+        version.major >= 8
+    }
+
+    async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
+        let mut pipe = redis::pipe();
+        for idx in 0..METADATA_FIELD_COUNT {
+            let field = format!("meta-field-{idx:04}");
+            let value = format!("meta-value-{idx:04}");
+            pipe.cmd("HSETEX")
+                .arg(METADATA_KEY)
+                .arg("EX")
+                .arg(METADATA_TTL_SECS)
+                .arg("FIELDS")
+                .arg(1)
+                .arg(&field)
+                .arg(&value)
+                .ignore();
+        }
+        pipe.query_async::<()>(&mut *conn).await?;
+
+        Ok(())
+    }
+
+    fn assert(&self, _: &Version, items: &[Item]) -> AnyResult<()> {
+        let item = items
+            .iter()
+            .filter(|item| matches!(item, Item::HashRecord { .. }))
+            .find(|item| item.key().is_some_and(|key| key == METADATA_KEY))
+            .ok_or_else(|| {
+                anyhow!(
+                    "Expected to find hash record with key '{}' but none found. Total items: {}",
+                    METADATA_KEY,
+                    items.len()
+                )
+            })?;
+
+        match item {
+            Item::HashRecord {
+                encoding,
+                pair_count,
+                ..
+            } => {
+                ensure!(
+                    matches!(encoding, HashEncoding::Metadata),
+                    "unexpected hash encoding {encoding:?}, expected Metadata"
+                );
+                ensure!(
+                    *pair_count == METADATA_FIELD_COUNT as u64,
+                    "unexpected hash pair count {pair_count}, expected {}",
+                    METADATA_FIELD_COUNT
                 );
             }
             _ => unreachable!("checked hash record variant"),

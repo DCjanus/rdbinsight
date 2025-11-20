@@ -7,8 +7,8 @@ use super::{
         function_record::FunctionRecordFixture,
         record_expiry::{ExpireAtRecordFixture, PExpireAtRecordFixture},
         record_hash::{
-            HashListPackExRecordFixture, HashListPackRecordFixture, HashRecordFixture,
-            HashZipListRecordFixture, HashZipMapRecordFixture,
+            HashListPackExRecordFixture, HashListPackRecordFixture, HashMetadataRecordFixture,
+            HashRecordFixture, HashZipListRecordFixture, HashZipMapRecordFixture,
         },
         record_list::ListRecordFixture,
         record_set::SetRecordFixture,
@@ -77,6 +77,7 @@ fn default_fixtures() -> Vec<DynFixture> {
         Box::new(HashZipListRecordFixture::new()),
         Box::new(HashListPackRecordFixture::new()),
         Box::new(HashListPackExRecordFixture::new()),
+        Box::new(HashMetadataRecordFixture::new()),
         Box::new(HashZipMapRecordFixture::new()),
         Box::new(SmallZSetRecordFixture::new()),
         Box::new(SkipListZSetRecordFixture::new()),

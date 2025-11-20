@@ -2,6 +2,7 @@ mod fixtures;
 mod helpers;
 mod redis;
 mod smoke;
+mod trace;
 
 #[cfg(test)]
 mod listpack_tests;

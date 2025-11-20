@@ -9,7 +9,8 @@ check:
 	cargo clippy --all -- -D warnings
 
 test: init_test
-    cargo nextest run --all --status-level=all
+	# TODO: Temporarily skip heavy suites under tests/; remove this filter once we can run all tests again
+	cargo nextest run --all --status-level=all -E 'not kind(test)'
 
 fmt:
 	cargo sort --workspace

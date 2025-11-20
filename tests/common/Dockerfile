@@ -25,9 +25,14 @@ RUN set -eux; \
     rm -f "redis-${REDIS_VERSION}.tar.gz"; \
     cd "redis-${REDIS_VERSION}"; \
     major="${REDIS_VERSION%%.*}"; \
+    minor="${REDIS_VERSION#*.}"; \
+    minor="${minor%%.*}"; \
     set -- -j"$(nproc)"; \
     if [ "${major}" -ge 3 ]; then \
         set -- "$@" MALLOC=jemalloc; \
+    elif [ "${major}" -eq 2 ] && [ "${minor}" -lt 6 ]; then \
+        set -- "$@" FORCE_LIBC_MALLOC=yes; \
+        printf '\nCFLAGS += -fcommon\n' >> src/Makefile; \
     fi; \
     if [ "${major}" -ge 6 ]; then \
         set -- "$@" BUILD_TLS=yes; \

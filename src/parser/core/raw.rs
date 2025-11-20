@@ -75,6 +75,52 @@ impl RDBStr {
             RDBStr::Int(i) => Bytes::from(i.to_string()),
         }
     }
+
+    fn eq_slice(&self, other: &[u8]) -> bool {
+        self.to_bytes().as_ref() == other
+    }
+}
+
+impl PartialEq<str> for RDBStr {
+    fn eq(&self, other: &str) -> bool {
+        self.eq_slice(other.as_bytes())
+    }
+}
+
+impl PartialEq<&str> for RDBStr {
+    fn eq(&self, other: &&str) -> bool {
+        self.eq_slice(other.as_bytes())
+    }
+}
+
+impl PartialEq<String> for RDBStr {
+    fn eq(&self, other: &String) -> bool {
+        self.eq_slice(other.as_bytes())
+    }
+}
+
+impl PartialEq<[u8]> for RDBStr {
+    fn eq(&self, other: &[u8]) -> bool {
+        self.eq_slice(other)
+    }
+}
+
+impl PartialEq<&[u8]> for RDBStr {
+    fn eq(&self, other: &&[u8]) -> bool {
+        self.eq_slice(other)
+    }
+}
+
+impl PartialEq<Vec<u8>> for RDBStr {
+    fn eq(&self, other: &Vec<u8>) -> bool {
+        self.eq_slice(other.as_slice())
+    }
+}
+
+impl PartialEq<Bytes> for RDBStr {
+    fn eq(&self, other: &Bytes) -> bool {
+        self.eq_slice(other.as_ref())
+    }
 }
 
 impl PartialOrd for RDBStr {

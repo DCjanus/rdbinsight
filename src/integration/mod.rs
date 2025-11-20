@@ -5,3 +5,6 @@ mod smoke;
 
 #[cfg(test)]
 mod listpack_tests;
+
+#[cfg(test)]
+mod cluster_tests;

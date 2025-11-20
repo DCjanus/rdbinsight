@@ -116,6 +116,7 @@ pub struct RedisConfig {
     snapshot: bool,
     username: String,
     password: Option<String>,
+    cluster_config_file: Option<String>,
 }
 
 impl Default for RedisConfig {
@@ -135,11 +136,17 @@ impl RedisConfig {
             snapshot: true,
             username: String::new(),
             password: None,
+            cluster_config_file: None,
         }
     }
 
     pub async fn build(self) -> AnyResult<RedisTestEnv> {
         RedisTestEnv::start(self).await
+    }
+
+    pub fn with_cluster_config_file(mut self, config_file: impl Into<String>) -> Self {
+        self.cluster_config_file = Some(config_file.into());
+        self
     }
 }
 
@@ -189,6 +196,15 @@ impl RedisTestEnv {
             if let Some(password) = &cfg.password {
                 args.push("--requirepass".into());
                 args.push(password.clone());
+            }
+
+            if let Some(config_file) = cfg.cluster_config_file.as_deref() {
+                args.push("--cluster-enabled".into());
+                args.push("yes".into());
+                args.push("--cluster-config-file".into());
+                args.push(config_file.to_string());
+                args.push("--cluster-node-timeout".into());
+                args.push("5000".into());
             }
         }
 
@@ -252,11 +268,15 @@ impl RedisTestEnv {
     }
 
     pub async fn collect_items(&self) -> AnyResult<Vec<Item>> {
+        self.collect_items_with_type(SourceType::Standalone).await
+    }
+
+    pub async fn collect_items_with_type(&self, source_type: SourceType) -> AnyResult<Vec<Item>> {
         let mut stream = RedisRdbStream::new(
             self.address.clone(),
             self.username.clone(),
             self.password.clone(),
-            SourceType::Standalone,
+            source_type,
         );
         stream.prepare().await?;
         let items = helpers::collect_items(stream).await?;

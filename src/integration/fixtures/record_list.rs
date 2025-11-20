@@ -18,8 +18,19 @@ impl ListRecordFixture {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ListZipListRecordFixture;
+
+impl ListZipListRecordFixture {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
 const KEY: &str = "integration:list";
 const ELEMENT_COUNT: usize = 2048;
+const ZIPLIST_KEY: &str = "integration:list:ziplist";
+const ZIPLIST_ELEMENT_COUNT: usize = 300;
 
 #[async_trait]
 impl TestFixture for ListRecordFixture {
@@ -83,6 +94,62 @@ impl TestFixture for ListRecordFixture {
                         "unexpected list encoding {encoding:?}, expected {expected_encoding:?} for Redis {version}"
                     );
                 }
+            }
+            _ => unreachable!("checked list record variant"),
+        }
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl TestFixture for ListZipListRecordFixture {
+    fn name(&self) -> &'static str {
+        "list_ziplist_record_fixture"
+    }
+
+    async fn load(&self, conn: &mut MultiplexedConnection) -> AnyResult<()> {
+        let mut pipe = pipe();
+        for idx in 0..ZIPLIST_ELEMENT_COUNT {
+            pipe.cmd("RPUSH")
+                .arg(ZIPLIST_KEY)
+                .arg(format!("zl-{idx:04}"))
+                .ignore();
+        }
+        pipe.query_async::<()>(&mut *conn).await?;
+        Ok(())
+    }
+
+    fn supported(&self, version: &Version) -> bool {
+        version >= &Version::new(2, 6, 0) && version < &Version::new(3, 2, 0)
+    }
+
+    fn assert(&self, _: &Version, items: &[Item]) -> AnyResult<()> {
+        let item = items
+            .iter()
+            .filter(|item| matches!(item, Item::ListRecord { .. }))
+            .find(|item| item.key().is_some_and(|key| key == ZIPLIST_KEY))
+            .ok_or_else(|| {
+                anyhow!(
+                    "Expected to find ziplist list record with key '{ZIPLIST_KEY}' but none found. Total items: {}",
+                    items.len()
+                )
+            })?;
+
+        match item {
+            Item::ListRecord {
+                encoding,
+                member_count,
+                ..
+            } => {
+                ensure!(
+                    matches!(encoding, ListEncoding::ZipList),
+                    "unexpected list encoding {encoding:?}"
+                );
+                ensure!(
+                    *member_count == ZIPLIST_ELEMENT_COUNT as u64,
+                    "unexpected member count {member_count}, expected {ZIPLIST_ELEMENT_COUNT}"
+                );
             }
             _ => unreachable!("checked list record variant"),
         }

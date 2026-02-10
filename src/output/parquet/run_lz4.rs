@@ -5,14 +5,13 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, ensure};
-use bincode::config::standard;
 use lz4_flex::frame::{FrameDecoder, FrameEncoder};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
 use crate::{output::parquet::merge::SortableRecord, record::Record};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, wincode::SchemaWrite, wincode::SchemaRead)]
 pub struct ChunkDesc {
     pub offset: u64,
     pub length: u64,
@@ -22,9 +21,9 @@ pub struct ChunkDesc {
 //
 // - File body: sequential LZ4 Frame compressed chunks. Each chunk, when
 // decompressed, is a sequence of records encoded as: `u32 (big-endian)` length
-// followed by `bincode` encoded `Record` payload (no CRC).
+// followed by `wincode` encoded `Record` payload (no CRC).
 //
-// - File tail: an LZ4-compressed bincode encoding of `Vec<ChunkDesc>` written
+// - File tail: an LZ4-compressed `wincode` encoding of `Vec<ChunkDesc>` written
 // immediately before the last 8 bytes. The final 8 bytes are a big-endian
 // `u64` indicating the length of the compressed index region.
 //
@@ -87,16 +86,15 @@ impl Iterator for RunChunkReader {
             );
         }
 
-        // Deserialize with bincode
-        let (record, _): (Record, usize) =
-            match bincode::serde::decode_from_slice(&payload, standard()) {
-                Ok(t) => t,
-                Err(e) => {
-                    return Some(Err(e).with_context(|| {
-                        anyhow!("Failed to deserialize record from {}", self.path.display())
-                    }));
-                }
-            };
+        // Deserialize with wincode
+        let record: Record = match wincode::deserialize(&payload) {
+            Ok(t) => t,
+            Err(e) => {
+                return Some(Err(e).with_context(|| {
+                    anyhow!("Failed to deserialize record from {}", self.path.display())
+                }));
+            }
+        };
 
         Some(Ok(SortableRecord(record)))
     }
@@ -105,7 +103,7 @@ impl Iterator for RunChunkReader {
 pub async fn append_chunk(file: &mut tokio::fs::File, records: Vec<Record>) -> Result<ChunkDesc> {
     let mut encoder = FrameEncoder::new(Vec::new());
     for record in records {
-        let payload = bincode::serde::encode_to_vec(&record, standard())?;
+        let payload = wincode::serialize(&record)?;
         let len = payload.len();
         encoder.write_all(&(len as u32).to_be_bytes())?;
         encoder.write_all(&payload)?;
@@ -122,7 +120,7 @@ pub async fn append_chunk(file: &mut tokio::fs::File, records: Vec<Record>) -> R
 }
 
 pub async fn write_index(file: &mut tokio::fs::File, index: Vec<ChunkDesc>) -> Result<()> {
-    let index_bytes = bincode::serde::encode_to_vec(&index, standard())?;
+    let index_bytes = wincode::serialize(&index)?;
     let mut encoder = FrameEncoder::new(Vec::new());
     encoder.write_all(&index_bytes)?;
     let compressed = encoder.finish().context("finish encoder")?;
@@ -169,7 +167,6 @@ pub fn read_run_index(path: impl AsRef<Path>) -> Result<Vec<ChunkDesc>> {
         .read_to_end(&mut index_bytes)
         .context("decompress index")?;
 
-    let (chunks, _): (Vec<ChunkDesc>, usize) =
-        bincode::serde::decode_from_slice(&index_bytes, standard()).context("decode index")?;
+    let chunks: Vec<ChunkDesc> = wincode::deserialize(&index_bytes).context("decode index")?;
     Ok(chunks)
 }

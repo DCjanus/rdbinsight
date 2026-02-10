@@ -14,7 +14,6 @@ async_async_io = "0.2.3"
 axum = "0.8.6"
 backon = { version = "1.6.0", default-features = false, features = ["std"] }
 base64 = { version = "0.22.1", features = ["alloc"] }
-bincode = { version = "2.0.1", features = ["serde"] }
 bytes = { version = "1.10.1", features = ["serde"] }
 clap = { version = "4.5.51", features = ["derive", "env"] }
 clap_complete = "4.5.60"
@@ -65,6 +64,7 @@ tracing-subscriber = { version = "0.3.20", features = [
 ] }
 typed-builder = "0.23.0"
 url = { version = "2.5.7", features = ["serde"] }
+wincode = { version = "0.4.1", features = ["derive"] }
 
 [build-dependencies]
 shadow-rs = "1.4.0"

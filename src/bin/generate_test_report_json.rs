@@ -475,7 +475,7 @@ fn aggregate_by_type(keys: &[KeyInfo]) -> Vec<TypeAggregate> {
             total_size,
         })
         .collect();
-    result.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+    result.sort_by_key(|b| std::cmp::Reverse(b.total_size));
     result
 }
 
@@ -494,7 +494,7 @@ fn aggregate_by_instance(keys: &[KeyInfo]) -> Vec<InstanceAggregate> {
             total_size,
         })
         .collect();
-    result.sort_by(|a, b| b.total_size.cmp(&a.total_size));
+    result.sort_by_key(|b| std::cmp::Reverse(b.total_size));
     result
 }
 
@@ -600,7 +600,7 @@ fn aggregate_top_prefixes(keys: &[KeyInfo]) -> Vec<PrefixAggregate> {
 }
 
 fn select_top_keys(keys: &mut [KeyInfo]) -> Vec<TopKeyRecord> {
-    keys.sort_by(|a, b| b.rdb_size.cmp(&a.rdb_size));
+    keys.sort_by_key(|b| std::cmp::Reverse(b.rdb_size));
     keys.iter()
         .take(TOP_N_COUNT)
         .map(|k| TopKeyRecord {

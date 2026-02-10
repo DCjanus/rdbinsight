@@ -23,7 +23,18 @@ use crate::{
 };
 
 /// Redis data type variants
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Hash,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordType {
     String,
@@ -50,7 +61,17 @@ impl RecordType {
 }
 
 /// Encoding information for different Redis data types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordEncoding {
     String(StringEncoding),
@@ -63,7 +84,9 @@ pub enum RecordEncoding {
 }
 
 /// A complete Redis key record with all necessary metadata
-#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, TypedBuilder, wincode::SchemaWrite, wincode::SchemaRead,
+)]
 pub struct Record {
     /// Database number (0-15 in standard Redis)
     pub db: u64,

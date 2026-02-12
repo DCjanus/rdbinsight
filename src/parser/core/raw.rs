@@ -1,8 +1,13 @@
-use std::fmt::Display;
+use std::{fmt::Display, mem::MaybeUninit};
 
 use anyhow::{anyhow, bail};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
+use wincode::{
+    SchemaRead, SchemaWrite,
+    config::Config,
+    io::{Reader, Writer},
+};
 
 use crate::{
     helper::AnyResult,
@@ -66,6 +71,58 @@ pub fn read_rdb_len(input: &[u8]) -> AnyResult<(&[u8], RDBLen)> {
 pub enum RDBStr {
     Str(Bytes), /* XXX: tricky way to avoid lifetime issue, might be slow than &[u8], but easy to use */
     Int(u64),
+}
+
+unsafe impl<C: Config> SchemaWrite<C> for RDBStr {
+    type Src = RDBStr;
+
+    fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
+        match src {
+            RDBStr::Str(bytes) => Ok(<u8 as SchemaWrite<C>>::size_of(&0)?
+                + <[u8] as SchemaWrite<C>>::size_of(bytes.as_ref())?),
+            RDBStr::Int(v) => {
+                Ok(<u8 as SchemaWrite<C>>::size_of(&1)? + <u64 as SchemaWrite<C>>::size_of(v)?)
+            }
+        }
+    }
+
+    fn write(mut writer: impl Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        match src {
+            RDBStr::Str(bytes) => {
+                <u8 as SchemaWrite<C>>::write(&mut writer, &0)?;
+                <[u8] as SchemaWrite<C>>::write(writer, bytes.as_ref())
+            }
+            RDBStr::Int(v) => {
+                <u8 as SchemaWrite<C>>::write(&mut writer, &1)?;
+                <u64 as SchemaWrite<C>>::write(writer, v)
+            }
+        }
+    }
+}
+
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for RDBStr {
+    type Dst = RDBStr;
+
+    fn read(
+        mut reader: impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        let variant = <u8 as SchemaRead<'de, C>>::get(&mut reader)?;
+        match variant {
+            0 => {
+                let data = <Vec<u8> as SchemaRead<'de, C>>::get(reader)?;
+                dst.write(RDBStr::Str(Bytes::from(data)));
+            }
+            1 => {
+                let v = <u64 as SchemaRead<'de, C>>::get(reader)?;
+                dst.write(RDBStr::Int(v));
+            }
+            other => {
+                return Err(wincode::ReadError::InvalidTagEncoding(other as usize));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl RDBStr {

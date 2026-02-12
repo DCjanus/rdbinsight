@@ -104,7 +104,17 @@ impl_serde_str_conversion!(ZSetEncoding);
 impl_serde_str_conversion!(HashEncoding);
 impl_serde_str_conversion!(StreamEncoding);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum StringEncoding {
     Raw,
@@ -113,7 +123,17 @@ pub enum StringEncoding {
     LZF,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ListEncoding {
     List,
@@ -122,7 +142,17 @@ pub enum ListEncoding {
     QuickList2,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SetEncoding {
     Raw,
@@ -130,7 +160,17 @@ pub enum SetEncoding {
     ListPack,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ZSetEncoding {
     SkipList,
@@ -139,7 +179,17 @@ pub enum ZSetEncoding {
     ListPack,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum HashEncoding {
     Raw,
@@ -150,7 +200,18 @@ pub enum HashEncoding {
     ListPackEx,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ConstParamTy, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    ConstParamTy,
+    Serialize,
+    Deserialize,
+    wincode::SchemaWrite,
+    wincode::SchemaRead,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamEncoding {
     ListPacks,

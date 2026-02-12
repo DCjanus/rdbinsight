@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use rand::Rng;
+use rand::{Rng, RngExt};
 use redis::{Client, InfoDict, aio::MultiplexedConnection};
 use tracing::{debug, error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

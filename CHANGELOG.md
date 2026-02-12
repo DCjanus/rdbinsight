@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependencies: migrate run-file serialization from `bincode` to `wincode` because `bincode` is no longer maintained.
 - Dependencies: upgrade Arrow/Parquet to 57.0.0 and update Parquet sorting metadata construction to use `parquet::file::metadata::SortingColumn`.
 - Dependencies: bump `lz4_flex` to 0.12.0.
+- Dependencies: bump `bytes` from 1.10.1 to 1.11.1.
+- Dependencies: upgrade `rand` from 0.9.2 to 0.10.0.
 
 ## [0.1.0]
 

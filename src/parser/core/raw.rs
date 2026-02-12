@@ -78,11 +78,8 @@ unsafe impl<C: Config> SchemaWrite<C> for RDBStr {
 
     fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
         match src {
-            RDBStr::Str(bytes) => {
-                let data = bytes.to_vec();
-                Ok(<u8 as SchemaWrite<C>>::size_of(&0)?
-                    + <Vec<u8> as SchemaWrite<C>>::size_of(&data)?)
-            }
+            RDBStr::Str(bytes) => Ok(<u8 as SchemaWrite<C>>::size_of(&0)?
+                + <[u8] as SchemaWrite<C>>::size_of(bytes.as_ref())?),
             RDBStr::Int(v) => {
                 Ok(<u8 as SchemaWrite<C>>::size_of(&1)? + <u64 as SchemaWrite<C>>::size_of(v)?)
             }
@@ -93,8 +90,7 @@ unsafe impl<C: Config> SchemaWrite<C> for RDBStr {
         match src {
             RDBStr::Str(bytes) => {
                 <u8 as SchemaWrite<C>>::write(&mut writer, &0)?;
-                let data = bytes.to_vec();
-                <Vec<u8> as SchemaWrite<C>>::write(writer, &data)
+                <[u8] as SchemaWrite<C>>::write(writer, bytes.as_ref())
             }
             RDBStr::Int(v) => {
                 <u8 as SchemaWrite<C>>::write(&mut writer, &1)?;

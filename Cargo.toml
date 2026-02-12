@@ -14,7 +14,7 @@ async_async_io = "0.2.3"
 axum = "0.8.6"
 backon = { version = "1.6.0", default-features = false, features = ["std"] }
 base64 = { version = "0.22.1", features = ["alloc"] }
-bytes = { version = "1.10.1", features = ["serde"] }
+bytes = { version = "1.11.1", features = ["serde"] }
 clap = { version = "4.5.51", features = ["derive", "env"] }
 clap_complete = "4.5.60"
 clickhouse = { version = "0.14.0", features = ["time"] }

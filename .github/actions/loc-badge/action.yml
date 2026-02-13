@@ -76,7 +76,7 @@ runs:
       with:
         node-version: "24"
         cache: "pnpm"
-        cache-dependency-path: ${{ github.action_path }}/pnpm-lock.yaml
+        cache-dependency-path: .github/actions/loc-badge/pnpm-lock.yaml
 
     - name: Install tokei
       uses: taiki-e/install-action@v2

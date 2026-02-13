@@ -63,7 +63,7 @@ async fn seed_test_data(
     use redis::Client;
 
     let client = Client::open(redis.connection_string.as_str())?;
-    let mut conn = client.get_multiplexed_tokio_connection().await?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
 
     // Authenticate first if authentication information is provided
     if let Some(password) = password {
@@ -453,7 +453,7 @@ async fn standalone_source_tests() -> AnyResult<()> {
 async fn seed_lots_of_strings(redis: &RedisInstance) -> AnyResult<()> {
     use redis::Client;
     let client = Client::open(redis.connection_string.as_str())?;
-    let mut conn = client.get_multiplexed_tokio_connection().await?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
 
     let mut pipe = redis::pipe();
     for i in 0..32_000 {
@@ -479,7 +479,7 @@ async fn seed_lots_of_strings(redis: &RedisInstance) -> AnyResult<()> {
 async fn verify_buffer_limit_config(redis: &RedisInstance) -> AnyResult<()> {
     use redis::Client;
     let client = Client::open(redis.connection_string.as_str())?;
-    let mut conn = client.get_multiplexed_tokio_connection().await?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
 
     let _config_result: Vec<String> = redis::cmd("CONFIG")
         .arg("GET")

@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use redis::{Client, aio::MultiplexedConnection as AsyncConnection};
+use redis::{AsyncConnectionConfig, Client, aio::MultiplexedConnection as AsyncConnection};
 use testcontainers::{
     ContainerAsync, GenericImage,
     core::{ImageExt, IntoContainerPort},
@@ -143,6 +143,15 @@ pub struct RedisInstance {
 }
 
 impl RedisInstance {
+    async fn connect(client: &Client) -> Result<AsyncConnection> {
+        client
+            .get_multiplexed_async_connection_with_config(
+                &AsyncConnectionConfig::new().set_response_timeout(None),
+            )
+            .await
+            .map_err(Into::into)
+    }
+
     /// Get the container logs (stdout and stderr)
     pub async fn get_logs(&self) -> Result<String> {
         Self::collect_logs(&self.container).await
@@ -299,7 +308,7 @@ impl RedisInstance {
             &'c mut AsyncConnection,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'c>> {
         let client = Client::open(self.connection_string.as_str())?;
-        let mut conn = client.get_multiplexed_tokio_connection().await?;
+        let mut conn = Self::connect(&client).await?;
 
         data_seeder(&mut conn).await?;
 
@@ -359,7 +368,7 @@ impl RedisInstance {
             }
 
             if let Ok(client) = Client::open(connection_string)
-                && let Ok(mut conn) = client.get_multiplexed_tokio_connection().await
+                && let Ok(mut conn) = Self::connect(&client).await
             {
                 match redis::cmd("PING").query_async::<()>(&mut conn).await {
                     Ok(_) => return Ok(()),
@@ -384,7 +393,7 @@ impl RedisInstance {
         default_password: Option<&str>,
     ) -> Result<()> {
         let client = Client::open(connection_string)?;
-        let mut conn = client.get_multiplexed_tokio_connection().await?;
+        let mut conn = Self::connect(&client).await?;
 
         // First authenticate with the default password if it exists
         // Since we configured --requirepass, we need to auth first

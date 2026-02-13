@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependencies: bump `spire_enum` to 1.0.0.
 - Dependencies: bump `reqwest` to 0.13.2.
 - Dependencies: bump `testcontainers` to 0.27.0.
+- Dependencies: bump `redis` to 1.0.3.
 
 ## [0.1.0]
 

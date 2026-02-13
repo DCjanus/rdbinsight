@@ -28,7 +28,7 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     {
         use redis::Client;
         let client = Client::open(redis.connection_string.as_str())?;
-        let mut conn = client.get_multiplexed_tokio_connection().await?;
+        let mut conn = client.get_multiplexed_async_connection().await?;
         let mut pipe = redis::pipe();
         for i in 0..100u32 {
             pipe.set(format!("str_key_{}", i), format!("value_{}", i))

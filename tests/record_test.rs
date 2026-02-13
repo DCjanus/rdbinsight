@@ -42,7 +42,7 @@ async fn test_record_stream_integration() -> Result<()> {
 
     // Get connection to populate test data
     let client = redis::Client::open(redis_instance.connection_string.as_str())?;
-    let mut conn = client.get_multiplexed_tokio_connection().await?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
 
     // Populate test data with different Redis data types
     let expected_records = populate_test_data(&mut conn).await?;
@@ -472,7 +472,7 @@ async fn test_record_stream_with_expiry() -> Result<()> {
         .await?;
 
     let client = redis::Client::open(redis_instance.connection_string.as_str())?;
-    let mut conn = client.get_multiplexed_tokio_connection().await?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
 
     // Create keys with different TTL values
     let _: () = conn.set_ex("key_with_ttl_1", "value1", 3600).await?; // 1 hour

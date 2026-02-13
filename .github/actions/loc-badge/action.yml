@@ -79,7 +79,9 @@ runs:
         cache-dependency-path: ${{ github.action_path }}/pnpm-lock.yaml
 
     - name: Install tokei
-      uses: taiki-e/install-action@tokei
+      uses: taiki-e/install-action@v2
+      with:
+        tool: tokei
 
     - name: Install badge-maker runtime dependency
       shell: bash

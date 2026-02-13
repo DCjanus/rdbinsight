@@ -41,7 +41,17 @@ function runStatus(cmd, args, options = {}) {
 }
 
 function commandExists(cmd) {
-  return runStatus(cmd, ["--version"], { capture: true }).status === 0;
+  const result = spawnSync(cmd, ["--version"], {
+    encoding: "utf8",
+    stdio: "ignore",
+  });
+  if (result.error) {
+    if (result.error.code === "ENOENT") {
+      return false;
+    }
+    throw result.error;
+  }
+  return result.status === 0;
 }
 
 function setOutput(name, value) {

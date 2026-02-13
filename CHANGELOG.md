@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependencies: bump `lz4_flex` to 0.12.0.
 - Dependencies: bump `bytes` from 1.10.1 to 1.11.1.
 - Dependencies: upgrade `rand` from 0.9.2 to 0.10.0.
+- Dependencies: bump `spire_enum` to 1.0.0.
 
 ## [0.1.0]
 

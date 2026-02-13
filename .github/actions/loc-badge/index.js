@@ -218,7 +218,7 @@ async function main() {
   const svg = generateSvg(label, valueText);
   fs.writeFileSync(badgePath, svg, "utf8");
 
-  const changed = runStatus("git", ["diff", "--quiet", "--", badgePath]).status !== 0;
+  const changed = run("git", ["status", "--porcelain", "--", badgePath], { capture: true }).trim().length > 0;
   let committed = false;
   let pushed = false;
 

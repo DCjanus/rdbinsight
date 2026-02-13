@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { makeBadge } = require("badge-maker");
 
 function getInput(name, defaultValue = "") {
   const key = `INPUT_${name.replace(/ /g, "_").toUpperCase()}`;
@@ -40,20 +40,6 @@ function runStatus(cmd, args, options = {}) {
   return result;
 }
 
-function commandExists(cmd) {
-  const result = spawnSync(cmd, ["--version"], {
-    encoding: "utf8",
-    stdio: "ignore",
-  });
-  if (result.error) {
-    if (result.error.code === "ENOENT") {
-      return false;
-    }
-    throw result.error;
-  }
-  return result.status === 0;
-}
-
 function setOutput(name, value) {
   const outputFile = process.env.GITHUB_OUTPUT;
   if (outputFile) {
@@ -69,20 +55,12 @@ function appendSummary(lines) {
   fs.appendFileSync(summary, `${lines.join("\n")}\n`);
 }
 
-function addToPath(dir) {
-  process.env.PATH = `${dir}${path.delimiter}${process.env.PATH || ""}`;
-  const githubPath = process.env.GITHUB_PATH;
-  if (githubPath) {
-    fs.appendFileSync(githubPath, `${dir}\n`);
-  }
+function formatNumber(value) {
+  return new Intl.NumberFormat("en-US").format(value);
 }
 
 function escapeXml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
-function formatNumber(value) {
-  return new Intl.NumberFormat("en-US").format(value);
 }
 
 function normalizeRemoteWithToken(token) {
@@ -102,32 +80,6 @@ function normalizeRemoteWithToken(token) {
   if (normalized) {
     run("git", ["remote", "set-url", "origin", normalized]);
   }
-}
-
-function installTokei(version) {
-  if (commandExists("tokei")) {
-    return;
-  }
-
-  if (!commandExists("cargo")) {
-    throw new Error("tokei is missing and cargo is unavailable. Please use a runner with Rust toolchain installed.");
-  }
-
-  const installRoot = fs.mkdtempSync(path.join(os.tmpdir(), "loc-badge-cargo-"));
-  const args = ["install", "--locked", "tokei", "--root", installRoot];
-  if (version !== "latest") {
-    args.push("--version", version);
-  }
-  run("cargo", args);
-
-  const binDir = path.join(installRoot, "bin");
-  const binName = process.platform === "win32" ? "tokei.exe" : "tokei";
-  const binPath = path.join(binDir, binName);
-  if (!fs.existsSync(binPath)) {
-    throw new Error(`tokei install completed but binary not found at ${binPath}`);
-  }
-  addToPath(binDir);
-  run("tokei", ["--version"]);
 }
 
 function parseTotalsFromTokei(jsonText) {
@@ -151,39 +103,32 @@ function parseTotalsFromTokei(jsonText) {
   return total;
 }
 
-function generateSvg(label, formattedValue) {
-  const labelW = label.length * 7 + 10;
-  const valueW = formattedValue.length * 7 + 10;
-  const width = labelW + valueW;
-  const labelEscaped = escapeXml(label);
-  const valueEscaped = escapeXml(formattedValue);
-
-  return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="20" role="img" aria-label="${labelEscaped}: ${valueEscaped}">`,
-    `  <title>${labelEscaped}: ${valueEscaped}</title>`,
-    `  <rect width="${labelW}" height="20" fill="#555"/>`,
-    `  <rect x="${labelW}" width="${valueW}" height="20" fill="#4c1"/>`,
-    `  <text x="${Math.floor(labelW / 2)}" y="14" fill="#fff" text-anchor="middle" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11">${labelEscaped}</text>`,
-    `  <text x="${labelW + Math.floor(valueW / 2)}" y="14" fill="#fff" text-anchor="middle" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11">${valueEscaped}</text>`,
-    "</svg>",
-    "",
-  ].join("\n");
+function generateSvg(label, formattedValue, style) {
+  const normalized = style.trim().toLowerCase();
+  const supported = new Set(["flat", "flat-square", "for-the-badge", "plastic", "social"]);
+  if (!supported.has(normalized)) {
+    throw new Error(`Unsupported style: ${style} (expected: flat|flat-square|for-the-badge|plastic|social)`);
+  }
+  return makeBadge({
+    label: escapeXml(label),
+    message: escapeXml(formattedValue),
+    color: "4c1",
+    style: normalized,
+  });
 }
 
 async function main() {
   const badgePath = getInput("badge_path", ".github/badges/loc.svg");
   const scope = getInput("scope", "code");
   const label = getInput("label", "lines of code");
+  const style = getInput("style", "flat");
   const exclude = getInput("exclude", "");
-  const tokeiVersion = getInput("tokei_version", "latest");
   const dryRun = parseBool(getInput("dry_run", "false"), false);
   const commitMessage = getInput("commit_message", "ci(badge): refresh loc badge");
   const commitUserName = getInput("commit_user_name", "github-actions[bot]");
   const commitUserEmail = getInput("commit_user_email", "41898282+github-actions[bot]@users.noreply.github.com");
   const token = getInput("github_token", "");
   const targetBranchInput = getInput("target_branch", "").trim();
-
-  installTokei(tokeiVersion);
 
   fs.mkdirSync(path.dirname(badgePath), { recursive: true });
 
@@ -215,12 +160,13 @@ async function main() {
   }
 
   const valueText = formatNumber(value);
-  const svg = generateSvg(label, valueText);
+  const svg = generateSvg(label, valueText, style);
   fs.writeFileSync(badgePath, svg, "utf8");
 
   const changed = run("git", ["status", "--porcelain", "--", badgePath], { capture: true }).trim().length > 0;
   let committed = false;
   let pushed = false;
+  let commitSha = "";
 
   if (changed && !dryRun) {
     run("git", ["config", "user.name", commitUserName]);
@@ -231,6 +177,7 @@ async function main() {
     if (stagedChanged) {
       run("git", ["commit", "-m", commitMessage]);
       committed = true;
+      commitSha = run("git", ["rev-parse", "--short", "HEAD"], { capture: true }).trim();
 
       try {
         normalizeRemoteWithToken(token);
@@ -254,16 +201,34 @@ async function main() {
     }
   }
 
-  appendSummary([
-    "### LOC badge",
-    "",
-    `- Path: \`${badgePath}\``,
-    `- Scope: \`${scope}\``,
-    `- Value: \`${valueText}\``,
-    `- Changed: \`${changed}\``,
-    `- Committed: \`${committed}\``,
-    `- Pushed: \`${pushed}\``,
-  ]);
+  const summaryLines = [];
+  if (!changed) {
+    summaryLines.push("### LOC badge unchanged");
+    summaryLines.push("");
+    summaryLines.push(`No update needed for \`${badgePath}\`.`);
+    summaryLines.push(`Current value remains **${valueText}** (\`scope=${scope}\`, \`style=${style}\`).`);
+  } else if (changed && dryRun) {
+    summaryLines.push("### LOC badge generated (dry run)");
+    summaryLines.push("");
+    summaryLines.push(`Generated \`${badgePath}\` with **${valueText}** (\`scope=${scope}\`, \`style=${style}\`).`);
+    summaryLines.push("Dry run is enabled, so no commit or push was attempted.");
+  } else if (pushed) {
+    summaryLines.push("### LOC badge updated");
+    summaryLines.push("");
+    summaryLines.push(`Updated \`${badgePath}\` to **${valueText}** (\`scope=${scope}\`, \`style=${style}\`).`);
+    summaryLines.push(`- Commit: \`${commitSha}\``);
+    summaryLines.push(`- Push: succeeded to \`${targetBranchInput || process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || "unknown"}\``);
+  } else if (committed) {
+    summaryLines.push("### LOC badge committed, but push failed");
+    summaryLines.push("");
+    summaryLines.push(`Generated \`${badgePath}\` with **${valueText}** (\`scope=${scope}\`, \`style=${style}\`) and created commit \`${commitSha}\`.`);
+    summaryLines.push("Please check branch write permissions or branch protection settings.");
+  } else {
+    summaryLines.push("### LOC badge changed");
+    summaryLines.push("");
+    summaryLines.push(`Detected changes for \`${badgePath}\` with value **${valueText}**, but nothing was committed.`);
+  }
+  appendSummary(summaryLines);
 
   setOutput("changed", String(changed));
   setOutput("committed", String(committed));

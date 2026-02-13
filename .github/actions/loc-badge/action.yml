@@ -1,0 +1,63 @@
+name: LOC Badge Generator
+description: Generate, optionally commit, and optionally push an SVG LOC badge.
+author: DCjanus
+
+inputs:
+  badge_path:
+    description: Output path for the generated SVG badge.
+    required: false
+    default: .github/badges/loc.svg
+  scope:
+    description: LOC scope (code, code_comments, all).
+    required: false
+    default: code
+  label:
+    description: Badge label text.
+    required: false
+    default: lines of code
+  exclude:
+    description: Optional comma-separated extra exclude patterns. badge_path is always excluded automatically.
+    required: false
+    default: ""
+  tokei_version:
+    description: Tokei version (latest or a release tag like v12.1.2).
+    required: false
+    default: latest
+  dry_run:
+    description: If true, only generate badge and summary without commit/push.
+    required: false
+    default: "false"
+  commit_message:
+    description: Commit message used when badge changes and dry_run is false.
+    required: false
+    default: ci(badge): refresh loc badge
+  commit_user_name:
+    description: Git author name for auto commit.
+    required: false
+    default: github-actions[bot]
+  commit_user_email:
+    description: Git author email for auto commit.
+    required: false
+    default: 41898282+github-actions[bot]@users.noreply.github.com
+  github_token:
+    description: Token used for authenticated push. Defaults to github.token.
+    required: false
+    default: ${{ github.token }}
+  target_branch:
+    description: Branch to push to. Defaults to GITHUB_HEAD_REF or GITHUB_REF_NAME.
+    required: false
+    default: ""
+
+outputs:
+  changed:
+    description: Whether badge_path changed after generation.
+  committed:
+    description: Whether a commit was created.
+  pushed:
+    description: Whether the commit was pushed.
+  value:
+    description: Computed LOC value (raw integer).
+
+runs:
+  using: node20
+  main: index.js

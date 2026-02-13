@@ -1,0 +1,32 @@
+name: LOC Badge
+
+on:
+  push:
+    branches:
+      - "**"
+    paths-ignore:
+      - ".github/badges/loc.svg"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  update-loc-badge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate and sync LOC badge
+        id: loc_badge
+        uses: ./.github/actions/loc-badge
+        with:
+          badge_path: .github/badges/loc.svg
+          scope: code
+          label: lines of code

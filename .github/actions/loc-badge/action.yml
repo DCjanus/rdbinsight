@@ -30,7 +30,7 @@ inputs:
   commit_message:
     description: Commit message used when badge changes and dry_run is false.
     required: false
-    default: ci(badge): refresh loc badge
+    default: "ci(badge): refresh loc badge"
   commit_user_name:
     description: Git author name for auto commit.
     required: false

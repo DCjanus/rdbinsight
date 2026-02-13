@@ -1,14 +1,18 @@
 {
   "name": "loc-badge",
   "version": "1.0.0",
-  "description": "",
+  "description": "Reusable GitHub Action to generate, style, and sync LOC SVG badges using tokei.",
   "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "github-action",
+    "badge",
+    "loc",
+    "tokei",
+    "svg",
+    "pnpm"
+  ],
+  "author": "DCjanus <DCjanus@dcjanus.com>",
+  "license": "MIT",
   "packageManager": "pnpm@10.29.2",
   "dependencies": {
     "badge-maker": "^5.0.2"

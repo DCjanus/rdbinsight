@@ -1,0 +1,106 @@
+name: LOC Badge Generator
+description: Generate, optionally commit, and optionally push an SVG LOC badge.
+author: DCjanus
+
+inputs:
+  badge_path:
+    description: Output path for the generated SVG badge.
+    required: false
+    default: .github/badges/loc.svg
+  scope:
+    description: LOC scope (code, code_comments, all).
+    required: false
+    default: code
+  label:
+    description: Badge label text.
+    required: false
+    default: lines of code
+  style:
+    description: Badge style. Supports flat, flat-square, for-the-badge, plastic, social.
+    required: false
+    default: flat
+  exclude:
+    description: Optional comma-separated extra exclude patterns. badge_path is always excluded automatically.
+    required: false
+    default: ""
+  dry_run:
+    description: If true, only generate badge and summary without commit/push.
+    required: false
+    default: "false"
+  commit_message:
+    description: Commit message used when badge changes and dry_run is false.
+    required: false
+    default: "ci(badge): refresh loc badge"
+  commit_user_name:
+    description: Git author name for auto commit.
+    required: false
+    default: github-actions[bot]
+  commit_user_email:
+    description: Git author email for auto commit.
+    required: false
+    default: 41898282+github-actions[bot]@users.noreply.github.com
+  github_token:
+    description: Token used for authenticated push. Defaults to github.token.
+    required: false
+    default: ${{ github.token }}
+  target_branch:
+    description: Branch to push to. Defaults to GITHUB_HEAD_REF or GITHUB_REF_NAME.
+    required: false
+    default: ""
+
+outputs:
+  changed:
+    description: Whether badge_path changed after generation.
+    value: ${{ steps.run.outputs.changed }}
+  committed:
+    description: Whether a commit was created.
+    value: ${{ steps.run.outputs.committed }}
+  pushed:
+    description: Whether the commit was pushed.
+    value: ${{ steps.run.outputs.pushed }}
+  value:
+    description: Computed LOC value (raw integer).
+    value: ${{ steps.run.outputs.value }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 10
+        run_install: false
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: "24"
+        cache: "pnpm"
+        cache-dependency-path: .github/actions/loc-badge/pnpm-lock.yaml
+
+    - name: Install tokei
+      uses: taiki-e/install-action@v2
+      with:
+        tool: tokei
+
+    - name: Install badge-maker runtime dependency
+      shell: bash
+      run: pnpm --dir "${{ github.action_path }}" install --prod --frozen-lockfile
+
+    - name: Run loc badge generator
+      id: run
+      shell: bash
+      env:
+        INPUT_BADGE_PATH: ${{ inputs.badge_path }}
+        INPUT_SCOPE: ${{ inputs.scope }}
+        INPUT_LABEL: ${{ inputs.label }}
+        INPUT_STYLE: ${{ inputs.style }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
+        INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        INPUT_COMMIT_MESSAGE: ${{ inputs.commit_message }}
+        INPUT_COMMIT_USER_NAME: ${{ inputs.commit_user_name }}
+        INPUT_COMMIT_USER_EMAIL: ${{ inputs.commit_user_email }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github_token }}
+        INPUT_TARGET_BRANCH: ${{ inputs.target_branch }}
+        NODE_PATH: ${{ github.action_path }}/node_modules
+      run: node "${{ github.action_path }}/index.js"

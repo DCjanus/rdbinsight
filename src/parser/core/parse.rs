@@ -57,4 +57,8 @@ pub fn recoverable<T>(e: impl Into<Error>) -> ParseResult<T> {
     ParseResult::Err(ParseError::recoverable(e))
 }
 
+/// Standard parser combinator signature based on the nightly `trait_alias` feature.
+/// `ParseFn<T>` is a `FnMut` that can mutate its internal state while parsing,
+/// consumes input through `Cursor<'a>`, and returns `ParseResult<T>`.
+/// The `'a` lifetime ties the borrow to the cursor slice used for that parse call.
 pub trait ParseFn<T> = for<'a> FnMut(&mut Cursor<'a>) -> ParseResult<T>;

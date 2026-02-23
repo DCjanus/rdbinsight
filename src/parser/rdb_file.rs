@@ -996,7 +996,11 @@ impl RDBFileParser {
             ParseResult::NeedMore => return need_more(),
             ParseResult::Err(e) => return ParseResult::Err(e),
         };
-        match RDBModuleOpcode::try_from(opcode as u8) {
+        let opcode_u8 = match u8::try_from(opcode) {
+            Ok(v) => v,
+            Err(_) => return fatal(anyhow!("unknown {what}: {opcode}")),
+        };
+        match RDBModuleOpcode::try_from(opcode_u8) {
             Ok(v) => ok(v),
             Err(_) => fatal(anyhow!("unknown {what}: {opcode}")),
         }

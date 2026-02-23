@@ -11,8 +11,7 @@ use typed_builder::TypedBuilder;
 use crate::{
     helper::{AnyResult, codis_slot, redis_slot},
     parser::{
-        NeedMoreData,
-        core::{buffer::Buffer, raw::RDBStr},
+        core::{buffer::Buffer, parse::ParseResult, raw::RDBStr},
         model::{
             HashEncoding, Item, ListEncoding, SetEncoding, StreamEncoding, StringEncoding,
             ZSetEncoding,
@@ -168,7 +167,7 @@ impl RecordStream {
     pub fn new(reader: Pin<Box<dyn AsyncRead + Send>>, source_type: SourceType) -> Self {
         Self {
             parser: RDBFileParser::default(),
-            buffer: Buffer::new(16 * 1024 * 1024), // 16MB buffer
+            buffer: Buffer::new(64 * 1024 * 1024), // 64MB buffer
             reader,
             source_type,
             current_db: 0,
@@ -208,19 +207,17 @@ impl RecordStream {
     fn try_parse_record(&mut self) -> AnyResult<Option<Record>> {
         loop {
             match self.parser.poll_next(&mut self.buffer) {
-                Ok(Some(item)) => {
+                ParseResult::Ok(Some(item)) => {
                     match self.process_item(item) {
                         Some(record) => return Ok(Some(record)),
                         None => continue, // Skip non-record items and continue processing
                     }
                 }
-                Ok(None) => return Ok(None), // End of stream
-                Err(e) if e.is::<NeedMoreData>() => {
+                ParseResult::Ok(None) => return Ok(None), // End of stream
+                ParseResult::NeedMore => {
                     return Ok(None); // Need more data
                 }
-                Err(e) => {
-                    return Err(e); // Real error
-                }
+                ParseResult::Err(e) => return Err(e.into_error()), // Real error
             }
         }
     }

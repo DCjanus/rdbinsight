@@ -1384,7 +1384,8 @@ fn count_ziplist_entries(mut input: &[u8]) -> anyhow::Result<u64> {
                 0b1110_0000 => 8,
                 0b1111_0000 => 3,
                 0b1111_1110 => 1,
-                _ => 0,
+                0b1111_0001..=0b1111_1101 => 0,
+                _ => return Err(anyhow!("unknown ziplist encoding: {encoding_byte:#04x}")),
             },
             _ => unreachable!("invalid ziplist encoding byte"),
         };

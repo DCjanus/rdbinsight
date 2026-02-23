@@ -215,6 +215,11 @@ impl RecordStream {
                 }
                 ParseResult::Ok(None) => return Ok(None), // End of stream
                 ParseResult::NeedMore => {
+                    if self.buffer.is_finished() {
+                        return Err(anyhow::anyhow!(
+                            "Incomplete RDB data: parser needs more data after EOF"
+                        ));
+                    }
                     return Ok(None); // Need more data
                 }
                 ParseResult::Err(e) => return Err(e.into_error()), // Real error
@@ -479,10 +484,16 @@ mod tests {
         let reader = Box::pin(cursor);
         let mut stream = RecordStream::new(reader, SourceType::File);
 
-        // Since we have no data, this should return None
+        // Empty input is treated as truncated RDB payload.
         let result = stream.next_record().await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Incomplete RDB data: parser needs more data after EOF")
+        );
     }
 
     #[test]

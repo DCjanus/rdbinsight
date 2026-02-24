@@ -27,6 +27,16 @@ enum Flag {
     Type(RDBType),
 }
 
+macro_rules! try_parse {
+    ($expr:expr) => {
+        match $expr {
+            ParseResult::Ok(v) => v,
+            ParseResult::NeedMore => return need_more(),
+            ParseResult::Err(e) => return ParseResult::Err(e),
+        }
+    };
+}
+
 fn parse_err_to_any(err: ParseError) -> anyhow::Error {
     match err {
         ParseError::Recoverable(e) | ParseError::Fatal(e) => e,
@@ -188,16 +198,8 @@ impl RDBFileParser {
 
     fn parse_string_record(&mut self, cursor: &mut Cursor<'_>) -> ParseResult<Option<Item>> {
         let started = cursor.offset();
-        let key = match read_rdb_str(cursor) {
-            ParseResult::Ok(v) => v,
-            ParseResult::NeedMore => return ParseResult::NeedMore,
-            ParseResult::Err(e) => return ParseResult::Err(e),
-        };
-        let encoding = match self.parse_string_encoding(cursor) {
-            ParseResult::Ok(v) => v,
-            ParseResult::NeedMore => return ParseResult::NeedMore,
-            ParseResult::Err(e) => return ParseResult::Err(e),
-        };
+        let key = try_parse!(read_rdb_str(cursor));
+        let encoding = try_parse!(self.parse_string_encoding(cursor));
 
         let rdb_size = cursor.offset() - started;
         cursor.commit();

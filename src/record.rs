@@ -153,6 +153,7 @@ impl Record {
 pub struct RecordStream {
     parser: RDBFileParser,
     buffer: Buffer,
+    read_buf: Vec<u8>,
     reader: Pin<Box<dyn AsyncRead + Send>>,
     source_type: SourceType,
     current_db: u64,
@@ -168,6 +169,7 @@ impl RecordStream {
         Self {
             parser: RDBFileParser::default(),
             buffer: Buffer::new(64 * 1024 * 1024), // 64MB buffer
+            read_buf: vec![0u8; 64 * 1024],        // 64KB read buffer
             reader,
             source_type,
             current_db: 0,
@@ -178,27 +180,41 @@ impl RecordStream {
         }
     }
 
-    /// Get the next record from the stream
+    /// Get the next record from the stream (test helper).
+    #[cfg(test)]
     async fn next_record(&mut self) -> AnyResult<Option<Record>> {
+        futures_util::future::poll_fn(|cx| self.poll_next_record(cx)).await
+    }
+
+    fn poll_next_record(&mut self, cx: &mut Context<'_>) -> Poll<AnyResult<Option<Record>>> {
         loop {
-            match self.try_parse_record()? {
-                Some(record) => return Ok(Some(record)),
-                None => {
-                    // Need more data or end of stream
+            match self.try_parse_record() {
+                Ok(Some(record)) => return Poll::Ready(Ok(Some(record))),
+                Ok(None) => {
                     if self.finished {
-                        return Ok(None);
-                    }
-
-                    // Try to read more data
-                    if !self.read_more_data().await? {
-                        // EOF reached
-                        self.finished = true;
-                        self.buffer.set_finished();
-
-                        // Try one more time to parse any remaining data
-                        return self.try_parse_record();
+                        return Poll::Ready(Ok(None));
                     }
                 }
+                Err(e) => return Poll::Ready(Err(e)),
+            }
+
+            use tokio::io::ReadBuf;
+
+            let mut read_buf = ReadBuf::new(&mut self.read_buf);
+            match self.reader.as_mut().poll_read(cx, &mut read_buf) {
+                Poll::Ready(Ok(())) => {
+                    let n = read_buf.filled().len();
+                    if n == 0 {
+                        self.finished = true;
+                        self.buffer.set_finished();
+                        continue;
+                    }
+                    if let Err(e) = self.buffer.extend(&read_buf.filled()[..n]) {
+                        return Poll::Ready(Err(e.into()));
+                    }
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
+                Poll::Pending => return Poll::Pending,
             }
         }
     }
@@ -229,21 +245,6 @@ impl RecordStream {
                 }
                 ParseResult::Err(e) => return Err(e.into_error()), // Real error
             }
-        }
-    }
-
-    /// Read more data from the async reader into the buffer
-    async fn read_more_data(&mut self) -> AnyResult<bool> {
-        use tokio::io::AsyncReadExt;
-
-        let mut read_buf = vec![0u8; 64 * 1024]; // 64KB read buffer
-        match self.reader.read(&mut read_buf).await {
-            Ok(0) => Ok(false), // EOF
-            Ok(n) => {
-                self.buffer.extend(&read_buf[..n])?;
-                Ok(true)
-            }
-            Err(e) => Err(e.into()),
         }
     }
 
@@ -463,11 +464,7 @@ impl Stream for RecordStream {
     type Item = AnyResult<Record>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Convert async method to poll-based
-        let future = self.next_record();
-        tokio::pin!(future);
-
-        match future.poll(cx) {
+        match self.poll_next_record(cx) {
             Poll::Ready(Ok(Some(record))) => Poll::Ready(Some(Ok(record))),
             Poll::Ready(Ok(None)) => Poll::Ready(None),
             Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e))),

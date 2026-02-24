@@ -213,7 +213,12 @@ impl RecordStream {
                         None => continue, // Skip non-record items and continue processing
                     }
                 }
-                ParseResult::Ok(None) => return Ok(None), // End of stream
+                ParseResult::Ok(None) => {
+                    // Parser hit RDB EOF marker; stop polling reader on subsequent calls.
+                    self.finished = true;
+                    self.buffer.set_finished();
+                    return Ok(None);
+                }
                 ParseResult::NeedMore => {
                     if self.buffer.is_finished() {
                         return Err(anyhow::anyhow!(

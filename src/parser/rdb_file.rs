@@ -1490,7 +1490,7 @@ fn read_zipmap_size(mut input: &[u8]) -> anyhow::Result<(&[u8], Option<u64>)> {
     }
 
     ensure!(input.len() >= 4, "zipmap 32-bit size truncated");
-    let size = u32::from_be_bytes([input[0], input[1], input[2], input[3]]) as u64;
+    let size = u32::from_le_bytes([input[0], input[1], input[2], input[3]]) as u64;
     input = &input[4..];
     Ok((input, Some(size)))
 }

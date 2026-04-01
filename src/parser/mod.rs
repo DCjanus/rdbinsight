@@ -1,9 +1,9 @@
+pub mod combinator;
 pub mod core;
 pub mod error;
 pub mod model;
 pub mod rdb_file;
-pub mod record;
-pub mod state;
+pub mod registry;
 pub mod trace;
 
 pub use error::*;
@@ -14,4 +14,3 @@ pub use model::{
     StringEncoding, ZSetEncoding,
 };
 pub use rdb_file::RDBFileParser;
-pub use record::*;

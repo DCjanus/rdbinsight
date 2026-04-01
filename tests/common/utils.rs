@@ -1,30 +1,33 @@
 use anyhow::{bail, ensure};
 use rdbinsight::{
     helper::AnyResult,
-    parser::{Item, RDBFileParser, core::buffer::Buffer, error::NeedMoreData},
+    parser::{
+        Item, RDBFileParser,
+        core::{buffer::Buffer, parse::ParseResult},
+    },
 };
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 
 pub async fn collect_items(reader: impl AsyncRead + Unpin) -> AnyResult<Vec<Item>> {
     let mut reader = BufReader::new(reader);
     let mut parser = RDBFileParser::default();
-    let mut buffer = Buffer::new(1024 * 1024);
+    let mut buffer = Buffer::new(64 * 1024 * 1024);
     let mut items = Vec::new();
 
     loop {
         match parser.poll_next(&mut buffer) {
-            Ok(Some(item)) => {
+            ParseResult::Ok(Some(item)) => {
                 items.push(item);
                 if items.len() % 1000 == 0 {
                     println!("collected {} items", items.len());
                 }
             }
-            Ok(None) => break,
-            Err(e) if e.is::<NeedMoreData>() && buffer.is_finished() => bail!(
+            ParseResult::Ok(None) => break,
+            ParseResult::NeedMore if buffer.is_finished() => bail!(
                 "Incomplete RDB data: parser needs more data, but the input stream has ended. Unprocessed bytes in buffer: {}",
                 buffer.len()
             ),
-            Err(e) if e.is::<NeedMoreData>() => {
+            ParseResult::NeedMore => {
                 let mut temp = [0u8; 1];
                 let n = reader.read(&mut temp).await?;
                 if n == 0 {
@@ -33,7 +36,7 @@ pub async fn collect_items(reader: impl AsyncRead + Unpin) -> AnyResult<Vec<Item
                     buffer.push_u8(temp[0])?;
                 }
             }
-            Err(e) => return Err(e),
+            ParseResult::Err(e) => return Err(e.into_error()),
         }
     }
 

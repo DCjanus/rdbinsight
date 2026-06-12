@@ -63,7 +63,16 @@ jobs:
           const marker = "<!-- rdbinsight-parser-benchmark -->";
           const baseRoot = "/tmp/parser-benchmark-comment/target/criterion-base";
           const currentRoot = "/tmp/parser-benchmark-comment/target/criterion-current";
-          const benchmarkNamePattern = /^parser\/parse_rdb\/synthetic-(?:(?:string|list|set|hash|zset|zset2)-records|mixed-raw-types)-[1-9][0-9]*MiB$/;
+          const expectedBenchmarkNames = [
+            "parser/parse_rdb/synthetic-hash-records-16MiB",
+            "parser/parse_rdb/synthetic-list-records-16MiB",
+            "parser/parse_rdb/synthetic-mixed-raw-types-16MiB",
+            "parser/parse_rdb/synthetic-set-records-16MiB",
+            "parser/parse_rdb/synthetic-string-records-16MiB",
+            "parser/parse_rdb/synthetic-zset-records-16MiB",
+            "parser/parse_rdb/synthetic-zset2-records-16MiB",
+          ];
+          const expectedBenchmarkNameSet = new Set(expectedBenchmarkNames);
 
           function fileExists(filePath) {
             return fs.existsSync(filePath);
@@ -92,7 +101,7 @@ jobs:
 
           function median(filePath) {
             const value = readJson(filePath).median?.point_estimate;
-            if (!Number.isFinite(value)) {
+            if (!Number.isFinite(value) || value <= 0) {
               throw new Error(`invalid median estimate in ${filePath}`);
             }
             return value;
@@ -142,7 +151,7 @@ jobs:
             .filter((filePath) => filePath.endsWith(`${path.sep}new${path.sep}estimates.json`))
             .flatMap((filePath) => {
               const name = benchmarkName(filePath);
-              if (!benchmarkNamePattern.test(name)) {
+              if (!expectedBenchmarkNameSet.has(name)) {
                 console.log(`Skipping unexpected benchmark name: ${name}`);
                 return [];
               }
@@ -152,6 +161,14 @@ jobs:
               return [{ name, currentNs, baseNs, bytes: bytesFor(name) }];
             })
             .sort((a, b) => a.name.localeCompare(b.name));
+
+          const foundBenchmarkNameSet = new Set(rows.map((row) => row.name));
+          const missingBenchmarkNames = expectedBenchmarkNames.filter(
+            (name) => !foundBenchmarkNameSet.has(name),
+          );
+          if (missingBenchmarkNames.length > 0) {
+            throw new Error(`missing expected benchmark rows: ${missingBenchmarkNames.join(", ")}`);
+          }
 
           const table = rows.length === 0
             ? "_No Criterion benchmark estimates were found._"

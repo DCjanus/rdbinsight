@@ -238,7 +238,7 @@ impl MergeContext {
             }
         };
         props_builder = props_builder.set_sorting_columns(Some(sorting_columns));
-        props_builder = props_builder.set_max_row_group_size(8192);
+        props_builder = props_builder.set_max_row_group_row_count(Some(8192));
         let props = props_builder.build();
 
         let writer = ArrowWriter::try_new(file, schema_arc, Some(props))

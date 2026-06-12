@@ -8,7 +8,7 @@ default-run = "rdbinsight"
 
 [dependencies]
 anyhow = "1.0.100"
-arrow = "58.1.0"
+arrow = "59.0.0"
 async-trait = "0.1.89"
 async_async_io = "0.2.3"
 axum = "0.8.6"
@@ -17,20 +17,20 @@ base64 = { version = "0.22.1", features = ["alloc"] }
 bytes = { version = "1.11.1", features = ["serde"] }
 clap = { version = "4.5.51", features = ["derive", "env"] }
 clap_complete = "4.5.60"
-clickhouse = { version = "0.14.0", features = ["time"] }
+clickhouse = { version = "0.15.1", features = ["time"] }
 crc = "3.3.0"
 futures-util = "0.3.31"
 hex = "0.4.3"
 http = "1.3.1"
 hyper-util = { version = "0.1.17", features = ["client-legacy"] }
 itertools = "0.14.0"
-lz4_flex = "0.12.0"
+lz4_flex = "0.13.1"
 lzf = "1.0.0"
 memchr = "2.7.6"
 mimalloc = "0.1.48"
 num_cpus = "1.17.0"
 num_enum = "0.7.5"
-parquet = { version = "58.1.0", features = ["arrow", "async"] }
+parquet = { version = "59.0.0", features = ["arrow", "async"] }
 prometheus = { version = "0.14.0", features = ["process"] }
 rand = "0.10.0"
 redis = { version = "1.0.3", features = [
@@ -45,7 +45,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_bytes = "0.11.19"
 serde_json = "1.0.145"
 serde_with = { version = "3.15.1", features = ["base64"] }
-shadow-rs = "1.4.0"
+shadow-rs = "2.0.0"
 spire_enum = "1.0.0"
 thiserror = "2.0.17"
 time = { version = "0.3.44", features = [
@@ -64,10 +64,10 @@ tracing-subscriber = { version = "0.3.20", features = [
 ] }
 typed-builder = "0.23.0"
 url = { version = "2.5.7", features = ["serde"] }
-wincode = { version = "0.4.1", features = ["derive"] }
+wincode = { version = "0.5.5", features = ["derive"] }
 
 [build-dependencies]
-shadow-rs = "1.4.0"
+shadow-rs = "2.0.0"
 
 [dev-dependencies]
 tempfile = "3.23.0"

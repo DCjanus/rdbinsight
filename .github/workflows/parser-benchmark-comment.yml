@@ -21,6 +21,10 @@ jobs:
       - name: Wait for parser benchmark artifact
         env:
           GH_TOKEN: ${{ github.token }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          COMMENT_RUN_ID: ${{ github.run_id }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
@@ -56,6 +60,7 @@ jobs:
             exit 0
           fi
 
+          export BENCHMARK_RUN_ID="$run_id"
           node <<'NODE'
           const fs = require("node:fs");
           const path = require("node:path");
@@ -64,12 +69,25 @@ jobs:
           const baseRoot = "/tmp/parser-benchmark-comment/target/criterion-base";
           const currentRoot = "/tmp/parser-benchmark-comment/target/criterion-current";
           const expectedBenchmarkNames = [
+            "parser/parse_rdb/synthetic-hash-listpack-ex-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-listpack-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-metadata-records-16MiB",
             "parser/parse_rdb/synthetic-hash-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-ziplist-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-zipmap-records-16MiB",
+            "parser/parse_rdb/synthetic-list-quicklist-records-16MiB",
+            "parser/parse_rdb/synthetic-list-quicklist2-records-16MiB",
             "parser/parse_rdb/synthetic-list-records-16MiB",
+            "parser/parse_rdb/synthetic-list-ziplist-records-16MiB",
             "parser/parse_rdb/synthetic-mixed-raw-types-16MiB",
+            "parser/parse_rdb/synthetic-set-intset-records-16MiB",
+            "parser/parse_rdb/synthetic-set-listpack-records-16MiB",
             "parser/parse_rdb/synthetic-set-records-16MiB",
+            "parser/parse_rdb/synthetic-string-int-records-16MiB",
             "parser/parse_rdb/synthetic-string-records-16MiB",
+            "parser/parse_rdb/synthetic-zset-listpack-records-16MiB",
             "parser/parse_rdb/synthetic-zset-records-16MiB",
+            "parser/parse_rdb/synthetic-zset-ziplist-records-16MiB",
             "parser/parse_rdb/synthetic-zset2-records-16MiB",
           ];
           const expectedBenchmarkNameSet = new Set(expectedBenchmarkNames);
@@ -147,6 +165,18 @@ jobs:
             return `${prefix}${value.toFixed(2)}% ${direction}`;
           }
 
+          function shortSha(sha) {
+            return (sha || "").slice(0, 7);
+          }
+
+          function commitLink(repo, sha) {
+            return `[${markdownTableCell(shortSha(sha))}](https://github.com/${repo}/commit/${sha})`;
+          }
+
+          function runLink(label, runId) {
+            return `[${markdownTableCell(label)}](https://github.com/${process.env.REPO}/actions/runs/${runId})`;
+          }
+
           const rows = walkFiles(currentRoot, "estimates.json")
             .filter((filePath) => filePath.endsWith(`${path.sep}new${path.sep}estimates.json`))
             .flatMap((filePath) => {
@@ -185,6 +215,8 @@ jobs:
             "## Parser benchmark",
             "",
             "- Base and current benchmarks run in the same CI job on the same GitHub runner.",
+            `- Base commit: ${commitLink(process.env.BASE_REPO, process.env.BASE_SHA)}; head commit: ${commitLink(process.env.HEAD_REPO, process.env.HEAD_SHA)}.`,
+            `- Benchmark artifact: ${runLink(`CI run ${process.env.BENCHMARK_RUN_ID}`, process.env.BENCHMARK_RUN_ID)}; comment workflow: ${runLink(`run ${process.env.COMMENT_RUN_ID}`, process.env.COMMENT_RUN_ID)}.`,
             "- Benchmark excludes disk I/O; RDB bytes are prepared before timing starts.",
             "- Positive change means the current PR is slower than the base commit.",
             "",

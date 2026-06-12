@@ -3,6 +3,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use anyhow::anyhow;
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
@@ -165,6 +166,7 @@ pub struct RecordStream {
     pending_idle: Option<u64>,
     pending_freq: Option<u8>,
     finished: bool,
+    parser_finished: bool,
 }
 
 impl RecordStream {
@@ -180,6 +182,7 @@ impl RecordStream {
             pending_idle: None,
             pending_freq: None,
             finished: false,
+            parser_finished: false,
         }
     }
 
@@ -190,7 +193,7 @@ impl RecordStream {
                 Some(record) => return Ok(Some(record)),
                 None => {
                     // Need more data or end of stream
-                    if self.finished {
+                    if self.finished || self.parser_finished {
                         return Ok(None);
                     }
 
@@ -218,8 +221,14 @@ impl RecordStream {
                         None => continue, // Skip non-record items and continue processing
                     }
                 }
-                Ok(None) => return Ok(None), // End of stream
+                Ok(None) => {
+                    self.parser_finished = true;
+                    return Ok(None);
+                }
                 Err(e) if e.is::<NeedMoreData>() => {
+                    if self.buffer.is_finished() {
+                        return Err(anyhow!("truncated RDB input"));
+                    }
                     return Ok(None); // Need more data
                 }
                 Err(e) => {
@@ -503,15 +512,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_record_stream_basic() {
-        // Create an empty cursor as a mock reader
+        let mut rdb = b"REDIS0011".to_vec();
+        rdb.push(0xff); // EOF.
+        rdb.extend_from_slice(&0_u64.to_le_bytes()); // Checksum placeholder.
+
+        let cursor = Cursor::new(rdb);
+        let reader = Box::pin(cursor);
+        let mut stream = RecordStream::new(reader, SourceType::File);
+
+        let result = stream.next_record().await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_record_stream_rejects_truncated_input() {
         let cursor = Cursor::new(Vec::<u8>::new());
         let reader = Box::pin(cursor);
         let mut stream = RecordStream::new(reader, SourceType::File);
 
-        // Since we have no data, this should return None
         let result = stream.next_record().await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
+        assert!(result.is_err());
+        assert!(format!("{:#}", result.unwrap_err()).contains("truncated RDB input"));
     }
 
     #[test]

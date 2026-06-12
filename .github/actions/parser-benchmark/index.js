@@ -296,10 +296,10 @@ function benchmarkNotes() {
   }
 
   const generatedBytes = process.env.RDBINSIGHT_BENCH_GENERATED_BYTES || "16777216";
-  const profiles =
-    process.env.RDBINSIGHT_BENCH_PROFILES ||
-    process.env.RDBINSIGHT_BENCH_PROFILE ||
-    "string,list,set,hash,zset,zset2,mixed";
+	  const profiles =
+	    process.env.RDBINSIGHT_BENCH_PROFILES ||
+	    process.env.RDBINSIGHT_BENCH_PROFILE ||
+	    "string,string-int,list,list-ziplist,list-quicklist,list-quicklist2,set,set-intset,set-listpack,hash,hash-ziplist,hash-listpack,hash-zipmap,hash-metadata,hash-listpack-ex,zset,zset2,zset-ziplist,zset-listpack,mixed";
   const inputDescription = process.env.RDBINSIGHT_BENCH_RDB
     ? `Input: external RDB from ${process.env.RDBINSIGHT_BENCH_RDB}.`
     : `Input: generated ${generatedBytes} byte synthetic RDB profiles: ${profiles}.`;

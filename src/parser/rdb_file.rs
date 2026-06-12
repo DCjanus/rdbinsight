@@ -14,6 +14,7 @@ use crate::{
         },
         model::{Item, RDBOpcode, RDBType, StreamEncoding},
         record::{
+            array::ArrayRecordParser,
             function::Function2RecordParser,
             hash::{
                 HashListPackExRecordParser, HashListPackRecordParser, HashMetadataRecordParser,
@@ -42,10 +43,12 @@ enum ItemParser {
     ListZipList(ListZipListRecordParser),
     ListQuickList(ListQuickListRecordParser),
     ListQuickList2(ListQuickList2RecordParser),
+    Array(ArrayRecordParser),
     StreamListPack(StreamListPackRecordParser<{ StreamEncoding::ListPacks }>),
     StreamListPack2(StreamListPackRecordParser<{ StreamEncoding::ListPacks2 }>),
     StreamListPack3(StreamListPackRecordParser<{ StreamEncoding::ListPacks3 }>),
     StreamListPack4(StreamListPackRecordParser<{ StreamEncoding::ListPacks4 }>),
+    StreamListPack5(StreamListPackRecordParser<{ StreamEncoding::ListPacks5 }>),
     Set(SetRecordParser),
     SetIntSet(SetIntSetRecordParser),
     SetListPack(SetListPackRecordParser),
@@ -89,7 +92,7 @@ impl RDBFileParser {
         let version = std::str::from_utf8(version).context("version should be utf8")?;
         let version: u64 = version.parse().context("version should be a number")?;
         ensure!(version >= 1, "version should be >= 1");
-        ensure!(version <= 13, "version should be <= 13");
+        ensure!(version <= 14, "version should be <= 14");
 
         self.version = version;
         buffer.consume_to(input.as_ptr());
@@ -278,6 +281,9 @@ impl RDBFileParser {
                 RDBType::ListQuickList2 => {
                     self.init_and_run::<ListQuickList2RecordParser>(buffer, child_input_offset)
                 }
+                RDBType::Array => {
+                    self.init_and_run::<ArrayRecordParser>(buffer, child_input_offset)
+                }
                 RDBType::Set => self.init_and_run::<SetRecordParser>(buffer, child_input_offset),
                 RDBType::SetIntSet => {
                     self.init_and_run::<SetIntSetRecordParser>(buffer, child_input_offset)
@@ -323,6 +329,9 @@ impl RDBFileParser {
                 >>(buffer, child_input_offset),
                 RDBType::StreamListPacks4 => self.init_and_run::<StreamListPackRecordParser<
                     { StreamEncoding::ListPacks4 },
+                >>(buffer, child_input_offset),
+                RDBType::StreamListPacks5 => self.init_and_run::<StreamListPackRecordParser<
+                    { StreamEncoding::ListPacks5 },
                 >>(buffer, child_input_offset),
                 RDBType::HashMetadataPreGA => bail!("unsupported type: HashMetadataPreGA"),
                 RDBType::HashListPackExPreGA => bail!("unsupported type: HashListPackExPreGA"),

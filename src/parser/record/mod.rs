@@ -1,3 +1,4 @@
+pub mod array;
 pub mod function;
 pub mod hash;
 pub mod list;

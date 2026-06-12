@@ -171,6 +171,18 @@ function formatChange(currentNs, baseNs) {
   return `${prefix}${change.toFixed(2)}% ${direction}`;
 }
 
+function markdownTableCell(value) {
+  return String(value)
+    .slice(0, 200)
+    .replaceAll("\\", "\\\\")
+    .replaceAll("|", "\\|")
+    .replaceAll("`", "\\`")
+    .replaceAll("\r", " ")
+    .replaceAll("\n", " ")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
 function medianPointEstimate(filePath) {
   return readJson(filePath).median.point_estimate;
 }
@@ -229,7 +241,7 @@ function benchmarkMarkdownTable(rows) {
 
   for (const row of rows) {
     table.push(
-      `| \`${row.name}\` | ${formatDuration(row.baseNs)} | ${formatDuration(row.currentNs)} | ${formatChange(row.currentNs, row.baseNs)} | ${formatThroughput(row.bytes, row.currentNs)} |`,
+      `| \`${markdownTableCell(row.name)}\` | ${markdownTableCell(formatDuration(row.baseNs))} | ${markdownTableCell(formatDuration(row.currentNs))} | ${markdownTableCell(formatChange(row.currentNs, row.baseNs))} | ${markdownTableCell(formatThroughput(row.bytes, row.currentNs))} |`,
     );
   }
 

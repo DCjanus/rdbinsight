@@ -63,6 +63,16 @@ jobs:
           const marker = "<!-- rdbinsight-parser-benchmark -->";
           const baseRoot = "/tmp/parser-benchmark-comment/target/criterion-base";
           const currentRoot = "/tmp/parser-benchmark-comment/target/criterion-current";
+          const expectedBenchmarkNames = [
+            "parser/parse_rdb/synthetic-hash-records-16MiB",
+            "parser/parse_rdb/synthetic-list-records-16MiB",
+            "parser/parse_rdb/synthetic-mixed-raw-types-16MiB",
+            "parser/parse_rdb/synthetic-set-records-16MiB",
+            "parser/parse_rdb/synthetic-string-records-16MiB",
+            "parser/parse_rdb/synthetic-zset-records-16MiB",
+            "parser/parse_rdb/synthetic-zset2-records-16MiB",
+          ];
+          const expectedBenchmarkNameSet = new Set(expectedBenchmarkNames);
 
           function fileExists(filePath) {
             return fs.existsSync(filePath);
@@ -90,13 +100,30 @@ jobs:
           }
 
           function median(filePath) {
-            return readJson(filePath).median.point_estimate;
+            const value = readJson(filePath).median?.point_estimate;
+            if (!Number.isFinite(value) || value <= 0) {
+              throw new Error(`invalid median estimate in ${filePath}`);
+            }
+            return value;
           }
 
           function bytesFor(name) {
             const benchmarkPath = path.join(currentRoot, ...name.split("/"), "new", "benchmark.json");
             if (!fileExists(benchmarkPath)) return Number.NaN;
-            return readJson(benchmarkPath).throughput?.Bytes ?? Number.NaN;
+            const value = readJson(benchmarkPath).throughput?.Bytes ?? Number.NaN;
+            return Number.isFinite(value) && value > 0 ? value : Number.NaN;
+          }
+
+          function markdownTableCell(value) {
+            return String(value)
+              .slice(0, 200)
+              .replaceAll("\\", "\\\\")
+              .replaceAll("|", "\\|")
+              .replaceAll("`", "\\`")
+              .replaceAll("\r", " ")
+              .replaceAll("\n", " ")
+              .replaceAll("<", "&lt;")
+              .replaceAll(">", "&gt;");
           }
 
           function duration(ns) {
@@ -122,14 +149,26 @@ jobs:
 
           const rows = walkFiles(currentRoot, "estimates.json")
             .filter((filePath) => filePath.endsWith(`${path.sep}new${path.sep}estimates.json`))
-            .map((filePath) => {
+            .flatMap((filePath) => {
               const name = benchmarkName(filePath);
+              if (!expectedBenchmarkNameSet.has(name)) {
+                console.log(`Skipping unexpected benchmark name: ${name}`);
+                return [];
+              }
               const basePath = path.join(baseRoot, ...name.split("/"), "base", "estimates.json");
               const currentNs = median(filePath);
               const baseNs = fileExists(basePath) ? median(basePath) : Number.NaN;
-              return { name, currentNs, baseNs, bytes: bytesFor(name) };
+              return [{ name, currentNs, baseNs, bytes: bytesFor(name) }];
             })
             .sort((a, b) => a.name.localeCompare(b.name));
+
+          const foundBenchmarkNameSet = new Set(rows.map((row) => row.name));
+          const missingBenchmarkNames = expectedBenchmarkNames.filter(
+            (name) => !foundBenchmarkNameSet.has(name),
+          );
+          if (missingBenchmarkNames.length > 0) {
+            throw new Error(`missing expected benchmark rows: ${missingBenchmarkNames.join(", ")}`);
+          }
 
           const table = rows.length === 0
             ? "_No Criterion benchmark estimates were found._"
@@ -137,7 +176,7 @@ jobs:
                 "| Benchmark | Base median | Current median | Change | Current throughput |",
                 "| --- | ---: | ---: | ---: | ---: |",
                 ...rows.map((row) =>
-                  `| \`${row.name}\` | ${duration(row.baseNs)} | ${duration(row.currentNs)} | ${change(row.currentNs, row.baseNs)} | ${throughput(row.bytes, row.currentNs)} |`
+                  `| \`${markdownTableCell(row.name)}\` | ${markdownTableCell(duration(row.baseNs))} | ${markdownTableCell(duration(row.currentNs))} | ${markdownTableCell(change(row.currentNs, row.baseNs))} | ${markdownTableCell(throughput(row.bytes, row.currentNs))} |`
                 ),
               ].join("\n");
 

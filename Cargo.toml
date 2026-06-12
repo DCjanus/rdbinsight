@@ -65,6 +65,11 @@ wincode = { version = "0.5.5", features = ["derive"] }
 shadow-rs = "2.0.0"
 
 [dev-dependencies]
+criterion = "0.8.2"
 tempfile = "3.23.0"
 testcontainers = { version = "0.27.0", features = ["http_wait"] }
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+
+[[bench]]
+name = "parser"
+harness = false

@@ -39,6 +39,9 @@ coverage: init_test
     grcov target/coverage/lcov.info --output-types html --source-dir . --branch --output-path target/coverage
     @echo "Report ready: target/coverage/html/index.html"
 
+bench_parser:
+    cargo +nightly bench --bench parser -- --noplot
+
 up_dev:
     docker-compose -f dev/docker-compose.yml up -d --force-recreate --renew-anon-volumes --wait
 

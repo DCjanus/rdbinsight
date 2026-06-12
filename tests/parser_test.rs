@@ -12,7 +12,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::Context;
+use anyhow::{Context, ensure};
 use bytes::Bytes;
 use futures_util::FutureExt;
 use rdbinsight::{
@@ -1487,22 +1487,35 @@ async fn slot_info_opcode_test() -> AnyResult<()> {
                     slot = upper;
                 }
 
-                for _ in 0..20 {
-                    let info: String = redis::cmd("CLUSTER")
+                let mut cluster_ready = false;
+                let mut last_cluster_info = String::new();
+                for _ in 0..100 {
+                    last_cluster_info = redis::cmd("CLUSTER")
                         .arg("INFO")
                         .query_async(&mut *conn)
-                        .await?;
-                    if info.lines().any(|l| l.trim() == "cluster_state:ok") {
+                        .await
+                        .context("read cluster info after assigning slots")?;
+                    if last_cluster_info
+                        .lines()
+                        .any(|line| line.trim() == "cluster_state:ok")
+                    {
+                        cluster_ready = true;
                         break;
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
+                ensure!(
+                    cluster_ready,
+                    "cluster did not become ready after assigning slots: {}",
+                    last_cluster_info
+                );
 
                 redis::cmd("SET")
                     .arg("cluster_key")
                     .arg("value")
                     .query_async::<()>(conn)
-                    .await?;
+                    .await
+                    .context("write key after cluster became ready")?;
                 Ok(())
             }
             .boxed()

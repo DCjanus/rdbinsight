@@ -94,6 +94,63 @@ async fn test_record_stream_integration() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_record_stream_array_output() -> Result<()> {
+    let redis_instance = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_8)
+        .build()
+        .await?;
+
+    let client = redis::Client::open(redis_instance.connection_string.as_str())?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
+
+    redis::cmd("ARMSET")
+        .arg("array_public_key")
+        .arg(0)
+        .arg("zero")
+        .arg(16)
+        .arg("sixteen")
+        .arg(1024)
+        .arg("tail")
+        .query_async::<()>(&mut conn)
+        .await?;
+
+    let host = redis_instance.container.get_host().await?;
+    let port = redis_instance.container.get_host_port_ipv4(6379).await?;
+    let address = format!("{}:{}", host, port);
+    let standalone_config = StandaloneConfig::new(address, String::new(), None);
+
+    let mut streams = standalone_config.get_rdb_streams().await?;
+    assert_eq!(streams.len(), 1, "Expected exactly one RDB stream");
+    let mut stream = streams.remove(0);
+    stream.as_mut().prepare().await?;
+
+    let mut record_stream =
+        RecordStream::new(Box::pin(stream), rdbinsight::source::SourceType::File);
+
+    let mut array_record = None;
+    while let Some(record) = record_stream.next().await {
+        let record = record?;
+        if record.key == RDBStr::Str("array_public_key".into()) {
+            array_record = Some(record);
+            break;
+        }
+    }
+
+    let record = array_record.ok_or_else(|| anyhow!("array_public_key record not found"))?;
+    assert_eq!(record.r#type, RecordType::Array);
+    assert_eq!(record.type_name(), "array");
+    assert_eq!(record.encoding, RecordEncoding::Array);
+    assert_eq!(record.encoding_name(), "array");
+    assert_eq!(record.member_count, Some(3));
+    assert!(
+        record.rdb_size > 0,
+        "array record should report a positive RDB size"
+    );
+
+    Ok(())
+}
+
 async fn populate_test_data(
     conn: &mut redis::aio::MultiplexedConnection,
 ) -> Result<Vec<ExpectedRecord>> {

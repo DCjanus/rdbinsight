@@ -116,7 +116,7 @@ jobs:
       RDBINSIGHT_BENCH_MAX_SLOWDOWN_PERCENT: "30"
       RDBINSIGHT_BENCH_SAMPLE_SIZE: "10"
       RDBINSIGHT_BENCH_WARM_UP_SECS: "1"
-      RDBINSIGHT_BENCH_MEASUREMENT_SECS: "10"
+      RDBINSIGHT_BENCH_MEASUREMENT_SECS: "3"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6

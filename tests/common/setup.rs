@@ -18,6 +18,7 @@ const LOG_OUTPUT_LIMIT: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RedisVariant {
+    Redis8_6,
     Redis8_0,
     Redis7_0,
     Redis6_0,
@@ -34,6 +35,7 @@ impl RedisVariant {
             RedisVariant::StackLatest => {
                 ("redis/redis-stack-server".to_string(), "latest".to_string())
             }
+            RedisVariant::Redis8_6 => (repo, "8.6.4".to_string()),
             RedisVariant::Redis8_0 => (repo, "8.0.5".to_string()),
             RedisVariant::Redis7_0 => (repo, "7.0.15".to_string()),
             RedisVariant::Redis6_0 => (repo, "6.0.20".to_string()),
@@ -43,7 +45,8 @@ impl RedisVariant {
 
     fn server_command(&self) -> &'static str {
         match self {
-            RedisVariant::Redis8_0
+            RedisVariant::Redis8_6
+            | RedisVariant::Redis8_0
             | RedisVariant::Redis7_0
             | RedisVariant::Redis6_0
             | RedisVariant::Redis2_8 => "redis-server",

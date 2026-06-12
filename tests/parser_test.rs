@@ -1668,12 +1668,19 @@ async fn stream_v3_listpack_test() -> AnyResult<()> {
     run_stream_listpack_test("8.0", StreamEncoding::ListPacks3).await
 }
 
+#[tokio::test]
+async fn stream_v4_listpack_test() -> AnyResult<()> {
+    run_stream_listpack_test("8.6", StreamEncoding::ListPacks4).await
+}
+
 async fn run_stream_listpack_test(version: &str, expect_encoding: StreamEncoding) -> AnyResult<()> {
     use common::{create_stream_groups, seed_stream};
     const MESSAGE_COUNT: usize = 500;
+    const IDMP_MESSAGE_COUNT: usize = 4;
 
     let redis = RedisConfig::default()
         .with_version(match version {
+            "8.6" => RedisVariant::Redis8_6,
             "6.0" => RedisVariant::Redis6_0,
             "7.0" => RedisVariant::Redis7_0,
             "8.0" => RedisVariant::Redis8_0,
@@ -1688,6 +1695,33 @@ async fn run_stream_listpack_test(version: &str, expect_encoding: StreamEncoding
             |conn| {
                 async move {
                     seed_stream(conn, "mystream", MESSAGE_COUNT).await?;
+                    if expect_encoding == StreamEncoding::ListPacks4 {
+                        for producer_idx in 0..2 {
+                            for iid_idx in 0..2 {
+                                let _: redis::Value = redis::cmd("XADD")
+                                    .arg("mystream")
+                                    .arg("IDMP")
+                                    .arg(format!("producer-{producer_idx}"))
+                                    .arg(format!("iid-{producer_idx}-{iid_idx}"))
+                                    .arg("*")
+                                    .arg("field")
+                                    .arg(format!("value-{producer_idx}-{iid_idx}"))
+                                    .query_async(conn)
+                                    .await?;
+                            }
+                        }
+
+                        let _: redis::Value = redis::cmd("XADD")
+                            .arg("mystream")
+                            .arg("IDMP")
+                            .arg("producer-0")
+                            .arg("iid-0-0")
+                            .arg("*")
+                            .arg("field")
+                            .arg("duplicate")
+                            .query_async(conn)
+                            .await?;
+                    }
 
                     let groups = ["cg_alpha", "cg_beta", "cg_gamma"];
                     create_stream_groups(conn, "mystream", &groups).await?;
@@ -1727,7 +1761,15 @@ async fn run_stream_listpack_test(version: &str, expect_encoding: StreamEncoding
         panic!("expected StreamRecord");
     };
     assert_eq!(*key, RDBStr::Str(Bytes::from("mystream")));
-    assert_eq!(*message_count as usize, MESSAGE_COUNT);
+    assert_eq!(
+        *message_count as usize,
+        MESSAGE_COUNT
+            + if expect_encoding == StreamEncoding::ListPacks4 {
+                IDMP_MESSAGE_COUNT
+            } else {
+                0
+            }
+    );
     assert_eq!(*encoding, expect_encoding);
 
     Ok(())

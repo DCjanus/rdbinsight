@@ -44,6 +44,7 @@ enum ItemParser {
     StreamListPack(StreamListPackRecordParser<{ StreamEncoding::ListPacks }>),
     StreamListPack2(StreamListPackRecordParser<{ StreamEncoding::ListPacks2 }>),
     StreamListPack3(StreamListPackRecordParser<{ StreamEncoding::ListPacks3 }>),
+    StreamListPack4(StreamListPackRecordParser<{ StreamEncoding::ListPacks4 }>),
     Set(SetRecordParser),
     SetIntSet(SetIntSetRecordParser),
     SetListPack(SetListPackRecordParser),
@@ -87,7 +88,7 @@ impl RDBFileParser {
         let version = std::str::from_utf8(version).context("version should be utf8")?;
         let version: u64 = version.parse().context("version should be a number")?;
         ensure!(version >= 1, "version should be >= 1");
-        ensure!(version <= 12, "version should be <= 12");
+        ensure!(version <= 13, "version should be <= 13");
 
         self.version = version;
         buffer.consume_to(input.as_ptr());
@@ -378,6 +379,14 @@ impl RDBFileParser {
                 RDBType::StreamListPacks3 => {
                     let (input, entrust) = StreamListPackRecordParser::<
                         { StreamEncoding::ListPacks3 },
+                    >::init(buffer, input)?;
+                    buffer.consume_to(input.as_ptr());
+                    let item = self.set_entrust(entrust, buffer)?;
+                    self.return_item(item)
+                }
+                RDBType::StreamListPacks4 => {
+                    let (input, entrust) = StreamListPackRecordParser::<
+                        { StreamEncoding::ListPacks4 },
                     >::init(buffer, input)?;
                     buffer.consume_to(input.as_ptr());
                     let item = self.set_entrust(entrust, buffer)?;

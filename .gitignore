@@ -5,3 +5,4 @@ rdb_report_*.html
 /tmp
 .idea/
 .vscode/
+.github/actions/parser-benchmark/node_modules/

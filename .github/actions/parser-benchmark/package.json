@@ -1,0 +1,16 @@
+{
+  "name": "@rdbinsight/parser-benchmark-ci",
+  "version": "1.0.0",
+  "description": "Run parser benchmark comparison in CI",
+  "main": "index.js",
+  "scripts": {},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@actions/core": "^3.0.1",
+    "@actions/exec": "^3.0.0"
+  }
+}

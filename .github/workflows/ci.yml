@@ -114,53 +114,13 @@ jobs:
           echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
           echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
 
-      - name: Benchmark base branch
-        if: ${{ github.event_name == 'pull_request' }}
+      - name: Install parser benchmark helper dependencies
+        run: npm ci --ignore-scripts --prefix .github/actions/parser-benchmark
+
+      - name: Run parser benchmark
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          git worktree add ../rdbinsight-base "$BASE_SHA"
-          if [ ! -f ../rdbinsight-base/benches/parser.rs ]; then
-            echo "Base branch has no parser benchmark; skipping base baseline." | tee parser-benchmark-base.txt
-            exit 0
-          fi
-          (
-            cd ../rdbinsight-base
-            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
-              cargo +nightly bench --bench parser -- --noplot --save-baseline base
-          ) | tee parser-benchmark-base.txt
-
-      - name: Benchmark current commit
-        run: |
-          set -euo pipefail
-          if [ -d target/criterion/parser ]; then
-            cargo +nightly bench --bench parser -- --noplot --baseline base | tee parser-benchmark-current.txt
-          else
-            cargo +nightly bench --bench parser -- --noplot | tee parser-benchmark-current.txt
-          fi
-
-      - name: Publish benchmark summary
-        if: always()
-        run: |
-          {
-            echo "## Parser benchmark"
-            echo
-            echo "- Input: generated ${RDBINSIGHT_BENCH_GENERATED_BYTES} byte synthetic string-record RDB unless RDBINSIGHT_BENCH_RDB is set."
-            echo "- Benchmark excludes disk I/O; RDB bytes are prepared before timing starts."
-            echo
-            if [ -f parser-benchmark-base.txt ]; then
-              echo "### Base"
-              echo '```text'
-              cat parser-benchmark-base.txt
-              echo '```'
-              echo
-            fi
-            echo "### Current"
-            echo '```text'
-            cat parser-benchmark-current.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: node .github/actions/parser-benchmark/index.js
 
       - name: Upload benchmark artifacts
         if: always()

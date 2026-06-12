@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{Context, bail, ensure};
 use futures_util::future::Either;
 
 use crate::{
@@ -9,15 +9,19 @@ use crate::{
             buffer::{Buffer, skip_bytes},
             combinators::{read_be_u32, read_exact, read_u8},
             parse::{ParseResult, Parser, ParserInit},
-            raw::{RDBStr, read_rdb_len, read_rdb_str},
+            raw::{RDBLen, RDBStr, read_rdb_len, read_rdb_str},
             view::View,
         },
+        error::NeedMoreData,
         model::{Item, ListEncoding},
         record::{
             set::ListPackLengthParser,
             string::{RawStringCountParser, StringEncodingParser},
         },
-        runtime::combinators::{RDBStrBox, ReduceParser},
+        runtime::{
+            combinators::{RDBStrBox, ReduceParser},
+            lzf::LzfChunkDecoder,
+        },
     },
 };
 
@@ -100,15 +104,19 @@ pub struct ZipListLengthParser {
     counted: u64,
 }
 
+impl ZipListLengthParser {
+    fn init_from_input(input: &[u8]) -> AnyResult<(&[u8], Self)> {
+        let (input, _) = read_exact(input, 10)?;
+        Ok((input, Self {
+            entrust: None,
+            counted: 0,
+        }))
+    }
+}
+
 impl ParserInit for ZipListLengthParser {
     fn init(view: &mut View<'_>) -> ParseResult<Self> {
-        view.parse_init(|_buffer, input| {
-            let (input, _) = read_exact(input, 10)?;
-            Ok((input, Self {
-                entrust: None,
-                counted: 0,
-            }))
-        })
+        view.parse_init(|_buffer, input| Self::init_from_input(input))
     }
 }
 
@@ -240,7 +248,7 @@ impl Parser for ListQuickListRecordParser {
 struct QuickListLengthParser {
     nodes_remain: u64,
     count: u64,
-    entrust: Option<RDBStrBox<ZipListLengthParser>>,
+    entrust: Option<QuickListZipListParser>,
 }
 
 impl ParserInit for QuickListLengthParser {
@@ -274,7 +282,8 @@ impl Parser for QuickListLengthParser {
                 break;
             }
 
-            let entrust = buffer.init_commit::<RDBStrBox<ZipListLengthParser>>()?;
+            let (input, entrust) = QuickListZipListParser::init(buffer)?;
+            buffer.consume_to(input.as_ptr());
             if entrust.is_lzf() {
                 crate::parser_trace!("quicklist.ziplist.lzf");
             } else {
@@ -284,6 +293,93 @@ impl Parser for QuickListLengthParser {
             self.entrust = Some(entrust);
         }
         Ok(self.count)
+    }
+}
+
+enum QuickListZipListParser {
+    Simple {
+        expect_end: u64,
+        entrust: ZipListLengthParser,
+    },
+    Lzf(RDBStrBox<ZipListLengthParser>),
+}
+
+impl QuickListZipListParser {
+    fn init(buffer: &Buffer) -> AnyResult<(&[u8], Self)> {
+        let (input, len) = read_rdb_len(buffer.as_slice()).context("read quicklist node length")?;
+        match len {
+            RDBLen::Simple(length) => {
+                let expect_end = buffer.tell_to(input.as_ptr()) + length;
+                let (input, entrust) = ZipListLengthParser::init_from_input(input)?;
+                Ok((input, Self::Simple {
+                    expect_end,
+                    entrust,
+                }))
+            }
+            RDBLen::IntStr(_) => bail!("encoded integer cannot wrap quicklist ziplist content"),
+            RDBLen::LZFStr => {
+                let (input, in_len) =
+                    read_rdb_len(input).context("read compressed quicklist node in_len")?;
+                let in_len = in_len
+                    .as_u64()
+                    .context("compressed in_len must be simple")?;
+                let (input, out_len) =
+                    read_rdb_len(input).context("read compressed quicklist node out_len")?;
+                let out_len = out_len
+                    .as_u64()
+                    .context("compressed out_len must be simple")?;
+                Ok((
+                    input,
+                    Self::Lzf(RDBStrBox::Lzf {
+                        remain_in: in_len,
+                        remain_out: out_len,
+                        out_buffer: Buffer::new(out_len as usize),
+                        decoder: LzfChunkDecoder::default(),
+                        entrust: None,
+                    }),
+                ))
+            }
+        }
+    }
+
+    fn is_lzf(&self) -> bool {
+        matches!(self, Self::Lzf(_))
+    }
+}
+
+impl Parser for QuickListZipListParser {
+    type Output = u64;
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        match self {
+            Self::Simple {
+                expect_end,
+                entrust,
+            } => {
+                let ret = entrust.call(buffer);
+                let e = match ret {
+                    Ok(output) => {
+                        ensure!(
+                            buffer.tell() == *expect_end,
+                            "quicklist ziplist offset mismatch: expect: {}, actual: {}",
+                            expect_end,
+                            buffer.tell()
+                        );
+                        return Ok(output);
+                    }
+                    Err(e) => e,
+                };
+
+                if buffer.tell() >= *expect_end && e.is::<NeedMoreData>() {
+                    bail!(
+                        "all quicklist ziplist content should be consumed, parser not finished: {e}"
+                    );
+                }
+
+                Err(e)
+            }
+            Self::Lzf(parser) => parser.call(buffer),
+        }
     }
 }
 

@@ -96,12 +96,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - shard: strings-lists
-            profiles: "string,string-int,list,list-ziplist,list-quicklist,list-quicklist2"
+          - shard: strings
+            profiles: "string,string-int"
+          - shard: lists
+            profiles: "list,list-ziplist,list-quicklist,list-quicklist2"
           - shard: sets-arrays
             profiles: "set,set-intset,set-listpack,array"
-          - shard: hashes
-            profiles: "hash,hash-ziplist,hash-listpack,hash-zipmap,hash-metadata,hash-listpack-ex"
+          - shard: hashes-basic
+            profiles: "hash,hash-ziplist,hash-listpack"
+          - shard: hashes-extra
+            profiles: "hash-zipmap,hash-metadata,hash-listpack-ex"
           - shard: zsets
             profiles: "zset,zset2,zset-ziplist,zset-listpack"
           - shard: mixed
@@ -112,7 +116,7 @@ jobs:
       RDBINSIGHT_BENCH_MAX_SLOWDOWN_PERCENT: "30"
       RDBINSIGHT_BENCH_SAMPLE_SIZE: "10"
       RDBINSIGHT_BENCH_WARM_UP_SECS: "1"
-      RDBINSIGHT_BENCH_MEASUREMENT_SECS: "2"
+      RDBINSIGHT_BENCH_MEASUREMENT_SECS: "10"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6

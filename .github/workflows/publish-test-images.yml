@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        redis: ["8.0.5", "7.0.15", "6.0.20", "2.8.24"]
+        redis: ["8.6.4", "8.0.5", "7.0.15", "6.0.20", "2.8.24"]
         platform: [amd64, arm64]
         include:
           - platform: amd64
@@ -74,7 +74,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        redis: ["8.0.5", "7.0.15", "6.0.20", "2.8.24"]
+        redis: ["8.6.4", "8.0.5", "7.0.15", "6.0.20", "2.8.24"]
     runs-on: ubuntu-latest
     permissions:
       contents: read

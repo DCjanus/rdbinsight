@@ -76,3 +76,140 @@ impl<'a> View<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{anyhow, bail};
+
+    use super::*;
+    use crate::parser::core::{
+        combinators::{read_exact, read_u8},
+        parse::{Parser, ParserInit},
+    };
+
+    struct UnitParser;
+
+    impl ParserInit for UnitParser {
+        fn init(view: &mut View<'_>) -> ParseResult<Self> {
+            view.read(|input| {
+                let (input, _) = read_exact(input, 2)?;
+                Ok((input, Self))
+            })
+        }
+    }
+
+    impl Parser for UnitParser {
+        type Output = ();
+
+        fn call(&mut self, _: &mut Buffer) -> AnyResult<Self::Output> {
+            Ok(())
+        }
+    }
+
+    struct NeedMoreParser;
+
+    impl ParserInit for NeedMoreParser {
+        fn init(view: &mut View<'_>) -> ParseResult<Self> {
+            view.read(|input| {
+                let (input, _) = read_exact(input, 8)?;
+                Ok((input, Self))
+            })
+        }
+    }
+
+    impl Parser for NeedMoreParser {
+        type Output = ();
+
+        fn call(&mut self, _: &mut Buffer) -> AnyResult<Self::Output> {
+            Ok(())
+        }
+    }
+
+    struct FatalParser;
+
+    impl ParserInit for FatalParser {
+        fn init(view: &mut View<'_>) -> ParseResult<Self> {
+            view.read(|_| bail!("fatal init"))
+        }
+    }
+
+    impl Parser for FatalParser {
+        type Output = ();
+
+        fn call(&mut self, _: &mut Buffer) -> AnyResult<Self::Output> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn view_reads_from_offset_without_consuming_buffer() -> AnyResult<()> {
+        let mut buffer = Buffer::new(8);
+        buffer.extend(&[1, 2, 3, 4])?;
+
+        let mut view = View::new_with_offset(&buffer, 1);
+        assert_eq!(view.remaining(), &[2, 3, 4]);
+        assert_eq!(view.base_offset(), 0);
+        assert_eq!(view.offset(), 1);
+
+        let byte = match view.read(read_u8) {
+            ParseResult::Ok(byte) => byte,
+            other => panic!("unexpected parse result: {other:?}"),
+        };
+
+        assert_eq!(byte, 2);
+        assert_eq!(view.consumed(), 2);
+        assert_eq!(view.offset(), 2);
+        assert_eq!(view.tell_to(view.remaining().as_ptr()), 2);
+        assert_eq!(buffer.as_slice(), &[1, 2, 3, 4]);
+        Ok(())
+    }
+
+    #[test]
+    fn view_translates_need_more_and_fatal_errors() -> AnyResult<()> {
+        let mut buffer = Buffer::new(8);
+        buffer.extend(&[1])?;
+        let mut view = View::new_with_offset(&buffer, 0);
+
+        assert!(matches!(
+            view.read(|input| {
+                let (input, _) = read_exact(input, 2)?;
+                Ok((input, ()))
+            }),
+            ParseResult::NeedMore
+        ));
+        assert_eq!(view.consumed(), 0);
+
+        match view.read::<()>(|_| Err(anyhow!("bad input"))) {
+            ParseResult::Err(ParseError::Fatal(e)) => assert_eq!(e.to_string(), "bad input"),
+            other => panic!("unexpected parse result: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nested_parser_init_rolls_back_on_failure() -> AnyResult<()> {
+        let mut buffer = Buffer::new(8);
+        buffer.extend(&[1, 2, 3])?;
+
+        let mut view = View::new_with_offset(&buffer, 0);
+        assert!(matches!(
+            view.init_parser::<UnitParser>(),
+            ParseResult::Ok(_)
+        ));
+        assert_eq!(view.consumed(), 2);
+
+        assert!(matches!(
+            view.init_parser::<NeedMoreParser>(),
+            ParseResult::NeedMore
+        ));
+        assert_eq!(view.consumed(), 2);
+
+        assert!(matches!(
+            view.init_parser::<FatalParser>(),
+            ParseResult::Err(ParseError::Fatal(_))
+        ));
+        assert_eq!(view.consumed(), 2);
+        assert_eq!(buffer.as_slice(), &[1, 2, 3]);
+        Ok(())
+    }
+}

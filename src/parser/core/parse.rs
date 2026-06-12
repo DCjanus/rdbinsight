@@ -80,3 +80,48 @@ macro_rules! parse_try {
         }
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use anyhow::anyhow;
+
+    use super::*;
+    use crate::parser::error::NeedMoreData;
+
+    #[test]
+    fn parse_result_maps_success_only() {
+        assert!(matches!(
+            ParseResult::Ok(1).map(|v| v + 1),
+            ParseResult::Ok(2)
+        ));
+
+        let need_more: ParseResult<i32> = ParseResult::NeedMore;
+        assert!(matches!(need_more.map(|v| v + 1), ParseResult::NeedMore));
+
+        let err: ParseResult<i32> = ParseResult::Err(ParseError::fatal(anyhow!("boom")));
+        assert!(matches!(err.map(|v| v + 1), ParseResult::Err(_)));
+    }
+
+    #[test]
+    fn parse_result_converts_to_any_result() {
+        assert_eq!(ParseResult::Ok(42).into_any_result().unwrap(), 42);
+
+        let need_more: ParseResult<()> = ParseResult::NeedMore;
+        assert!(
+            need_more
+                .into_any_result()
+                .unwrap_err()
+                .is::<NeedMoreData>()
+        );
+
+        let fatal: ParseResult<()> = ParseResult::Err(ParseError::fatal(anyhow!("fatal")));
+        assert_eq!(fatal.into_any_result().unwrap_err().to_string(), "fatal");
+
+        let recoverable: ParseResult<()> =
+            ParseResult::Err(ParseError::recoverable(anyhow!("recoverable")));
+        assert_eq!(
+            recoverable.into_any_result().unwrap_err().to_string(),
+            "recoverable"
+        );
+    }
+}

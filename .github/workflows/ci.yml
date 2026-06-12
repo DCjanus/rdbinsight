@@ -34,13 +34,13 @@ jobs:
         with:
           components: rustfmt, llvm-tools-preview, clippy
 
-      - name: Cache target directory
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-target-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-target-${{ steps.toolchain.outputs.cachekey }}-
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Enable sccache for Rust builds
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -67,6 +67,10 @@ jobs:
           use_oidc: true
           files: codecov.json
           fail_ci_if_error: true
+
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH} --show-stats
 
   docker-builds:
     name: Docker Build (${{ matrix.name }})

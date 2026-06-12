@@ -1,6 +1,8 @@
 use std::{env, fs, hint::black_box, path::PathBuf, time::Duration};
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{
+    BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main,
+};
 use rdbinsight::parser::{RDBFileParser, core::buffer::Buffer, error::NeedMoreData};
 
 const DEFAULT_GENERATED_BYTES: usize = 16 * 1024 * 1024;
@@ -43,6 +45,15 @@ fn env_duration(name: &str, default_secs: u64) -> Duration {
         .and_then(|value| value.parse().ok())
         .map(Duration::from_secs)
         .unwrap_or_else(|| Duration::from_secs(default_secs))
+}
+
+fn env_sampling_mode(name: &str) -> Option<SamplingMode> {
+    let value = env::var(name).ok()?;
+    match value.as_str() {
+        "flat" => Some(SamplingMode::Flat),
+        "linear" => Some(SamplingMode::Linear),
+        _ => None,
+    }
 }
 
 fn push_rdb_len(out: &mut Vec<u8>, len: usize) {
@@ -842,6 +853,9 @@ fn bench_parser(c: &mut Criterion) {
     let buffer_size = env_usize("RDBINSIGHT_BENCH_BUFFER_BYTES", DEFAULT_BUFFER_SIZE);
 
     let mut group = c.benchmark_group("parser");
+    if let Some(sampling_mode) = env_sampling_mode("RDBINSIGHT_BENCH_SAMPLING_MODE") {
+        group.sampling_mode(sampling_mode);
+    }
     for (label, data) in &inputs {
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(

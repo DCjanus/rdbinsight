@@ -117,6 +117,7 @@ jobs:
       RDBINSIGHT_BENCH_SAMPLE_SIZE: "10"
       RDBINSIGHT_BENCH_WARM_UP_SECS: "1"
       RDBINSIGHT_BENCH_MEASUREMENT_SECS: "3"
+      RDBINSIGHT_BENCH_SAMPLING_MODE: "flat"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6

@@ -109,6 +109,12 @@ async function benchmarkBase() {
 async function benchmarkCurrent() {
   fs.rmSync(CRITERION_DIR, { recursive: true, force: true });
   await run("cargo", ["+nightly", "bench", "--bench", "parser", "--", "--noplot"], {
+    env: envWith({
+      RDBINSIGHT_BENCH_PROFILES:
+        process.env.RDBINSIGHT_BENCH_PROFILES ||
+        process.env.RDBINSIGHT_BENCH_PROFILE ||
+        DEFAULT_CURRENT_PROFILES,
+    }),
     outputPath: CURRENT_OUTPUT,
   });
   copyCriterionOutput(CURRENT_CRITERION_DIR);
@@ -187,6 +193,29 @@ function markdownTableCell(value) {
     .replaceAll("\n", " ")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function shortSha(sha) {
+  return (sha || "").slice(0, 7);
+}
+
+function markdownLink(label, url) {
+  return `[${markdownTableCell(label)}](${url})`;
+}
+
+function commitLink(repo, sha) {
+  if (!repo || !sha) {
+    return null;
+  }
+  return markdownLink(shortSha(sha), `https://github.com/${repo}/commit/${sha}`);
+}
+
+function actionsRunLink(label, runId) {
+  const repository = process.env.GITHUB_REPOSITORY;
+  if (!repository || !runId) {
+    return null;
+  }
+  return markdownLink(label, `https://github.com/${repository}/actions/runs/${runId}`);
 }
 
 function medianPointEstimate(filePath) {
@@ -302,10 +331,10 @@ function benchmarkNotes() {
   }
 
   const generatedBytes = process.env.RDBINSIGHT_BENCH_GENERATED_BYTES || "16777216";
-    const profiles =
-      process.env.RDBINSIGHT_BENCH_PROFILES ||
-      process.env.RDBINSIGHT_BENCH_PROFILE ||
-      DEFAULT_CURRENT_PROFILES;
+  const profiles =
+    process.env.RDBINSIGHT_BENCH_PROFILES ||
+    process.env.RDBINSIGHT_BENCH_PROFILE ||
+    DEFAULT_CURRENT_PROFILES;
   const inputDescription = process.env.RDBINSIGHT_BENCH_RDB
     ? `Input: external RDB from ${process.env.RDBINSIGHT_BENCH_RDB}.`
     : `Input: generated ${generatedBytes} byte synthetic RDB profiles: ${profiles}.`;
@@ -315,6 +344,27 @@ function benchmarkNotes() {
     "Benchmark excludes disk I/O; RDB bytes are prepared before timing starts.",
     "Positive change means the current PR is slower than the base commit.",
   ];
+}
+
+function pullRequestBenchmarkLinks() {
+  const pullRequest = githubEvent().pull_request;
+  if (!pullRequest) {
+    return [];
+  }
+
+  const baseCommit = commitLink(pullRequest.base?.repo?.full_name, pullRequest.base?.sha);
+  const headCommit = commitLink(pullRequest.head?.repo?.full_name, pullRequest.head?.sha);
+  const workflowRun = actionsRunLink(`CI run ${process.env.GITHUB_RUN_ID}`, process.env.GITHUB_RUN_ID);
+  const notes = [];
+
+  if (baseCommit && headCommit) {
+    notes.push(`Base commit: ${baseCommit}; head commit: ${headCommit}.`);
+  }
+  if (workflowRun) {
+    notes.push(`Benchmark and comment workflow: ${workflowRun}.`);
+  }
+
+  return notes;
 }
 
 async function publishSummary(rows) {
@@ -390,7 +440,9 @@ async function upsertPullRequestComment(rows) {
     return;
   }
 
-  const notes = benchmarkNotes().map((note) => `- ${note}`).join("\n");
+  const notes = [...benchmarkNotes(), ...pullRequestBenchmarkLinks()]
+    .map((note) => `- ${note}`)
+    .join("\n");
   const body = [
     COMMENT_MARKER,
     "## Parser benchmark",

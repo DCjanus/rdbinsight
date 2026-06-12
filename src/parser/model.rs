@@ -34,6 +34,11 @@ pub enum Item {
         encoding: ListEncoding,
         member_count: u64,
     },
+    ArrayRecord {
+        key: RDBStr,
+        rdb_size: u64,
+        member_count: u64,
+    },
     SetRecord {
         key: RDBStr,
         /// Size of the record in bytes.
@@ -218,6 +223,7 @@ pub enum StreamEncoding {
     ListPacks2,
     ListPacks3,
     ListPacks4,
+    ListPacks5,
 }
 
 /// Opcode of RDB, ref: https://github.com/redis/redis/blob/2ba81b70957691a6a010e785225672e6657e53e8/src/rdb.h#L93
@@ -268,6 +274,8 @@ pub enum RDBType {
     HashMetadata = 24,        // RDB_TYPE_HASH_METADATA
     HashListPackEx = 25,      // RDB_TYPE_HASH_LISTPACK_EX
     StreamListPacks4 = 26,    // RDB_TYPE_STREAM_LISTPACKS_4
+    StreamListPacks5 = 27,    // RDB_TYPE_STREAM_LISTPACKS_5
+    Array = 28,               // RDB_TYPE_ARRAY
 }
 
 /// Module serialized values sub opcodes, ref: https://github.com/redis/redis/blob/2ba81b70957691a6a010e785225672e6657e53e8/src/rdb.h#L133

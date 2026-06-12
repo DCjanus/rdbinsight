@@ -39,6 +39,7 @@ use crate::{
 pub enum RecordType {
     String,
     List,
+    Array,
     Set,
     ZSet,
     Hash,
@@ -51,6 +52,7 @@ impl RecordType {
         match self {
             RecordType::String => "string",
             RecordType::List => "list",
+            RecordType::Array => "array",
             RecordType::Set => "set",
             RecordType::ZSet => "zset",
             RecordType::Hash => "hash",
@@ -76,6 +78,7 @@ impl RecordType {
 pub enum RecordEncoding {
     String(StringEncoding),
     List(ListEncoding),
+    Array,
     Set(SetEncoding),
     ZSet(ZSetEncoding),
     Hash(HashEncoding),
@@ -141,6 +144,7 @@ impl Record {
         match self.encoding {
             RecordEncoding::String(enc) => enc.to_string(),
             RecordEncoding::List(enc) => enc.to_string(),
+            RecordEncoding::Array => "array".to_string(),
             RecordEncoding::Set(enc) => enc.to_string(),
             RecordEncoding::ZSet(enc) => enc.to_string(),
             RecordEncoding::Hash(enc) => enc.to_string(),
@@ -294,6 +298,28 @@ impl RecordStream {
                         .key(key)
                         .r#type(RecordType::List)
                         .encoding(RecordEncoding::List(encoding))
+                        .rdb_size(rdb_size)
+                        .member_count(Some(member_count))
+                        .expire_at_ms(self.pending_expiry.take())
+                        .idle_seconds(self.pending_idle.take())
+                        .freq(self.pending_freq.take())
+                        .codis_slot(codis_slot)
+                        .redis_slot(redis_slot)
+                        .build(),
+                )
+            }
+            Item::ArrayRecord {
+                key,
+                member_count,
+                rdb_size,
+            } => {
+                let (codis_slot, redis_slot) = self.calculate_slot(&key);
+                Some(
+                    Record::builder()
+                        .db(self.current_db)
+                        .key(key)
+                        .r#type(RecordType::Array)
+                        .encoding(RecordEncoding::Array)
                         .rdb_size(rdb_size)
                         .member_count(Some(member_count))
                         .expire_at_ms(self.pending_expiry.take())

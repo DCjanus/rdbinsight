@@ -1,0 +1,215 @@
+name: Parser Benchmark Comment
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: parser-benchmark-comment-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    name: Parser benchmark comment
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Wait for parser benchmark artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          run_id=""
+          for _ in $(seq 1 60); do
+            run_id="$(gh run list \
+              --repo "$REPO" \
+              --workflow CI \
+              --commit "$HEAD_SHA" \
+              --json databaseId,event,status,conclusion \
+              --jq '[.[] | select(.event == "pull_request") | select(.status == "completed") | select(.conclusion == "success")][0].databaseId // ""')"
+            if [ -n "$run_id" ]; then
+              break
+            fi
+            sleep 20
+          done
+
+          if [ -z "$run_id" ]; then
+            echo "No successful CI run found for $HEAD_SHA; skipping benchmark comment."
+            exit 0
+          fi
+
+          rm -rf /tmp/parser-benchmark-comment
+          mkdir -p /tmp/parser-benchmark-comment
+          if ! gh run download "$run_id" \
+            --repo "$REPO" \
+            --name parser-benchmark \
+            --dir /tmp/parser-benchmark-comment; then
+            echo "No parser-benchmark artifact found on CI run $run_id; skipping benchmark comment."
+            exit 0
+          fi
+
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          const marker = "<!-- rdbinsight-parser-benchmark -->";
+          const baseRoot = "/tmp/parser-benchmark-comment/target/criterion-base";
+          const currentRoot = "/tmp/parser-benchmark-comment/target/criterion-current";
+          const expectedBenchmarkNames = [
+            "parser/parse_rdb/synthetic-hash-records-16MiB",
+            "parser/parse_rdb/synthetic-list-records-16MiB",
+            "parser/parse_rdb/synthetic-mixed-raw-types-16MiB",
+            "parser/parse_rdb/synthetic-set-records-16MiB",
+            "parser/parse_rdb/synthetic-string-records-16MiB",
+            "parser/parse_rdb/synthetic-zset-records-16MiB",
+            "parser/parse_rdb/synthetic-zset2-records-16MiB",
+          ];
+          const expectedBenchmarkNameSet = new Set(expectedBenchmarkNames);
+
+          function fileExists(filePath) {
+            return fs.existsSync(filePath);
+          }
+
+          function readJson(filePath) {
+            return JSON.parse(fs.readFileSync(filePath, "utf8"));
+          }
+
+          function walkFiles(dir, basename, out = []) {
+            if (!fileExists(dir)) return out;
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const entryPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                walkFiles(entryPath, basename, out);
+              } else if (entry.name === basename) {
+                out.push(entryPath);
+              }
+            }
+            return out;
+          }
+
+          function benchmarkName(estimatesPath) {
+            return path.relative(currentRoot, estimatesPath).split(path.sep).slice(0, -2).join("/");
+          }
+
+          function median(filePath) {
+            const value = readJson(filePath).median?.point_estimate;
+            if (!Number.isFinite(value) || value <= 0) {
+              throw new Error(`invalid median estimate in ${filePath}`);
+            }
+            return value;
+          }
+
+          function bytesFor(name) {
+            const benchmarkPath = path.join(currentRoot, ...name.split("/"), "new", "benchmark.json");
+            if (!fileExists(benchmarkPath)) return Number.NaN;
+            const value = readJson(benchmarkPath).throughput?.Bytes ?? Number.NaN;
+            return Number.isFinite(value) && value > 0 ? value : Number.NaN;
+          }
+
+          function markdownTableCell(value) {
+            return String(value)
+              .slice(0, 200)
+              .replaceAll("\\", "\\\\")
+              .replaceAll("|", "\\|")
+              .replaceAll("`", "\\`")
+              .replaceAll("\r", " ")
+              .replaceAll("\n", " ")
+              .replaceAll("<", "&lt;")
+              .replaceAll(">", "&gt;");
+          }
+
+          function duration(ns) {
+            if (!Number.isFinite(ns)) return "-";
+            if (ns < 1_000) return `${ns.toFixed(2)} ns`;
+            if (ns < 1_000_000) return `${(ns / 1_000).toFixed(2)} us`;
+            if (ns < 1_000_000_000) return `${(ns / 1_000_000).toFixed(2)} ms`;
+            return `${(ns / 1_000_000_000).toFixed(2)} s`;
+          }
+
+          function throughput(bytes, ns) {
+            if (!Number.isFinite(bytes) || !Number.isFinite(ns) || ns <= 0) return "-";
+            return `${(bytes / (1024 * 1024) / (ns / 1_000_000_000)).toFixed(2)} MiB/s`;
+          }
+
+          function change(currentNs, baseNs) {
+            if (!Number.isFinite(currentNs) || !Number.isFinite(baseNs) || baseNs <= 0) return "-";
+            const value = (currentNs / baseNs - 1) * 100;
+            const prefix = value > 0 ? "+" : "";
+            const direction = value > 0 ? "slower" : value < 0 ? "faster" : "same";
+            return `${prefix}${value.toFixed(2)}% ${direction}`;
+          }
+
+          const rows = walkFiles(currentRoot, "estimates.json")
+            .filter((filePath) => filePath.endsWith(`${path.sep}new${path.sep}estimates.json`))
+            .flatMap((filePath) => {
+              const name = benchmarkName(filePath);
+              if (!expectedBenchmarkNameSet.has(name)) {
+                console.log(`Skipping unexpected benchmark name: ${name}`);
+                return [];
+              }
+              const basePath = path.join(baseRoot, ...name.split("/"), "base", "estimates.json");
+              const currentNs = median(filePath);
+              const baseNs = fileExists(basePath) ? median(basePath) : Number.NaN;
+              return [{ name, currentNs, baseNs, bytes: bytesFor(name) }];
+            })
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+          const foundBenchmarkNameSet = new Set(rows.map((row) => row.name));
+          const missingBenchmarkNames = expectedBenchmarkNames.filter(
+            (name) => !foundBenchmarkNameSet.has(name),
+          );
+          if (missingBenchmarkNames.length > 0) {
+            throw new Error(`missing expected benchmark rows: ${missingBenchmarkNames.join(", ")}`);
+          }
+
+          const table = rows.length === 0
+            ? "_No Criterion benchmark estimates were found._"
+            : [
+                "| Benchmark | Base median | Current median | Change | Current throughput |",
+                "| --- | ---: | ---: | ---: | ---: |",
+                ...rows.map((row) =>
+                  `| \`${markdownTableCell(row.name)}\` | ${markdownTableCell(duration(row.baseNs))} | ${markdownTableCell(duration(row.currentNs))} | ${markdownTableCell(change(row.currentNs, row.baseNs))} | ${markdownTableCell(throughput(row.bytes, row.currentNs))} |`
+                ),
+              ].join("\n");
+
+          const body = [
+            marker,
+            "## Parser benchmark",
+            "",
+            "- Base and current benchmarks run in the same CI job on the same GitHub runner.",
+            "- Benchmark excludes disk I/O; RDB bytes are prepared before timing starts.",
+            "- Positive change means the current PR is slower than the base commit.",
+            "",
+            table,
+            "",
+            "_This comment is updated automatically from the benchmark artifact._",
+          ].join("\n");
+
+          fs.writeFileSync("/tmp/parser-benchmark-comment-body.md", body);
+          NODE
+
+          comment_id="$(gh api \
+            "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --paginate \
+            --jq '.[] | select(.body | contains("<!-- rdbinsight-parser-benchmark -->")) | .id' \
+            | head -n 1)"
+
+          if [ -n "$comment_id" ]; then
+            gh api \
+              --method PATCH \
+              "repos/$REPO/issues/comments/$comment_id" \
+              --field body=@/tmp/parser-benchmark-comment-body.md >/dev/null
+          else
+            gh api \
+              --method POST \
+              "repos/$REPO/issues/$PR_NUMBER/comments" \
+              --field body=@/tmp/parser-benchmark-comment-body.md >/dev/null
+          fi

@@ -93,8 +93,8 @@ jobs:
     permissions:
       contents: read
     env:
-      RDBINSIGHT_BENCH_PROFILE: "mixed"
-      RDBINSIGHT_BENCH_GENERATED_BYTES: "67108864"
+      RDBINSIGHT_BENCH_PROFILES: "string,list,set,hash,zset,zset2,mixed"
+      RDBINSIGHT_BENCH_GENERATED_BYTES: "16777216"
       RDBINSIGHT_BENCH_SAMPLE_SIZE: "10"
       RDBINSIGHT_BENCH_WARM_UP_SECS: "1"
       RDBINSIGHT_BENCH_MEASUREMENT_SECS: "1"
@@ -130,7 +130,8 @@ jobs:
           name: parser-benchmark
           path: |
             parser-benchmark-*.txt
-            target/criterion
+            target/criterion-base
+            target/criterion-current
 
   docker-builds:
     name: Docker Build (${{ matrix.name }})

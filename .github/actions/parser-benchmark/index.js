@@ -8,6 +8,10 @@ import path from "node:path";
 
 const BASE_OUTPUT = "parser-benchmark-base.txt";
 const CURRENT_OUTPUT = "parser-benchmark-current.txt";
+const COMMENT_MARKER = "<!-- rdbinsight-parser-benchmark -->";
+const CRITERION_DIR = repoPath("target", "criterion");
+const BASE_CRITERION_DIR = repoPath("target", "criterion-base");
+const CURRENT_CRITERION_DIR = repoPath("target", "criterion-current");
 
 function repoPath(...segments) {
   return path.join(process.env.GITHUB_WORKSPACE || process.cwd(), ...segments);
@@ -15,6 +19,17 @@ function repoPath(...segments) {
 
 function fileExists(filePath) {
   return fs.existsSync(filePath);
+}
+
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function copyCriterionOutput(targetPath) {
+  fs.rmSync(targetPath, { recursive: true, force: true });
+  if (fileExists(CRITERION_DIR)) {
+    fs.cpSync(CRITERION_DIR, targetPath, { recursive: true });
+  }
 }
 
 function envWith(overrides) {
@@ -81,34 +96,229 @@ async function benchmarkBase() {
       outputPath: BASE_OUTPUT,
     },
   );
+  copyCriterionOutput(BASE_CRITERION_DIR);
   return true;
 }
 
-async function benchmarkCurrent(hasBaseBaseline) {
-  const args = ["+nightly", "bench", "--bench", "parser", "--", "--noplot"];
-  if (hasBaseBaseline) {
-    args.push("--baseline", "base");
-  }
-  await run("cargo", args, { outputPath: CURRENT_OUTPUT });
+async function benchmarkCurrent() {
+  fs.rmSync(CRITERION_DIR, { recursive: true, force: true });
+  await run("cargo", ["+nightly", "bench", "--bench", "parser", "--", "--noplot"], {
+    outputPath: CURRENT_OUTPUT,
+  });
+  copyCriterionOutput(CURRENT_CRITERION_DIR);
 }
 
-async function publishSummary() {
+function walkFiles(root, basename, out = []) {
+  if (!fileExists(root)) {
+    return out;
+  }
+
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      walkFiles(entryPath, basename, out);
+    } else if (entry.name === basename) {
+      out.push(entryPath);
+    }
+  }
+
+  return out;
+}
+
+function benchmarkName(criterionRoot, estimatesPath) {
+  const relative = path.relative(criterionRoot, estimatesPath);
+  const segments = relative.split(path.sep);
+  return segments.slice(0, -2).join("/");
+}
+
+function benchmarkJsonPath(name) {
+  return path.join(CURRENT_CRITERION_DIR, ...name.split("/"), "new", "benchmark.json");
+}
+
+function formatDuration(ns) {
+  if (!Number.isFinite(ns)) {
+    return "-";
+  }
+  if (ns < 1_000) {
+    return `${ns.toFixed(2)} ns`;
+  }
+  if (ns < 1_000_000) {
+    return `${(ns / 1_000).toFixed(2)} us`;
+  }
+  if (ns < 1_000_000_000) {
+    return `${(ns / 1_000_000).toFixed(2)} ms`;
+  }
+  return `${(ns / 1_000_000_000).toFixed(2)} s`;
+}
+
+function formatThroughput(bytes, ns) {
+  if (!Number.isFinite(bytes) || !Number.isFinite(ns) || ns <= 0) {
+    return "-";
+  }
+
+  const mibPerSecond = bytes / (1024 * 1024) / (ns / 1_000_000_000);
+  return `${mibPerSecond.toFixed(2)} MiB/s`;
+}
+
+function formatChange(currentNs, baseNs) {
+  if (!Number.isFinite(currentNs) || !Number.isFinite(baseNs) || baseNs <= 0) {
+    return "-";
+  }
+
+  const change = (currentNs / baseNs - 1) * 100;
+  const prefix = change > 0 ? "+" : "";
+  const direction = change > 0 ? "slower" : change < 0 ? "faster" : "same";
+  return `${prefix}${change.toFixed(2)}% ${direction}`;
+}
+
+function markdownTableCell(value) {
+  return String(value)
+    .slice(0, 200)
+    .replaceAll("\\", "\\\\")
+    .replaceAll("|", "\\|")
+    .replaceAll("`", "\\`")
+    .replaceAll("\r", " ")
+    .replaceAll("\n", " ")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function medianPointEstimate(filePath) {
+  return readJson(filePath).median.point_estimate;
+}
+
+function benchmarkBytes(name) {
+  const filePath = benchmarkJsonPath(name);
+  if (!fileExists(filePath)) {
+    return Number.NaN;
+  }
+
+  const benchmark = readJson(filePath);
+  if (benchmark.throughput?.Bytes !== undefined) {
+    return benchmark.throughput.Bytes;
+  }
+  return Number.NaN;
+}
+
+function collectBenchmarkRows(hasBaseBaseline) {
+  const rows = [];
+
+  for (const estimatesPath of walkFiles(CURRENT_CRITERION_DIR, "estimates.json")) {
+    if (!estimatesPath.endsWith(`${path.sep}new${path.sep}estimates.json`)) {
+      continue;
+    }
+
+    const name = benchmarkName(CURRENT_CRITERION_DIR, estimatesPath);
+    const baseEstimatesPath = path.join(BASE_CRITERION_DIR, ...name.split("/"), "base", "estimates.json");
+    const currentNs = medianPointEstimate(estimatesPath);
+    const baseNs =
+      hasBaseBaseline && fileExists(baseEstimatesPath)
+        ? medianPointEstimate(baseEstimatesPath)
+        : Number.NaN;
+    const bytes = benchmarkBytes(name);
+
+    rows.push({
+      name,
+      baseNs,
+      currentNs,
+      bytes,
+    });
+  }
+
+  rows.sort((a, b) => a.name.localeCompare(b.name));
+  return rows;
+}
+
+function benchmarkMarkdownTable(rows) {
+  if (rows.length === 0) {
+    return "_No Criterion benchmark estimates were found._";
+  }
+
+  const table = [
+    "| Benchmark | Base median | Current median | Change | Current throughput |",
+    "| --- | ---: | ---: | ---: | ---: |",
+  ];
+
+  for (const row of rows) {
+    table.push(
+      `| \`${markdownTableCell(row.name)}\` | ${markdownTableCell(formatDuration(row.baseNs))} | ${markdownTableCell(formatDuration(row.currentNs))} | ${markdownTableCell(formatChange(row.currentNs, row.baseNs))} | ${markdownTableCell(formatThroughput(row.bytes, row.currentNs))} |`,
+    );
+  }
+
+  return table.join("\n");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function benchmarkHtmlTable(rows) {
+  if (rows.length === 0) {
+    return "<p><em>No Criterion benchmark estimates were found.</em></p>";
+  }
+
+  const body = rows
+    .map(
+      (row) => `<tr>
+<td><code>${escapeHtml(row.name)}</code></td>
+<td align="right">${escapeHtml(formatDuration(row.baseNs))}</td>
+<td align="right">${escapeHtml(formatDuration(row.currentNs))}</td>
+<td align="right">${escapeHtml(formatChange(row.currentNs, row.baseNs))}</td>
+<td align="right">${escapeHtml(formatThroughput(row.bytes, row.currentNs))}</td>
+</tr>`,
+    )
+    .join("\n");
+
+  return `<table>
+<thead>
+<tr>
+<th>Benchmark</th>
+<th align="right">Base median</th>
+<th align="right">Current median</th>
+<th align="right">Change</th>
+<th align="right">Current throughput</th>
+</tr>
+</thead>
+<tbody>
+${body}
+</tbody>
+</table>`;
+}
+
+function benchmarkNotes() {
   if (process.env.GITHUB_STEP_SUMMARY && !fileExists(process.env.GITHUB_STEP_SUMMARY)) {
     fs.closeSync(fs.openSync(process.env.GITHUB_STEP_SUMMARY, "a"));
   }
 
-  const generatedBytes = process.env.RDBINSIGHT_BENCH_GENERATED_BYTES || "67108864";
-  const profile = process.env.RDBINSIGHT_BENCH_PROFILE || "string";
+  const generatedBytes = process.env.RDBINSIGHT_BENCH_GENERATED_BYTES || "16777216";
+  const profiles =
+    process.env.RDBINSIGHT_BENCH_PROFILES ||
+    process.env.RDBINSIGHT_BENCH_PROFILE ||
+    "string,list,set,hash,zset,zset2,mixed";
   const inputDescription = process.env.RDBINSIGHT_BENCH_RDB
     ? `Input: external RDB from ${process.env.RDBINSIGHT_BENCH_RDB}.`
-    : `Input: generated ${generatedBytes} byte synthetic ${profile} RDB profile.`;
+    : `Input: generated ${generatedBytes} byte synthetic RDB profiles: ${profiles}.`;
+
+  return [
+    inputDescription,
+    "Benchmark excludes disk I/O; RDB bytes are prepared before timing starts.",
+    "Positive change means the current PR is slower than the base commit.",
+  ];
+}
+
+async function publishSummary(rows) {
+  const notes = benchmarkNotes();
 
   core.summary
     .addHeading("Parser benchmark", 2)
-    .addList([
-      inputDescription,
-      "Benchmark excludes disk I/O; RDB bytes are prepared before timing starts.",
-    ]);
+    .addList(notes)
+    .addHeading("Comparison", 3)
+    .addRaw(benchmarkHtmlTable(rows), true);
 
   if (fileExists(BASE_OUTPUT)) {
     core.summary
@@ -123,6 +333,77 @@ async function publishSummary() {
   }
 
   await core.summary.write();
+}
+
+function githubEvent() {
+  if (!process.env.GITHUB_EVENT_PATH || !fileExists(process.env.GITHUB_EVENT_PATH)) {
+    return {};
+  }
+  return readJson(process.env.GITHUB_EVENT_PATH);
+}
+
+async function githubRequest(method, route, body) {
+  const token = process.env.GITHUB_TOKEN;
+  const repository = process.env.GITHUB_REPOSITORY;
+  if (!token || !repository) {
+    throw new Error("GITHUB_TOKEN and GITHUB_REPOSITORY are required to update PR comments");
+  }
+
+  const response = await fetch(`https://api.github.com/repos/${repository}${route}`, {
+    method,
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "x-github-api-version": "2022-11-28",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${method} ${route} failed with ${response.status}: ${text}`);
+  }
+
+  return response.status === 204 ? null : response.json();
+}
+
+async function upsertPullRequestComment(rows) {
+  if (process.env.GITHUB_EVENT_NAME !== "pull_request") {
+    return;
+  }
+  if (!process.env.GITHUB_TOKEN) {
+    core.info("GITHUB_TOKEN is not available; skipping parser benchmark PR comment.");
+    return;
+  }
+
+  const event = githubEvent();
+  const number = event.pull_request?.number;
+  if (!number) {
+    core.info("Pull request number is not available; skipping parser benchmark PR comment.");
+    return;
+  }
+
+  const notes = benchmarkNotes().map((note) => `- ${note}`).join("\n");
+  const body = [
+    COMMENT_MARKER,
+    "## Parser benchmark",
+    "",
+    notes,
+    "",
+    benchmarkMarkdownTable(rows),
+    "",
+    "_This comment is updated automatically by CI._",
+  ].join("\n");
+
+  const comments = await githubRequest("GET", `/issues/${number}/comments?per_page=100`);
+  const existing = comments.find((comment) => comment.body?.includes(COMMENT_MARKER));
+
+  if (existing) {
+    await githubRequest("PATCH", `/issues/comments/${existing.id}`, { body });
+  } else {
+    await githubRequest("POST", `/issues/${number}/comments`, { body });
+  }
 }
 
 async function cleanupBaseWorktree() {
@@ -142,14 +423,24 @@ async function cleanupBaseWorktree() {
 
 async function main() {
   let runError = null;
+  let hasBaseBaseline = false;
 
   try {
-    const hasBaseBaseline = await benchmarkBase();
-    await benchmarkCurrent(hasBaseBaseline);
+    fs.rmSync(repoPath("target", "criterion"), { recursive: true, force: true });
+    fs.rmSync(BASE_CRITERION_DIR, { recursive: true, force: true });
+    fs.rmSync(CURRENT_CRITERION_DIR, { recursive: true, force: true });
+    hasBaseBaseline = await benchmarkBase();
+    await benchmarkCurrent();
   } catch (err) {
     runError = err;
   } finally {
-    await publishSummary();
+    const rows = collectBenchmarkRows(hasBaseBaseline);
+    await publishSummary(rows);
+    try {
+      await upsertPullRequestComment(rows);
+    } catch (err) {
+      core.warning(`Failed to update parser benchmark PR comment: ${err.message}`);
+    }
     await cleanupBaseWorktree();
   }
 

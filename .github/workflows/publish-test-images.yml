@@ -3,6 +3,11 @@ name: Publish Redis Test Images
 # NOTE: This workflow is intentionally manual-only to avoid automatic image publishing.
 on:
   workflow_dispatch:
+    inputs:
+      redis_versions:
+        description: 'Redis versions to publish as a JSON array, for example: ["8.8.0"]'
+        required: false
+        default: '["8.8.0", "8.6.4", "8.0.5", "7.0.15", "6.0.20", "2.8.24"]'
 
 permissions:
   contents: read
@@ -14,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        redis: ["8.6.4", "8.0.5", "7.0.15", "6.0.20", "2.8.24"]
+        redis: ${{ fromJSON(inputs.redis_versions) }}
         platform: [amd64, arm64]
         include:
           - platform: amd64
@@ -74,7 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        redis: ["8.6.4", "8.0.5", "7.0.15", "6.0.20", "2.8.24"]
+        redis: ${{ fromJSON(inputs.redis_versions) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -88,7 +88,8 @@ impl<const ENC: StreamEncoding> InitializableParser for EntriesReadParser<ENC> {
             StreamEncoding::ListPacks => Ok((input, Self { inner: None })),
             StreamEncoding::ListPacks2
             | StreamEncoding::ListPacks3
-            | StreamEncoding::ListPacks4 => {
+            | StreamEncoding::ListPacks4
+            | StreamEncoding::ListPacks5 => {
                 let (input, parser) = RDBLenParser::init(buf, input)?;
                 Ok((input, Self {
                     inner: Some(parser),
@@ -136,13 +137,48 @@ impl<const ENC: StreamEncoding> StateParser for StreamConsumersParser<ENC> {
     }
 }
 
-type StreamGroupParser<const ENC: StreamEncoding> = Seq5Parser<
-    StringEncodingParser,
-    Seq2Parser<RDBLenParser, RDBLenParser>,
-    EntriesReadParser<ENC>,
-    StreamPELParser<true>,
-    StreamConsumersParser<ENC>,
->;
+struct StreamGroupParser<const ENC: StreamEncoding> {
+    entrust: Seq5Parser<
+        StringEncodingParser,
+        Seq2Parser<RDBLenParser, RDBLenParser>,
+        EntriesReadParser<ENC>,
+        StreamPELParser<true>,
+        StreamConsumersParser<ENC>,
+    >,
+    entrust_done: bool,
+    nacks: StreamNackZoneParser<ENC>,
+}
+
+impl<const ENC: StreamEncoding> InitializableParser for StreamGroupParser<ENC> {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        let (input, entrust) = <Seq5Parser<
+            StringEncodingParser,
+            Seq2Parser<RDBLenParser, RDBLenParser>,
+            EntriesReadParser<ENC>,
+            StreamPELParser<true>,
+            StreamConsumersParser<ENC>,
+        > as InitializableParser>::init(buffer, input)?;
+        let (input, nacks) = StreamNackZoneParser::<ENC>::init(buffer, input)?;
+        Ok((input, Self {
+            entrust,
+            entrust_done: false,
+            nacks,
+        }))
+    }
+}
+
+impl<const ENC: StreamEncoding> StateParser for StreamGroupParser<ENC> {
+    type Output = ();
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        if !self.entrust_done {
+            self.entrust.call(buffer)?;
+            self.entrust_done = true;
+        }
+        self.nacks.call(buffer)?;
+        Ok(())
+    }
+}
 
 // helper parser that skips seen_time(8 bytes) and optionally active_time(8 bytes)
 struct ConsumerTimeParser<const ENC: StreamEncoding> {
@@ -153,8 +189,10 @@ impl<const ENC: StreamEncoding> InitializableParser for ConsumerTimeParser<ENC> 
     fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         Ok((input, Self {
             remain: match ENC {
-                StreamEncoding::ListPacks3 | StreamEncoding::ListPacks4 => 16, /* seen_time + active_time */
-                StreamEncoding::ListPacks | StreamEncoding::ListPacks2 => 8,   // only seen_time
+                StreamEncoding::ListPacks3
+                | StreamEncoding::ListPacks4
+                | StreamEncoding::ListPacks5 => 16, // seen_time + active_time
+                StreamEncoding::ListPacks | StreamEncoding::ListPacks2 => 8, // only seen_time
             },
         }))
     }
@@ -229,6 +267,66 @@ impl<const WITH_NACK: bool> StateParser for PELEntryParser<WITH_NACK> {
     }
 }
 
+struct StreamNackZoneParser<const ENC: StreamEncoding> {
+    enabled: bool,
+    entries: Option<ReduceParser<StreamIdParser, ()>>,
+}
+
+impl<const ENC: StreamEncoding> InitializableParser for StreamNackZoneParser<ENC> {
+    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        Ok((input, Self {
+            enabled: ENC == StreamEncoding::ListPacks5,
+            entries: None,
+        }))
+    }
+}
+
+impl<const ENC: StreamEncoding> StateParser for StreamNackZoneParser<ENC> {
+    type Output = ();
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        if self.entries.is_none() {
+            let (input, count) =
+                read_rdb_len(buffer.as_slice()).context("read stream NACK zone count")?;
+            buffer.consume_to(input.as_ptr());
+            let count = count
+                .as_u64()
+                .context("stream NACK zone count should be numeric")?;
+            self.entries = Some(ReduceParser::new(count, (), ignore_unit as fn((), ())));
+        }
+
+        if let Some(ref mut entries) = self.entries {
+            entries.call(buffer)?;
+        }
+        self.entries = None;
+        self.enabled = false;
+        Ok(())
+    }
+}
+
+struct StreamIdParser {
+    remain: u64,
+}
+
+impl InitializableParser for StreamIdParser {
+    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        Ok((input, Self { remain: 16 }))
+    }
+}
+
+impl StateParser for StreamIdParser {
+    type Output = ();
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        skip_bytes(buffer, &mut self.remain)?;
+        Ok(())
+    }
+}
+
 struct ListPackEntriesParser {
     entrust: ReduceParser<StringEncodingParser, ()>,
 }
@@ -265,7 +363,9 @@ impl<const ENC: StreamEncoding> InitializableParser for StreamMetaParser<ENC> {
         let remain = match ENC {
             StreamEncoding::ListPacks => 2,  // last_id.ms + last_id.seq
             StreamEncoding::ListPacks2 => 7, /* last_id + first_id + max_deleted_id (each 2 varints) */
-            StreamEncoding::ListPacks3 | StreamEncoding::ListPacks4 => 7, // v2 meta + entries_added
+            StreamEncoding::ListPacks3
+            | StreamEncoding::ListPacks4
+            | StreamEncoding::ListPacks5 => 7, // v2 meta + entries_added
         };
         let entrust: ReduceParser<RDBLenParser, ()> = ReduceParser::new(remain, (), |_, _| ());
         Ok((input, Self { entrust }))
@@ -422,7 +522,7 @@ struct StreamIdmpParser<const ENC: StreamEncoding> {
 impl<const ENC: StreamEncoding> InitializableParser for StreamIdmpParser<ENC> {
     fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         Ok((input, Self {
-            enabled: ENC == StreamEncoding::ListPacks4,
+            enabled: ENC == StreamEncoding::ListPacks4 || ENC == StreamEncoding::ListPacks5,
             entrust: None,
         }))
     }

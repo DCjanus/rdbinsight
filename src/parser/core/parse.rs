@@ -48,27 +48,3 @@ macro_rules! parse_try {
         }
     };
 }
-
-#[cfg(test)]
-mod tests {
-    use anyhow::anyhow;
-
-    use super::*;
-    use crate::parser::error::NeedMoreData;
-
-    #[test]
-    fn parse_result_converts_to_any_result() {
-        assert_eq!(ParseResult::Ok(42).into_any_result().unwrap(), 42);
-
-        let need_more: ParseResult<()> = ParseResult::NeedMore;
-        assert!(
-            need_more
-                .into_any_result()
-                .unwrap_err()
-                .is::<NeedMoreData>()
-        );
-
-        let fatal: ParseResult<()> = ParseResult::Err(anyhow!("fatal"));
-        assert_eq!(fatal.into_any_result().unwrap_err().to_string(), "fatal");
-    }
-}

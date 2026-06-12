@@ -3,9 +3,10 @@ use std::{env, fs, hint::black_box, path::PathBuf, time::Duration};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use rdbinsight::parser::{RDBFileParser, core::buffer::Buffer, error::NeedMoreData};
 
-const DEFAULT_GENERATED_BYTES: usize = 64 * 1024 * 1024;
+const DEFAULT_GENERATED_BYTES: usize = 16 * 1024 * 1024;
 const DEFAULT_CHUNK_SIZE: usize = 64 * 1024;
 const DEFAULT_BUFFER_SIZE: usize = 16 * 1024 * 1024;
+const DEFAULT_PROFILES: &[&str] = &["string", "list", "set", "hash", "zset", "zset2", "mixed"];
 
 fn env_usize(name: &str, default: usize) -> usize {
     env::var(name)
@@ -128,6 +129,89 @@ fn synthetic_string_rdb(target_bytes: usize) -> Vec<u8> {
     out
 }
 
+fn synthetic_repeated_rdb<F>(target_bytes: usize, profile: &str, mut push_record: F) -> Vec<u8>
+where F: FnMut(&mut Vec<u8>, &[u8], u64) {
+    let mut out = Vec::with_capacity(target_bytes + 1024);
+    out.extend_from_slice(b"REDIS0011");
+
+    let mut index = 0_u64;
+    while out.len() < target_bytes {
+        let key = format!("bench:{profile}:{index:016}");
+        push_record(&mut out, key.as_bytes(), index);
+        index += 1;
+    }
+
+    out.push(0xff); // EOF.
+    out.extend_from_slice(&0_u64.to_le_bytes()); // Checksum placeholder; parser does not validate it.
+    out
+}
+
+fn synthetic_list_rdb(target_bytes: usize) -> Vec<u8> {
+    let members: [&[u8]; 8] = [
+        b"alpha", b"bravo", b"charlie", b"delta", b"echo", b"foxtrot", b"golf", b"hotel",
+    ];
+    synthetic_repeated_rdb(target_bytes, "list", |out, key, _| {
+        push_list_record(out, key, &members);
+    })
+}
+
+fn synthetic_set_rdb(target_bytes: usize) -> Vec<u8> {
+    let members: [&[u8]; 8] = [
+        b"alpha", b"bravo", b"charlie", b"delta", b"echo", b"foxtrot", b"golf", b"hotel",
+    ];
+    synthetic_repeated_rdb(target_bytes, "set", |out, key, _| {
+        push_set_record(out, key, &members);
+    })
+}
+
+fn synthetic_hash_rdb(target_bytes: usize) -> Vec<u8> {
+    let pairs: [(&[u8], &[u8]); 8] = [
+        (b"name", b"benchmark"),
+        (b"region", b"ci"),
+        (b"owner", b"parser"),
+        (b"state", b"active"),
+        (b"tier", b"hot"),
+        (b"format", b"rdb"),
+        (b"version", b"0011"),
+        (b"profile", b"hash"),
+    ];
+    synthetic_repeated_rdb(target_bytes, "hash", |out, key, _| {
+        push_hash_record(out, key, &pairs);
+    })
+}
+
+fn synthetic_zset_rdb(target_bytes: usize) -> Vec<u8> {
+    let scores: [(&[u8], &[u8]); 8] = [
+        (b"alpha", b"1.25"),
+        (b"bravo", b"2.50"),
+        (b"charlie", b"3.75"),
+        (b"delta", b"4.00"),
+        (b"echo", b"5.25"),
+        (b"foxtrot", b"6.50"),
+        (b"golf", b"7.75"),
+        (b"hotel", b"8.00"),
+    ];
+    synthetic_repeated_rdb(target_bytes, "zset", |out, key, _| {
+        push_zset_record(out, key, &scores);
+    })
+}
+
+fn synthetic_zset2_rdb(target_bytes: usize) -> Vec<u8> {
+    let scores: [(&[u8], f64); 8] = [
+        (b"alpha", 1.25),
+        (b"bravo", 2.50),
+        (b"charlie", 3.75),
+        (b"delta", 4.00),
+        (b"echo", 5.25),
+        (b"foxtrot", 6.50),
+        (b"golf", 7.75),
+        (b"hotel", 8.00),
+    ];
+    synthetic_repeated_rdb(target_bytes, "zset2", |out, key, _| {
+        push_zset2_record(out, key, &scores);
+    })
+}
+
 fn synthetic_mixed_rdb(target_bytes: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(target_bytes + 1024);
     out.extend_from_slice(b"REDIS0011");
@@ -192,26 +276,48 @@ fn synthetic_mixed_rdb(target_bytes: usize) -> Vec<u8> {
     out
 }
 
-fn generated_benchmark_input(target_bytes: usize) -> (String, Vec<u8>) {
-    let profile = env::var("RDBINSIGHT_BENCH_PROFILE").unwrap_or_else(|_| "mixed".to_owned());
+fn generated_benchmark_input(target_bytes: usize, profile: &str) -> (String, Vec<u8>) {
     let target_mib = target_bytes / 1024 / 1024;
 
-    match profile.as_str() {
+    match profile {
         "string" => (
             format!("synthetic-string-records-{target_mib}MiB"),
             synthetic_string_rdb(target_bytes),
+        ),
+        "list" => (
+            format!("synthetic-list-records-{target_mib}MiB"),
+            synthetic_list_rdb(target_bytes),
+        ),
+        "set" => (
+            format!("synthetic-set-records-{target_mib}MiB"),
+            synthetic_set_rdb(target_bytes),
+        ),
+        "hash" => (
+            format!("synthetic-hash-records-{target_mib}MiB"),
+            synthetic_hash_rdb(target_bytes),
+        ),
+        "zset" => (
+            format!("synthetic-zset-records-{target_mib}MiB"),
+            synthetic_zset_rdb(target_bytes),
+        ),
+        "zset2" => (
+            format!("synthetic-zset2-records-{target_mib}MiB"),
+            synthetic_zset2_rdb(target_bytes),
         ),
         "mixed" => (
             format!("synthetic-mixed-raw-types-{target_mib}MiB"),
             synthetic_mixed_rdb(target_bytes),
         ),
         other => {
-            panic!("unsupported RDBINSIGHT_BENCH_PROFILE {other:?}; expected string or mixed")
+            panic!(
+                "unsupported RDBINSIGHT_BENCH_PROFILE {other:?}; expected one of {}",
+                DEFAULT_PROFILES.join(", ")
+            )
         }
     }
 }
 
-fn benchmark_input() -> (String, Vec<u8>) {
+fn benchmark_inputs() -> Vec<(String, Vec<u8>)> {
     if let Ok(path) = env::var("RDBINSIGHT_BENCH_RDB") {
         let path = PathBuf::from(path);
         let label = path
@@ -221,11 +327,33 @@ fn benchmark_input() -> (String, Vec<u8>) {
             .to_owned();
         let data = fs::read(&path)
             .unwrap_or_else(|err| panic!("failed to read benchmark RDB {}: {err}", path.display()));
-        return (label, data);
+        return vec![(label, data)];
     }
 
     let target_bytes = env_usize("RDBINSIGHT_BENCH_GENERATED_BYTES", DEFAULT_GENERATED_BYTES);
-    generated_benchmark_input(target_bytes)
+    let profiles = env::var("RDBINSIGHT_BENCH_PROFILES")
+        .or_else(|_| env::var("RDBINSIGHT_BENCH_PROFILE"))
+        .ok()
+        .map(|profiles| {
+            profiles
+                .split(',')
+                .map(str::trim)
+                .filter(|profile| !profile.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .filter(|profiles| !profiles.is_empty())
+        .unwrap_or_else(|| {
+            DEFAULT_PROFILES
+                .iter()
+                .map(|profile| (*profile).to_owned())
+                .collect()
+        });
+
+    profiles
+        .iter()
+        .map(|profile| generated_benchmark_input(target_bytes, profile))
+        .collect()
 }
 
 fn parse_rdb(data: &[u8], chunk_size: usize, buffer_size: usize) -> usize {
@@ -271,19 +399,21 @@ fn parse_rdb(data: &[u8], chunk_size: usize, buffer_size: usize) -> usize {
 }
 
 fn bench_parser(c: &mut Criterion) {
-    let (label, data) = benchmark_input();
+    let inputs = benchmark_inputs();
     let chunk_size = env_usize("RDBINSIGHT_BENCH_CHUNK_BYTES", DEFAULT_CHUNK_SIZE);
     let buffer_size = env_usize("RDBINSIGHT_BENCH_BUFFER_BYTES", DEFAULT_BUFFER_SIZE);
 
     let mut group = c.benchmark_group("parser");
-    group.throughput(Throughput::Bytes(data.len() as u64));
-    group.bench_with_input(
-        BenchmarkId::new("parse_rdb", label),
-        &data,
-        |bench, input| {
-            bench.iter(|| parse_rdb(black_box(input), chunk_size, buffer_size));
-        },
-    );
+    for (label, data) in &inputs {
+        group.throughput(Throughput::Bytes(data.len() as u64));
+        group.bench_with_input(
+            BenchmarkId::new("parse_rdb", label),
+            data,
+            |bench, input| {
+                bench.iter(|| parse_rdb(black_box(input), chunk_size, buffer_size));
+            },
+        );
+    }
     group.finish();
 }
 

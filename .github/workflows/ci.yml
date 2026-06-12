@@ -130,7 +130,8 @@ jobs:
           name: parser-benchmark
           path: |
             parser-benchmark-*.txt
-            target/criterion
+            target/criterion-base
+            target/criterion-current
 
   docker-builds:
     name: Docker Build (${{ matrix.name }})

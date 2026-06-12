@@ -9,6 +9,9 @@ import path from "node:path";
 const BASE_OUTPUT = "parser-benchmark-base.txt";
 const CURRENT_OUTPUT = "parser-benchmark-current.txt";
 const COMMENT_MARKER = "<!-- rdbinsight-parser-benchmark -->";
+const CRITERION_DIR = repoPath("target", "criterion");
+const BASE_CRITERION_DIR = repoPath("target", "criterion-base");
+const CURRENT_CRITERION_DIR = repoPath("target", "criterion-current");
 
 function repoPath(...segments) {
   return path.join(process.env.GITHUB_WORKSPACE || process.cwd(), ...segments);
@@ -20,6 +23,13 @@ function fileExists(filePath) {
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function copyCriterionOutput(targetPath) {
+  fs.rmSync(targetPath, { recursive: true, force: true });
+  if (fileExists(CRITERION_DIR)) {
+    fs.cpSync(CRITERION_DIR, targetPath, { recursive: true });
+  }
 }
 
 function envWith(overrides) {
@@ -86,13 +96,16 @@ async function benchmarkBase() {
       outputPath: BASE_OUTPUT,
     },
   );
+  copyCriterionOutput(BASE_CRITERION_DIR);
   return true;
 }
 
 async function benchmarkCurrent() {
+  fs.rmSync(CRITERION_DIR, { recursive: true, force: true });
   await run("cargo", ["+nightly", "bench", "--bench", "parser", "--", "--noplot"], {
     outputPath: CURRENT_OUTPUT,
   });
+  copyCriterionOutput(CURRENT_CRITERION_DIR);
 }
 
 function walkFiles(root, basename, out = []) {
@@ -118,8 +131,8 @@ function benchmarkName(criterionRoot, estimatesPath) {
   return segments.slice(0, -2).join("/");
 }
 
-function benchmarkJsonPath(criterionRoot, name) {
-  return path.join(criterionRoot, ...name.split("/"), "new", "benchmark.json");
+function benchmarkJsonPath(name) {
+  return path.join(CURRENT_CRITERION_DIR, ...name.split("/"), "new", "benchmark.json");
 }
 
 function formatDuration(ns) {
@@ -162,8 +175,8 @@ function medianPointEstimate(filePath) {
   return readJson(filePath).median.point_estimate;
 }
 
-function benchmarkBytes(criterionRoot, name) {
-  const filePath = benchmarkJsonPath(criterionRoot, name);
+function benchmarkBytes(name) {
+  const filePath = benchmarkJsonPath(name);
   if (!fileExists(filePath)) {
     return Number.NaN;
   }
@@ -176,22 +189,21 @@ function benchmarkBytes(criterionRoot, name) {
 }
 
 function collectBenchmarkRows(hasBaseBaseline) {
-  const criterionRoot = repoPath("target", "criterion");
   const rows = [];
 
-  for (const estimatesPath of walkFiles(criterionRoot, "estimates.json")) {
+  for (const estimatesPath of walkFiles(CURRENT_CRITERION_DIR, "estimates.json")) {
     if (!estimatesPath.endsWith(`${path.sep}new${path.sep}estimates.json`)) {
       continue;
     }
 
-    const name = benchmarkName(criterionRoot, estimatesPath);
-    const baseEstimatesPath = path.join(path.dirname(path.dirname(estimatesPath)), "base", "estimates.json");
+    const name = benchmarkName(CURRENT_CRITERION_DIR, estimatesPath);
+    const baseEstimatesPath = path.join(BASE_CRITERION_DIR, ...name.split("/"), "base", "estimates.json");
     const currentNs = medianPointEstimate(estimatesPath);
     const baseNs =
       hasBaseBaseline && fileExists(baseEstimatesPath)
         ? medianPointEstimate(baseEstimatesPath)
         : Number.NaN;
-    const bytes = benchmarkBytes(criterionRoot, name);
+    const bytes = benchmarkBytes(name);
 
     rows.push({
       name,
@@ -403,6 +415,8 @@ async function main() {
 
   try {
     fs.rmSync(repoPath("target", "criterion"), { recursive: true, force: true });
+    fs.rmSync(BASE_CRITERION_DIR, { recursive: true, force: true });
+    fs.rmSync(CURRENT_CRITERION_DIR, { recursive: true, force: true });
     hasBaseBaseline = await benchmarkBase();
     await benchmarkCurrent();
   } catch (err) {

@@ -61,7 +61,8 @@ jobs:
           const path = require("node:path");
 
           const marker = "<!-- rdbinsight-parser-benchmark -->";
-          const root = "/tmp/parser-benchmark-comment/target/criterion";
+          const baseRoot = "/tmp/parser-benchmark-comment/target/criterion-base";
+          const currentRoot = "/tmp/parser-benchmark-comment/target/criterion-current";
 
           function fileExists(filePath) {
             return fs.existsSync(filePath);
@@ -85,7 +86,7 @@ jobs:
           }
 
           function benchmarkName(estimatesPath) {
-            return path.relative(root, estimatesPath).split(path.sep).slice(0, -2).join("/");
+            return path.relative(currentRoot, estimatesPath).split(path.sep).slice(0, -2).join("/");
           }
 
           function median(filePath) {
@@ -93,7 +94,7 @@ jobs:
           }
 
           function bytesFor(name) {
-            const benchmarkPath = path.join(root, ...name.split("/"), "new", "benchmark.json");
+            const benchmarkPath = path.join(currentRoot, ...name.split("/"), "new", "benchmark.json");
             if (!fileExists(benchmarkPath)) return Number.NaN;
             return readJson(benchmarkPath).throughput?.Bytes ?? Number.NaN;
           }
@@ -119,11 +120,11 @@ jobs:
             return `${prefix}${value.toFixed(2)}% ${direction}`;
           }
 
-          const rows = walkFiles(root, "estimates.json")
+          const rows = walkFiles(currentRoot, "estimates.json")
             .filter((filePath) => filePath.endsWith(`${path.sep}new${path.sep}estimates.json`))
             .map((filePath) => {
               const name = benchmarkName(filePath);
-              const basePath = path.join(path.dirname(path.dirname(filePath)), "base", "estimates.json");
+              const basePath = path.join(baseRoot, ...name.split("/"), "base", "estimates.json");
               const currentNs = median(filePath);
               const baseNs = fileExists(basePath) ? median(basePath) : Number.NaN;
               return { name, currentNs, baseNs, bytes: bytesFor(name) };

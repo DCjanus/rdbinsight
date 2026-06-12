@@ -498,8 +498,6 @@ struct FeedMoreTestConfig {
     expected_rdb_trace: &'static str,
     /// Expected feed_more trace event
     expected_feed_more_trace: &'static str,
-    /// Whether to strictly validate item count (false = tolerate EOF errors)
-    strict_validation: bool,
 }
 
 /// Generic test function for feed_more coverage in both disk and diskless modes
@@ -521,81 +519,27 @@ async fn run_lots_of_strings_feed_more_test(config: FeedMoreTestConfig) -> AnyRe
     let address = extract_address(&redis.connection_string);
     let cfg = StandaloneConfig::new(address, String::new(), None);
 
-    match cfg.get_rdb_streams().await {
-        Ok(mut streams) => {
-            let mut reader = streams.remove(0);
-            match reader.as_mut().prepare().await {
-                Ok(_) => match common::utils::collect_items(&mut reader).await {
-                    Ok(items) => {
-                        let filtered_items = common::utils::filter_items(items);
+    let mut streams = cfg.get_rdb_streams().await?;
+    let mut reader = streams.remove(0);
+    reader.as_mut().prepare().await?;
 
-                        // Strict validation for disk mode, lenient for diskless mode
-                        if config.strict_validation {
-                            assert_eq!(filtered_items.len(), 32000, "Expected 32000 items");
-                        }
+    let items = common::utils::collect_items(&mut reader).await?;
+    let filtered_items = common::utils::filter_items(items);
+    assert_eq!(filtered_items.len(), 32000, "Expected 32000 items");
 
-                        // Verify basic trace events
-                        assert!(
-                            guard.hit(config.expected_rdb_trace),
-                            "Expected trace '{}' but captured: {:?}",
-                            config.expected_rdb_trace,
-                            guard.collected()
-                        );
+    assert!(
+        guard.hit(config.expected_rdb_trace),
+        "Expected trace '{}' but captured: {:?}",
+        config.expected_rdb_trace,
+        guard.collected()
+    );
 
-                        // Verify feed_more function was called
-                        if !guard.hit(config.expected_feed_more_trace) {
-                            // For disk mode, feed_more should be triggered, so this is an assertion failure
-                            if config.strict_validation {
-                                panic!(
-                                    "Expected feed_more trace '{}' but captured: {:?}",
-                                    config.expected_feed_more_trace,
-                                    guard.collected()
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        if config.strict_validation {
-                            // For disk mode, this is a real error - provide diagnostics
-                            eprintln!("❌ Error during data collection: {}", e);
-
-                            // Get Redis container logs for diagnosis
-                            if let Ok(logs) = redis.get_logs().await {
-                                eprintln!("🔍 Redis container logs:\n{}", logs);
-                            }
-
-                            return Err(e);
-                        }
-                        // For diskless mode, EOF errors are expected for very large datasets
-                        // Just verify we got the expected traces and continue
-                    }
-                },
-                Err(e) => {
-                    if config.strict_validation {
-                        eprintln!("❌ Error preparing RDB stream: {}", e);
-                        if let Ok(logs) = redis.get_logs().await {
-                            eprintln!("🔍 Redis container logs:\n{}", logs);
-                        }
-                        return Err(e);
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            if config.strict_validation {
-                // For disk mode, this is a real error - provide diagnostics
-                eprintln!("❌ Error getting RDB stream: {}", e);
-
-                // Get Redis container logs for diagnosis
-                if let Ok(logs) = redis.get_logs().await {
-                    eprintln!("🔍 Redis container logs:\n{}", logs);
-                }
-
-                return Err(e);
-            }
-            // For diskless mode, this is expected for very large datasets
-        }
-    }
+    assert!(
+        guard.hit(config.expected_feed_more_trace),
+        "Expected feed_more trace '{}' but captured: {:?}",
+        config.expected_feed_more_trace,
+        guard.collected()
+    );
 
     Ok(())
 }
@@ -607,7 +551,6 @@ async fn diskless_lots_of_strings_test() -> AnyResult<()> {
         diskless: true,
         expected_rdb_trace: "rdb.diskless",
         expected_feed_more_trace: "delimiter_reader.feed_more",
-        strict_validation: false, // Tolerate EOF errors for large datasets
     })
     .await
 }
@@ -619,7 +562,6 @@ async fn disk_lots_of_strings_test() -> AnyResult<()> {
         diskless: false,
         expected_rdb_trace: "rdb.disk",
         expected_feed_more_trace: "limited_reader.feed_more",
-        strict_validation: true, // Strict validation for disk mode
     })
     .await
 }

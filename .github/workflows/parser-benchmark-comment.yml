@@ -74,30 +74,6 @@ jobs:
           const artifactRoot = "/tmp/parser-benchmark-comment";
           const baseRoots = [];
           const currentRoots = [];
-          const expectedBenchmarkNames = [
-            "parser/parse_rdb/synthetic-hash-listpack-ex-records-16MiB",
-            "parser/parse_rdb/synthetic-hash-listpack-records-16MiB",
-            "parser/parse_rdb/synthetic-hash-metadata-records-16MiB",
-            "parser/parse_rdb/synthetic-hash-records-16MiB",
-            "parser/parse_rdb/synthetic-hash-ziplist-records-16MiB",
-            "parser/parse_rdb/synthetic-hash-zipmap-records-16MiB",
-            "parser/parse_rdb/synthetic-array-records-16MiB",
-            "parser/parse_rdb/synthetic-list-quicklist-records-16MiB",
-            "parser/parse_rdb/synthetic-list-quicklist2-records-16MiB",
-            "parser/parse_rdb/synthetic-list-records-16MiB",
-            "parser/parse_rdb/synthetic-list-ziplist-records-16MiB",
-            "parser/parse_rdb/synthetic-mixed-raw-types-16MiB",
-            "parser/parse_rdb/synthetic-set-intset-records-16MiB",
-            "parser/parse_rdb/synthetic-set-listpack-records-16MiB",
-            "parser/parse_rdb/synthetic-set-records-16MiB",
-            "parser/parse_rdb/synthetic-string-int-records-16MiB",
-            "parser/parse_rdb/synthetic-string-records-16MiB",
-            "parser/parse_rdb/synthetic-zset-listpack-records-16MiB",
-            "parser/parse_rdb/synthetic-zset-records-16MiB",
-            "parser/parse_rdb/synthetic-zset-ziplist-records-16MiB",
-            "parser/parse_rdb/synthetic-zset2-records-16MiB",
-          ];
-          const expectedBenchmarkNameSet = new Set(expectedBenchmarkNames);
 
           function fileExists(filePath) {
             return fs.existsSync(filePath);
@@ -208,43 +184,40 @@ jobs:
             throw new Error("no criterion-base directories found in benchmark artifacts");
           }
 
-          const rows = currentRoots
-            .flatMap((currentRoot) =>
-              walkFiles(currentRoot, "estimates.json")
-                .filter((filePath) => filePath.endsWith(`${path.sep}new${path.sep}estimates.json`))
-                .flatMap((filePath) => {
-                  const name = benchmarkName(currentRoot, filePath);
-                  if (!expectedBenchmarkNameSet.has(name)) {
-                    console.log(`Skipping unexpected benchmark name: ${name}`);
-                    return [];
-                  }
-                  const basePath = baseRoots
-                    .map((baseRoot) => path.join(baseRoot, ...name.split("/"), "base", "estimates.json"))
-                    .find(fileExists);
-                  const currentNs = median(filePath);
-                  const baseNs = basePath ? median(basePath) : Number.NaN;
-                  return [{ name, currentNs, baseNs, bytes: bytesFor(name) }];
-                }),
-            )
-            .sort((a, b) => a.name.localeCompare(b.name));
+          const rowsByName = new Map();
+          for (const currentRoot of currentRoots) {
+            for (const filePath of walkFiles(currentRoot, "estimates.json")) {
+              if (!filePath.endsWith(`${path.sep}new${path.sep}estimates.json`)) continue;
 
-          const foundBenchmarkNameSet = new Set(rows.map((row) => row.name));
-          const missingBenchmarkNames = expectedBenchmarkNames.filter(
-            (name) => !foundBenchmarkNameSet.has(name),
-          );
-          if (missingBenchmarkNames.length > 0) {
-            throw new Error(`missing expected benchmark rows: ${missingBenchmarkNames.join(", ")}`);
+              const name = benchmarkName(currentRoot, filePath);
+              const basePath = baseRoots
+                .map((baseRoot) => path.join(baseRoot, ...name.split("/"), "base", "estimates.json"))
+                .find(fileExists);
+              if (!basePath) {
+                throw new Error(`missing base benchmark row for ${name}`);
+              }
+
+              rowsByName.set(name, {
+                name,
+                currentNs: median(filePath),
+                baseNs: median(basePath),
+                bytes: bytesFor(name),
+              });
+            }
           }
 
-          const table = rows.length === 0
-            ? "_No Criterion benchmark estimates were found._"
-            : [
-                "| Benchmark | Base median | Current median | Change | Current throughput |",
-                "| --- | ---: | ---: | ---: | ---: |",
-                ...rows.map((row) =>
-                  `| \`${markdownTableCell(row.name)}\` | ${markdownTableCell(duration(row.baseNs))} | ${markdownTableCell(duration(row.currentNs))} | ${markdownTableCell(change(row.currentNs, row.baseNs))} | ${markdownTableCell(throughput(row.bytes, row.currentNs))} |`
-                ),
-              ].join("\n");
+          const rows = [...rowsByName.values()].sort((a, b) => a.name.localeCompare(b.name));
+          if (rows.length === 0) {
+            throw new Error("no benchmark rows found in criterion-current artifacts");
+          }
+
+          const table = [
+            "| Benchmark | Base median | Current median | Change | Current throughput |",
+            "| --- | ---: | ---: | ---: | ---: |",
+            ...rows.map((row) =>
+              `| \`${markdownTableCell(row.name)}\` | ${markdownTableCell(duration(row.baseNs))} | ${markdownTableCell(duration(row.currentNs))} | ${markdownTableCell(change(row.currentNs, row.baseNs))} | ${markdownTableCell(throughput(row.bytes, row.currentNs))} |`
+            ),
+          ].join("\n");
 
           const body = [
             marker,
@@ -263,6 +236,7 @@ jobs:
           ].join("\n");
 
           fs.writeFileSync("/tmp/parser-benchmark-comment-body.md", body);
+          fs.writeFileSync("/tmp/parser-benchmark-comment-row-count.txt", `${rows.length}\n`);
           NODE
 
           comment_id="$(gh api \
@@ -277,8 +251,18 @@ jobs:
               "repos/$REPO/issues/comments/$comment_id" \
               --field body=@/tmp/parser-benchmark-comment-body.md >/dev/null
           else
-            gh api \
+            comment_id="$(gh api \
               --method POST \
               "repos/$REPO/issues/$PR_NUMBER/comments" \
-              --field body=@/tmp/parser-benchmark-comment-body.md >/dev/null
+              --field body=@/tmp/parser-benchmark-comment-body.md \
+              --jq '.id')"
+          fi
+
+          expected_rows="$(cat /tmp/parser-benchmark-comment-row-count.txt)"
+          actual_rows="$(gh api \
+            "repos/$REPO/issues/comments/$comment_id" \
+            --jq '.body | split("\n") | map(select(startswith("| `"))) | length')"
+          if [ "$actual_rows" != "$expected_rows" ]; then
+            echo "Benchmark comment row count mismatch: expected $expected_rows, got $actual_rows"
+            exit 1
           fi

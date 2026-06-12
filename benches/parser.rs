@@ -41,23 +41,174 @@ fn push_rdb_str(out: &mut Vec<u8>, value: &[u8]) {
     out.extend_from_slice(value);
 }
 
-fn synthetic_rdb(target_bytes: usize) -> Vec<u8> {
+fn push_string_record(out: &mut Vec<u8>, key: &[u8], value: &[u8]) {
+    out.push(0x00); // RDB_TYPE_STRING.
+    push_rdb_str(out, key);
+    push_rdb_str(out, value);
+}
+
+fn push_list_record(out: &mut Vec<u8>, key: &[u8], values: &[&[u8]]) {
+    out.push(0x01); // RDB_TYPE_LIST.
+    push_rdb_str(out, key);
+    push_rdb_len(out, values.len());
+    for value in values {
+        push_rdb_str(out, value);
+    }
+}
+
+fn push_set_record(out: &mut Vec<u8>, key: &[u8], values: &[&[u8]]) {
+    out.push(0x02); // RDB_TYPE_SET.
+    push_rdb_str(out, key);
+    push_rdb_len(out, values.len());
+    for value in values {
+        push_rdb_str(out, value);
+    }
+}
+
+fn push_zset_record(out: &mut Vec<u8>, key: &[u8], values: &[(&[u8], &[u8])]) {
+    out.push(0x03); // RDB_TYPE_ZSET.
+    push_rdb_str(out, key);
+    push_rdb_len(out, values.len());
+    for (member, score) in values {
+        push_rdb_str(out, member);
+        push_rdb_str(out, score);
+    }
+}
+
+fn push_zset2_record(out: &mut Vec<u8>, key: &[u8], values: &[(&[u8], f64)]) {
+    out.push(0x05); // RDB_TYPE_ZSET_2.
+    push_rdb_str(out, key);
+    push_rdb_len(out, values.len());
+    for (member, score) in values {
+        push_rdb_str(out, member);
+        out.extend_from_slice(&score.to_le_bytes());
+    }
+}
+
+fn push_hash_record(out: &mut Vec<u8>, key: &[u8], pairs: &[(&[u8], &[u8])]) {
+    out.push(0x04); // RDB_TYPE_HASH.
+    push_rdb_str(out, key);
+    push_rdb_len(out, pairs.len());
+    for (field, value) in pairs {
+        push_rdb_str(out, field);
+        push_rdb_str(out, value);
+    }
+}
+
+fn push_expire_ms(out: &mut Vec<u8>, expire_at_ms: u64) {
+    out.push(0xfc); // RDB_OPCODE_EXPIRETIME_MS.
+    out.extend_from_slice(&expire_at_ms.to_le_bytes());
+}
+
+fn push_select_db(out: &mut Vec<u8>, db: usize) {
+    out.push(0xfe); // RDB_OPCODE_SELECTDB.
+    push_rdb_len(out, db);
+}
+
+fn push_resize_db(out: &mut Vec<u8>, keys: usize, expires: usize) {
+    out.push(0xfb); // RDB_OPCODE_RESIZEDB.
+    push_rdb_len(out, keys);
+    push_rdb_len(out, expires);
+}
+
+fn synthetic_string_rdb(target_bytes: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(target_bytes + 1024);
     out.extend_from_slice(b"REDIS0011");
 
     let value = vec![b'x'; 1024];
     let mut index = 0_u64;
     while out.len() < target_bytes {
-        out.push(0x00); // String value type.
         let key = format!("bench:key:{index:016}");
-        push_rdb_str(&mut out, key.as_bytes());
-        push_rdb_str(&mut out, &value);
+        push_string_record(&mut out, key.as_bytes(), &value);
         index += 1;
     }
 
     out.push(0xff); // EOF.
     out.extend_from_slice(&0_u64.to_le_bytes()); // Checksum placeholder; parser does not validate it.
     out
+}
+
+fn synthetic_mixed_rdb(target_bytes: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(target_bytes + 1024);
+    out.extend_from_slice(b"REDIS0011");
+    push_select_db(&mut out, 0);
+    push_resize_db(&mut out, 1024, 128);
+
+    let large_value = vec![b'x'; 1024];
+    let members: [&[u8]; 8] = [
+        b"alpha", b"bravo", b"charlie", b"delta", b"echo", b"foxtrot", b"golf", b"hotel",
+    ];
+    let zset_scores: [(&[u8], &[u8]); 8] = [
+        (b"alpha", b"1.25"),
+        (b"bravo", b"2.50"),
+        (b"charlie", b"3.75"),
+        (b"delta", b"4.00"),
+        (b"echo", b"5.25"),
+        (b"foxtrot", b"6.50"),
+        (b"golf", b"7.75"),
+        (b"hotel", b"8.00"),
+    ];
+    let zset2_scores: [(&[u8], f64); 8] = [
+        (b"alpha", 1.25),
+        (b"bravo", 2.50),
+        (b"charlie", 3.75),
+        (b"delta", 4.00),
+        (b"echo", 5.25),
+        (b"foxtrot", 6.50),
+        (b"golf", 7.75),
+        (b"hotel", 8.00),
+    ];
+    let hash_pairs: [(&[u8], &[u8]); 8] = [
+        (b"name", b"benchmark"),
+        (b"region", b"ci"),
+        (b"owner", b"parser"),
+        (b"state", b"active"),
+        (b"tier", b"hot"),
+        (b"format", b"rdb"),
+        (b"version", b"0011"),
+        (b"profile", b"mixed"),
+    ];
+
+    let mut index = 0_u64;
+    while out.len() < target_bytes {
+        let key = format!("bench:mixed:{index:016}");
+        if index.is_multiple_of(10) {
+            push_expire_ms(&mut out, 4_102_444_800_000);
+        }
+
+        match index % 6 {
+            0 => push_string_record(&mut out, key.as_bytes(), &large_value),
+            1 => push_list_record(&mut out, key.as_bytes(), &members),
+            2 => push_set_record(&mut out, key.as_bytes(), &members),
+            3 => push_zset_record(&mut out, key.as_bytes(), &zset_scores),
+            4 => push_zset2_record(&mut out, key.as_bytes(), &zset2_scores),
+            _ => push_hash_record(&mut out, key.as_bytes(), &hash_pairs),
+        }
+        index += 1;
+    }
+
+    out.push(0xff); // EOF.
+    out.extend_from_slice(&0_u64.to_le_bytes()); // Checksum placeholder; parser does not validate it.
+    out
+}
+
+fn generated_benchmark_input(target_bytes: usize) -> (String, Vec<u8>) {
+    let profile = env::var("RDBINSIGHT_BENCH_PROFILE").unwrap_or_else(|_| "mixed".to_owned());
+    let target_mib = target_bytes / 1024 / 1024;
+
+    match profile.as_str() {
+        "string" => (
+            format!("synthetic-string-records-{target_mib}MiB"),
+            synthetic_string_rdb(target_bytes),
+        ),
+        "mixed" => (
+            format!("synthetic-mixed-raw-types-{target_mib}MiB"),
+            synthetic_mixed_rdb(target_bytes),
+        ),
+        other => {
+            panic!("unsupported RDBINSIGHT_BENCH_PROFILE {other:?}; expected string or mixed")
+        }
+    }
 }
 
 fn benchmark_input() -> (String, Vec<u8>) {
@@ -74,10 +225,7 @@ fn benchmark_input() -> (String, Vec<u8>) {
     }
 
     let target_bytes = env_usize("RDBINSIGHT_BENCH_GENERATED_BYTES", DEFAULT_GENERATED_BYTES);
-    (
-        format!("synthetic-string-records-{}MiB", target_bytes / 1024 / 1024),
-        synthetic_rdb(target_bytes),
-    )
+    generated_benchmark_input(target_bytes)
 }
 
 fn parse_rdb(data: &[u8], chunk_size: usize, buffer_size: usize) -> usize {

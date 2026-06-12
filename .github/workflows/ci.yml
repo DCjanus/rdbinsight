@@ -93,6 +93,7 @@ jobs:
     permissions:
       contents: read
     env:
+      RDBINSIGHT_BENCH_PROFILE: "mixed"
       RDBINSIGHT_BENCH_GENERATED_BYTES: "67108864"
       RDBINSIGHT_BENCH_SAMPLE_SIZE: "10"
       RDBINSIGHT_BENCH_WARM_UP_SECS: "1"

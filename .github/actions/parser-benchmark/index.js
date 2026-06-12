@@ -98,11 +98,15 @@ async function publishSummary() {
   }
 
   const generatedBytes = process.env.RDBINSIGHT_BENCH_GENERATED_BYTES || "67108864";
+  const profile = process.env.RDBINSIGHT_BENCH_PROFILE || "string";
+  const inputDescription = process.env.RDBINSIGHT_BENCH_RDB
+    ? `Input: external RDB from ${process.env.RDBINSIGHT_BENCH_RDB}.`
+    : `Input: generated ${generatedBytes} byte synthetic ${profile} RDB profile.`;
 
   core.summary
     .addHeading("Parser benchmark", 2)
     .addList([
-      `Input: generated ${generatedBytes} byte synthetic string-record RDB unless RDBINSIGHT_BENCH_RDB is set.`,
+      inputDescription,
       "Benchmark excludes disk I/O; RDB bytes are prepared before timing starts.",
     ]);
 

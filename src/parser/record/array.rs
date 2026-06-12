@@ -2,7 +2,6 @@ use anyhow::{Context, bail};
 
 use crate::{
     helper::AnyResult,
-    parse_try,
     parser::{
         core::{
             buffer::{Buffer, skip_bytes},
@@ -103,7 +102,8 @@ impl Parser for ArrayEntriesParser {
                 return Ok(());
             }
 
-            let entry = buffer.init_commit::<ArrayElementParser>()?;
+            let (input, entry) = ArrayElementParser::init_from_input(buffer.as_slice())?;
+            buffer.consume_to(input.as_ptr());
             self.entry = Some(entry);
         }
     }
@@ -134,33 +134,34 @@ struct ArrayElementParser {
 
 impl ParserInit for ArrayElementParser {
     fn init(view: &mut View<'_>) -> ParseResult<Self> {
-        let tag = parse_try!(view.parse_init(|_, input| {
-            let (input, index) = read_rdb_len(input).context("read array element index")?;
-            if !matches!(index, RDBLen::Simple(_)) {
-                bail!("array element index should be a plain length");
+        view.parse_init(|_, input| Self::init_from_input(input))
+    }
+}
+
+impl ArrayElementParser {
+    fn init_from_input(input: &[u8]) -> AnyResult<(&[u8], Self)> {
+        let (input, index) = read_rdb_len(input).context("read array element index")?;
+        if !matches!(index, RDBLen::Simple(_)) {
+            bail!("array element index should be a plain length");
+        }
+
+        let (input, tag) = read_rdb_len(input).context("read array element type tag")?;
+        let tag = tag
+            .as_u64()
+            .context("array element type tag should be numeric")?;
+
+        let (input, value) = match tag {
+            AR_RDB_TAG_INT | AR_RDB_TAG_FLOAT => {
+                (input, ArrayElementValueParser::Skip { remain: 8 })
             }
-
-            let (input, tag) = read_rdb_len(input).context("read array element type tag")?;
-            let tag = tag
-                .as_u64()
-                .context("array element type tag should be numeric")?;
-
-            Ok((input, tag))
-        }));
-
-        let value = match tag {
-            AR_RDB_TAG_INT | AR_RDB_TAG_FLOAT => ArrayElementValueParser::Skip { remain: 8 },
-            AR_RDB_TAG_SMALLSTR | AR_RDB_TAG_SDS => ArrayElementValueParser::String(parse_try!(
-                view.init_parser::<StringEncodingParser>()
-            )),
-            other => {
-                return crate::parser::core::parse::fatal(anyhow::anyhow!(
-                    "unknown array element type tag: {other}"
-                ));
+            AR_RDB_TAG_SMALLSTR | AR_RDB_TAG_SDS => {
+                let (input, parser) = StringEncodingParser::init_from_input(input)?;
+                (input, ArrayElementValueParser::String(parser))
             }
+            other => bail!("unknown array element type tag: {other}"),
         };
 
-        ParseResult::Ok(Self { value })
+        Ok((input, Self { value }))
     }
 }
 

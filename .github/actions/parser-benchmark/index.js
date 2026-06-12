@@ -13,7 +13,7 @@ const CRITERION_DIR = repoPath("target", "criterion");
 const BASE_CRITERION_DIR = repoPath("target", "criterion-base");
 const CURRENT_CRITERION_DIR = repoPath("target", "criterion-current");
 const DEFAULT_CURRENT_PROFILES =
-  "string,string-int,list,list-ziplist,list-quicklist,list-quicklist2,set,set-intset,set-listpack,hash,hash-ziplist,hash-listpack,hash-zipmap,hash-metadata,hash-listpack-ex,zset,zset2,zset-ziplist,zset-listpack,mixed";
+  "string,string-int,list,list-ziplist,list-quicklist,list-quicklist2,set,set-intset,set-listpack,hash,hash-ziplist,hash-listpack,hash-zipmap,hash-metadata,hash-listpack-ex,array,zset,zset2,zset-ziplist,zset-listpack,mixed";
 
 function repoPath(...segments) {
   return path.join(process.env.GITHUB_WORKSPACE || process.cwd(), ...segments);
@@ -186,6 +186,13 @@ function formatChange(currentNs, baseNs) {
   return `${prefix}${change.toFixed(2)}% ${direction}`;
 }
 
+function slowdownPercent(currentNs, baseNs) {
+  if (!Number.isFinite(currentNs) || !Number.isFinite(baseNs) || baseNs <= 0) {
+    return Number.NaN;
+  }
+  return (currentNs / baseNs - 1) * 100;
+}
+
 function markdownTableCell(value) {
   return String(value)
     .slice(0, 200)
@@ -342,11 +349,46 @@ function benchmarkNotes() {
     ? `Input: external RDB from ${process.env.RDBINSIGHT_BENCH_RDB}.`
     : `Input: generated ${generatedBytes} byte synthetic RDB profiles: ${profiles}.`;
 
+  const maxSlowdownPercent = Number.parseFloat(
+    process.env.RDBINSIGHT_BENCH_MAX_SLOWDOWN_PERCENT || "30",
+  );
+  const thresholdDescription = Number.isFinite(maxSlowdownPercent) && maxSlowdownPercent > 0
+    ? `Parser benchmark fails when any comparable profile slows down by more than ${maxSlowdownPercent.toFixed(0)}%.`
+    : "Parser benchmark slowdown threshold is disabled.";
+
   return [
     inputDescription,
     "Benchmark excludes disk I/O; RDB bytes are prepared before timing starts.",
     "Positive change means the current PR is slower than the base commit.",
+    thresholdDescription,
   ];
+}
+
+function assertNoSevereSlowdowns(rows) {
+  const maxSlowdownPercent = Number.parseFloat(
+    process.env.RDBINSIGHT_BENCH_MAX_SLOWDOWN_PERCENT || "30",
+  );
+  if (!Number.isFinite(maxSlowdownPercent) || maxSlowdownPercent <= 0) {
+    return;
+  }
+
+  const failures = rows
+    .map((row) => ({
+      ...row,
+      slowdown: slowdownPercent(row.currentNs, row.baseNs),
+    }))
+    .filter((row) => Number.isFinite(row.slowdown) && row.slowdown > maxSlowdownPercent);
+
+  if (failures.length === 0) {
+    return;
+  }
+
+  const details = failures
+    .map((row) => `${row.name}: ${row.slowdown.toFixed(2)}% slower`)
+    .join(", ");
+  throw new Error(
+    `parser benchmark slowdown exceeded ${maxSlowdownPercent.toFixed(2)}%: ${details}`,
+  );
 }
 
 function pullRequestBenchmarkLinks() {
@@ -503,6 +545,13 @@ async function main() {
       core.warning(`Failed to update parser benchmark PR comment: ${err.message}`);
     }
     await cleanupBaseWorktree();
+    if (!runError) {
+      try {
+        assertNoSevereSlowdowns(rows);
+      } catch (err) {
+        runError = err;
+      }
+    }
   }
 
   if (runError) {

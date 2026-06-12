@@ -22,6 +22,7 @@ const DEFAULT_PROFILES: &[&str] = &[
     "hash-zipmap",
     "hash-metadata",
     "hash-listpack-ex",
+    "array",
     "zset",
     "zset2",
     "zset-ziplist",
@@ -308,6 +309,34 @@ fn push_hash_listpack_ex_record(out: &mut Vec<u8>, key: &[u8], pairs: &[(&[u8], 
     push_rdb_str(out, &listpack(&entries));
 }
 
+fn push_array_record(out: &mut Vec<u8>, key: &[u8], values: &[&[u8]]) {
+    out.push(0x1c); // RDB_TYPE_ARRAY.
+    push_rdb_str(out, key);
+    push_rdb_len(out, values.len());
+    push_rdb_len(out, 0); // No insert index.
+    for (index, value) in values.iter().enumerate() {
+        push_rdb_len(out, index);
+        match index % 4 {
+            0 => {
+                push_rdb_len(out, 1); // AR_RDB_TAG_INT.
+                out.extend_from_slice(&(index as u64).to_le_bytes());
+            }
+            1 => {
+                push_rdb_len(out, 2); // AR_RDB_TAG_FLOAT.
+                out.extend_from_slice(&(index as f64 + 0.5).to_le_bytes());
+            }
+            2 => {
+                push_rdb_len(out, 3); // AR_RDB_TAG_SMALLSTR.
+                push_rdb_str(out, value);
+            }
+            _ => {
+                push_rdb_len(out, 0); // AR_RDB_TAG_SDS.
+                push_rdb_str(out, value);
+            }
+        }
+    }
+}
+
 fn push_expire_ms(out: &mut Vec<u8>, expire_at_ms: u64) {
     out.push(0xfc); // RDB_OPCODE_EXPIRETIME_MS.
     out.extend_from_slice(&expire_at_ms.to_le_bytes());
@@ -481,6 +510,15 @@ fn synthetic_hash_listpack_ex_rdb(target_bytes: usize) -> Vec<u8> {
     let pairs = benchmark_hash_pairs("hash_listpack_ex");
     synthetic_repeated_rdb(target_bytes, "hash-listpack-ex", |out, key, _| {
         push_hash_listpack_ex_record(out, key, &pairs);
+    })
+}
+
+fn synthetic_array_rdb(target_bytes: usize) -> Vec<u8> {
+    let members: [&[u8]; 8] = [
+        b"alpha", b"bravo", b"charlie", b"delta", b"echo", b"foxtrot", b"golf", b"hotel",
+    ];
+    synthetic_repeated_rdb(target_bytes, "array", |out, key, _| {
+        push_array_record(out, key, &members);
     })
 }
 
@@ -683,6 +721,10 @@ fn generated_benchmark_input(target_bytes: usize, profile: &str) -> (String, Vec
         "hash-listpack-ex" => (
             format!("synthetic-hash-listpack-ex-records-{target_mib}MiB"),
             synthetic_hash_listpack_ex_rdb(target_bytes),
+        ),
+        "array" => (
+            format!("synthetic-array-records-{target_mib}MiB"),
+            synthetic_array_rdb(target_bytes),
         ),
         "zset" => (
             format!("synthetic-zset-records-{target_mib}MiB"),

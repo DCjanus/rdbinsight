@@ -258,7 +258,8 @@ impl Parser for ZipMapPairCountParser {
                 self.entrust = None;
             }
 
-            let entrust = buffer.init_commit::<IsEndZipMapPairParser>()?;
+            let (input, entrust) = IsEndZipMapPairParser::init_from_input(buffer.as_slice())?;
+            buffer.consume_to(input.as_ptr());
             self.entrust = Some(entrust);
         }
     }
@@ -272,13 +273,17 @@ enum IsEndZipMapPairParser {
 
 impl ParserInit for IsEndZipMapPairParser {
     fn init(view: &mut View<'_>) -> ParseResult<Self> {
-        view.parse_init(|_buffer, input| {
-            let (input, size) = read_zipmap_size(input)?;
-            match size {
-                Some(key_len) => Ok((input, Self::ReadingKey { remain: key_len })),
-                None => Ok((input, Self::EndOfList)),
-            }
-        })
+        view.parse_init(|_buffer, input| Self::init_from_input(input))
+    }
+}
+
+impl IsEndZipMapPairParser {
+    fn init_from_input(input: &[u8]) -> AnyResult<(&[u8], Self)> {
+        let (input, size) = read_zipmap_size(input)?;
+        match size {
+            Some(key_len) => Ok((input, Self::ReadingKey { remain: key_len })),
+            None => Ok((input, Self::EndOfList)),
+        }
     }
 }
 

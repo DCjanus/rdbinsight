@@ -22,26 +22,29 @@ pub struct StringEncodingParser {
     encoding: StringEncoding,
 }
 
+impl StringEncodingParser {
+    pub(crate) fn init_from_input(input: &[u8]) -> AnyResult<(&[u8], Self)> {
+        let (input, str_len) = read_rdb_len(input).context("read string length")?;
+
+        let (input, to_skip, encoding) = match str_len {
+            RDBLen::Simple(len) => (input, len, StringEncoding::Raw),
+            RDBLen::IntStr(_) => (input, 0, StringEncoding::Int),
+            RDBLen::LZFStr => {
+                // LZF header := <compressed len> <uncompressed len>
+                let (input, in_len) = read_rdb_len(input).context("read lzf string length")?;
+                let in_len = in_len.as_u64().context("in_len should be a number")?;
+                let (input, _out_len) = read_rdb_len(input).context("read lzf string length")?;
+                (input, in_len, StringEncoding::LZF)
+            }
+        };
+
+        Ok((input, Self { to_skip, encoding }))
+    }
+}
+
 impl ParserInit for StringEncodingParser {
     fn init(view: &mut View<'_>) -> ParseResult<Self> {
-        view.parse_init(|_buffer, input| {
-            let (input, str_len) = read_rdb_len(input).context("read string length")?;
-
-            let (input, to_skip, encoding) = match str_len {
-                RDBLen::Simple(len) => (input, len, StringEncoding::Raw),
-                RDBLen::IntStr(_) => (input, 0, StringEncoding::Int),
-                RDBLen::LZFStr => {
-                    // LZF header := <compressed len> <uncompressed len>
-                    let (input, in_len) = read_rdb_len(input).context("read lzf string length")?;
-                    let in_len = in_len.as_u64().context("in_len should be a number")?;
-                    let (input, _out_len) =
-                        read_rdb_len(input).context("read lzf string length")?;
-                    (input, in_len, StringEncoding::LZF)
-                }
-            };
-
-            Ok((input, Self { to_skip, encoding }))
-        })
+        view.parse_init(|_buffer, input| Self::init_from_input(input))
     }
 }
 

@@ -93,8 +93,9 @@ jobs:
     permissions:
       contents: read
     env:
-      RDBINSIGHT_BENCH_PROFILES: "string,string-int,list,list-ziplist,list-quicklist,list-quicklist2,set,set-intset,set-listpack,hash,hash-ziplist,hash-listpack,hash-zipmap,hash-metadata,hash-listpack-ex,zset,zset2,zset-ziplist,zset-listpack,mixed"
+      RDBINSIGHT_BENCH_PROFILES: "string,string-int,list,list-ziplist,list-quicklist,list-quicklist2,set,set-intset,set-listpack,hash,hash-ziplist,hash-listpack,hash-zipmap,hash-metadata,hash-listpack-ex,array,zset,zset2,zset-ziplist,zset-listpack,mixed"
       RDBINSIGHT_BENCH_GENERATED_BYTES: "16777216"
+      RDBINSIGHT_BENCH_MAX_SLOWDOWN_PERCENT: "30"
       RDBINSIGHT_BENCH_SAMPLE_SIZE: "10"
       RDBINSIGHT_BENCH_WARM_UP_SECS: "1"
       RDBINSIGHT_BENCH_MEASUREMENT_SECS: "1"

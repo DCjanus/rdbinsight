@@ -1654,6 +1654,77 @@ async fn zset_listpack_lzf_encoding_test() -> AnyResult<()> {
 }
 
 #[tokio::test]
+async fn array_encoding_test() -> AnyResult<()> {
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis8_8)
+        .build()
+        .await?;
+
+    let rdb_path = redis
+        .generate_rdb("array_encoding_test", |conn| {
+            async move {
+                redis::cmd("ARMSET")
+                    .arg("array_dense")
+                    .arg(0)
+                    .arg("zero")
+                    .arg(1)
+                    .arg("1")
+                    .arg(2)
+                    .arg(std::f64::consts::PI.to_string())
+                    .query_async::<()>(conn)
+                    .await?;
+
+                redis::cmd("ARMSET")
+                    .arg("array_sparse")
+                    .arg(0)
+                    .arg("head")
+                    .arg(4096)
+                    .arg("slice-boundary")
+                    .arg(99_999)
+                    .arg("tail")
+                    .query_async::<()>(conn)
+                    .await?;
+
+                redis::cmd("ARRING")
+                    .arg("array_ring")
+                    .arg(3)
+                    .arg("a")
+                    .arg("b")
+                    .arg("c")
+                    .arg("d")
+                    .query_async::<()>(conn)
+                    .await?;
+
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let mut arrays = read_filtered_items(&rdb_path)
+        .await?
+        .into_iter()
+        .map(|item| {
+            let Item::ArrayRecord {
+                key, member_count, ..
+            } = item
+            else {
+                panic!("expected ArrayRecord");
+            };
+            (key, member_count)
+        })
+        .collect::<Vec<_>>();
+    arrays.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    assert_eq!(arrays.len(), 3);
+    assert_eq!(arrays[0], (RDBStr::Str(Bytes::from("array_dense")), 3));
+    assert_eq!(arrays[1], (RDBStr::Str(Bytes::from("array_ring")), 3));
+    assert_eq!(arrays[2], (RDBStr::Str(Bytes::from("array_sparse")), 3));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn stream_v1_listpack_test() -> AnyResult<()> {
     run_stream_listpack_test("6.0", StreamEncoding::ListPacks).await
 }
@@ -1673,13 +1744,20 @@ async fn stream_v4_listpack_test() -> AnyResult<()> {
     run_stream_listpack_test("8.6", StreamEncoding::ListPacks4).await
 }
 
+#[tokio::test]
+async fn stream_v5_listpack_test() -> AnyResult<()> {
+    run_stream_listpack_test("8.8", StreamEncoding::ListPacks5).await
+}
+
 async fn run_stream_listpack_test(version: &str, expect_encoding: StreamEncoding) -> AnyResult<()> {
     use common::{create_stream_groups, seed_stream};
     const MESSAGE_COUNT: usize = 500;
     const IDMP_MESSAGE_COUNT: usize = 4;
+    const XNACK_MESSAGE_COUNT: usize = 1;
 
     let redis = RedisConfig::default()
         .with_version(match version {
+            "8.8" => RedisVariant::Redis8_8,
             "8.6" => RedisVariant::Redis8_6,
             "6.0" => RedisVariant::Redis6_0,
             "7.0" => RedisVariant::Redis7_0,
@@ -1695,7 +1773,10 @@ async fn run_stream_listpack_test(version: &str, expect_encoding: StreamEncoding
             |conn| {
                 async move {
                     seed_stream(conn, "mystream", MESSAGE_COUNT).await?;
-                    if expect_encoding == StreamEncoding::ListPacks4 {
+                    if matches!(
+                        expect_encoding,
+                        StreamEncoding::ListPacks4 | StreamEncoding::ListPacks5
+                    ) {
                         for producer_idx in 0..2 {
                             for iid_idx in 0..2 {
                                 let _: redis::Value = redis::cmd("XADD")
@@ -1741,6 +1822,48 @@ async fn run_stream_listpack_test(version: &str, expect_encoding: StreamEncoding
                             .await?;
                     }
 
+                    if expect_encoding == StreamEncoding::ListPacks5 {
+                        redis::cmd("XGROUP")
+                            .arg("CREATE")
+                            .arg("mystream")
+                            .arg("cg_nack")
+                            .arg("$")
+                            .query_async::<()>(conn)
+                            .await?;
+
+                        let nacked_id: String = redis::cmd("XADD")
+                            .arg("mystream")
+                            .arg("*")
+                            .arg("field")
+                            .arg("nack")
+                            .query_async(conn)
+                            .await?;
+
+                        let _: redis::Value = redis::cmd("XREADGROUP")
+                            .arg("GROUP")
+                            .arg("cg_nack")
+                            .arg("c_nack")
+                            .arg("COUNT")
+                            .arg(1)
+                            .arg("STREAMS")
+                            .arg("mystream")
+                            .arg(">")
+                            .query_async(conn)
+                            .await?;
+
+                        redis::cmd("XNACK")
+                            .arg("mystream")
+                            .arg("cg_nack")
+                            .arg("SILENT")
+                            .arg("IDS")
+                            .arg(1)
+                            .arg(nacked_id)
+                            .arg("RETRYCOUNT")
+                            .arg(2)
+                            .query_async::<()>(conn)
+                            .await?;
+                    }
+
                     Ok(())
                 }
                 .boxed()
@@ -1764,8 +1887,16 @@ async fn run_stream_listpack_test(version: &str, expect_encoding: StreamEncoding
     assert_eq!(
         *message_count as usize,
         MESSAGE_COUNT
-            + if expect_encoding == StreamEncoding::ListPacks4 {
+            + if matches!(
+                expect_encoding,
+                StreamEncoding::ListPacks4 | StreamEncoding::ListPacks5
+            ) {
                 IDMP_MESSAGE_COUNT
+            } else {
+                0
+            }
+            + if expect_encoding == StreamEncoding::ListPacks5 {
+                XNACK_MESSAGE_COUNT
             } else {
                 0
             }

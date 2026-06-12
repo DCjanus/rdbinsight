@@ -1,7 +1,10 @@
 use anyhow::ensure;
 use bytes::{Buf, BytesMut};
 
-use crate::helper::AnyResult;
+use crate::{
+    helper::{AnyResult, wrapping_to_usize},
+    parser::{core::combinators::read_at_most_but_at_least_one, error::NeedMoreData},
+};
 
 #[derive(Debug)]
 pub struct Buffer {
@@ -89,4 +92,21 @@ impl Buffer {
     pub fn truncate(&mut self, len: usize) {
         self.buf.truncate(len);
     }
+}
+
+// Skip `remain` bytes from the buffer, returning `NotFinished` when more data is required.
+pub(crate) fn skip_bytes(buffer: &mut Buffer, remain: &mut u64) -> AnyResult<()> {
+    if *remain == 0 {
+        return Ok(());
+    }
+
+    let input = buffer.as_slice();
+    let (input, _skipped) = read_at_most_but_at_least_one(input, wrapping_to_usize(*remain))?;
+    *remain -= _skipped.len() as u64;
+    buffer.consume_to(input.as_ptr());
+
+    if *remain > 0 {
+        return Err(NeedMoreData.into());
+    }
+    Ok(())
 }

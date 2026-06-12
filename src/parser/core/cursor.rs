@@ -1,78 +1,127 @@
-use crate::parser::core::buffer::Buffer;
+use crate::{
+    helper::AnyResult,
+    parser::{
+        core::{buffer::Buffer, view::View},
+        state::traits::InitializableParser,
+    },
+};
 
-#[derive(Debug, Clone, Copy)]
-pub struct Checkpoint {
-    consumed: usize,
-}
-
-/// Read-only view on top of [`Buffer`] that supports transactional reads.
-///
-/// Parser branches can checkpoint/rewind without touching the underlying
-/// buffer, and commit once a branch is selected.
-#[derive(Debug)]
 pub struct Cursor<'a> {
     buffer: &'a mut Buffer,
-    consumed: usize,
 }
 
 impl<'a> Cursor<'a> {
     pub fn new(buffer: &'a mut Buffer) -> Self {
-        Self {
-            buffer,
-            consumed: 0,
-        }
+        Self { buffer }
     }
 
-    pub fn offset(&self) -> u64 {
-        self.buffer.tell() + self.consumed() as u64
+    pub fn view(&self) -> View<'_> {
+        View::new(self.buffer)
     }
 
-    pub fn remaining_len(&self) -> usize {
-        self.buffer.len().saturating_sub(self.consumed)
+    pub fn commit_view(&mut self, view: View<'_>) {
+        debug_assert_eq!(view.base_ptr(), self.buffer.as_slice().as_ptr());
+        debug_assert_eq!(view.offset(), self.buffer.tell() + view.consumed() as u64);
+        self.buffer.consume(view.consumed());
     }
 
-    pub fn is_finished(&self) -> bool {
-        self.buffer.is_finished()
+    pub fn init_commit<P: InitializableParser>(&mut self) -> AnyResult<P> {
+        self.init_commit_from_offset::<P>(0)
     }
 
-    pub fn as_slice(&self) -> &[u8] {
-        let input = self.buffer.as_slice();
-        &input[self.consumed..]
-    }
-
-    pub fn buffer(&self) -> &Buffer {
-        self.buffer
+    pub fn init_commit_from_offset<P: InitializableParser>(
+        &mut self,
+        offset: usize,
+    ) -> AnyResult<P> {
+        assert!(
+            offset <= self.buffer.len(),
+            "init offset exceeds buffer length"
+        );
+        let input = &self.buffer.as_slice()[offset..];
+        let (remaining, parser) = P::init(self.buffer, input)?;
+        let consumed = self.buffer.len() - remaining.len();
+        self.buffer.consume(consumed);
+        Ok(parser)
     }
 
     pub fn buffer_mut(&mut self) -> &mut Buffer {
         self.buffer
     }
+}
 
-    pub fn checkpoint(&self) -> Checkpoint {
-        Checkpoint {
-            consumed: self.consumed,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::{
+        core::combinators::read_exact, error::NeedMoreData, state::traits::StateParser,
+    };
+
+    #[derive(Debug)]
+    struct TwoByteParser;
+
+    impl InitializableParser for TwoByteParser {
+        fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+            let (input, _) = read_exact(input, 2)?;
+            Ok((input, Self))
         }
     }
 
-    pub fn rewind(&mut self, checkpoint: Checkpoint) {
-        self.consumed = checkpoint.consumed;
+    impl StateParser for TwoByteParser {
+        type Output = ();
+
+        fn call(&mut self, _: &mut Buffer) -> AnyResult<Self::Output> {
+            Ok(())
+        }
     }
 
-    pub fn advance(&mut self, n: usize) {
-        debug_assert!(
-            n <= self.remaining_len(),
-            "advance length exceeds remaining length"
-        );
-        self.consumed += n;
+    #[test]
+    fn init_commit_advances_buffer_on_success() -> AnyResult<()> {
+        let mut buffer = Buffer::new(8);
+        buffer.extend(&[1, 2, 3])?;
+
+        let parser = {
+            let mut cursor = Cursor::new(&mut buffer);
+            cursor.init_commit::<TwoByteParser>()?
+        };
+
+        assert!(matches!(parser, TwoByteParser));
+        assert_eq!(buffer.tell(), 2);
+        assert_eq!(buffer.as_slice(), &[3]);
+        Ok(())
     }
 
-    pub fn commit(&mut self) {
-        let consumed = self.consumed();
-        self.buffer.consume(consumed);
-        self.consumed = 0;
+    #[test]
+    fn init_commit_leaves_buffer_on_need_more() -> AnyResult<()> {
+        let mut buffer = Buffer::new(8);
+        buffer.extend(&[1])?;
+
+        let err = {
+            let mut cursor = Cursor::new(&mut buffer);
+            cursor
+                .init_commit::<TwoByteParser>()
+                .expect_err("parser should need more data")
+        };
+
+        assert!(err.is::<NeedMoreData>());
+        assert_eq!(buffer.tell(), 0);
+        assert_eq!(buffer.as_slice(), &[1]);
+        Ok(())
     }
 
-    pub fn consumed(&self) -> usize {
-        self.consumed
+    #[test]
+    fn view_does_not_consume_buffer() -> AnyResult<()> {
+        let mut buffer = Buffer::new(8);
+        buffer.extend(&[1, 2, 3])?;
+
+        {
+            let cursor = Cursor::new(&mut buffer);
+            let view = cursor.view();
+            assert_eq!(view.remaining(), &[1, 2, 3]);
+            assert_eq!(view.offset(), 0);
+        }
+
+        assert_eq!(buffer.tell(), 0);
+        assert_eq!(buffer.as_slice(), &[1, 2, 3]);
+        Ok(())
     }
 }

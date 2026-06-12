@@ -58,14 +58,20 @@ pub struct RawStringCountParser {
     remain: u64,
     to_skip: u64,
     counted: u64,
+    suffix_len: u64,
 }
 
 impl RawStringCountParser {
     pub fn new(remain: u64) -> Self {
+        Self::with_suffix(remain, 0)
+    }
+
+    pub fn with_suffix(remain: u64, suffix_len: u64) -> Self {
         Self {
             remain,
             to_skip: 0,
             counted: 0,
+            suffix_len,
         }
     }
 }
@@ -84,14 +90,14 @@ impl Parser for RawStringCountParser {
 
             let (input, str_len) = read_rdb_len(buffer.as_slice()).context("read string length")?;
             let (input, to_skip) = match str_len {
-                RDBLen::Simple(len) => (input, len),
-                RDBLen::IntStr(_) => (input, 0),
+                RDBLen::Simple(len) => (input, len + self.suffix_len),
+                RDBLen::IntStr(_) => (input, self.suffix_len),
                 RDBLen::LZFStr => {
                     let (input, in_len) = read_rdb_len(input).context("read lzf string length")?;
                     let in_len = in_len.as_u64().context("in_len should be a number")?;
                     let (input, _out_len) =
                         read_rdb_len(input).context("read lzf string length")?;
-                    (input, in_len)
+                    (input, in_len + self.suffix_len)
                 }
             };
 

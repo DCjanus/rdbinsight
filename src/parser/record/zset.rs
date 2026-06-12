@@ -12,11 +12,9 @@ use crate::{
         },
         model::{Item, ZSetEncoding},
         record::{
-            list::ZipListLengthParser,
-            set::ListPackLengthParser,
-            string::{RawStringCountParser, StringEncodingParser},
+            list::ZipListLengthParser, set::ListPackLengthParser, string::RawStringCountParser,
         },
-        runtime::combinators::{RDBStrBox, ReduceParser, Seq2Parser, skip_bytes::SkipBytesParser},
+        runtime::combinators::RDBStrBox,
     },
 };
 
@@ -155,7 +153,7 @@ impl Parser for ZSetListPackRecordParser {
 pub struct ZSet2RecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ReduceParser<ZSet2SkipListEntryParser, u64>,
+    entrust: RawStringCountParser,
 }
 
 impl ParserInit for ZSet2RecordParser {
@@ -169,8 +167,7 @@ impl ParserInit for ZSet2RecordParser {
 
             crate::parser_trace!("zset2.skiplist");
 
-            let entrust: ReduceParser<ZSet2SkipListEntryParser, u64> =
-                ReduceParser::new(member_count, 0, |acc, _: _| acc + 1);
+            let entrust = RawStringCountParser::with_suffix(member_count, 8);
 
             Ok((input, Self {
                 started: buffer.tell(),
@@ -195,5 +192,3 @@ impl Parser for ZSet2RecordParser {
         })
     }
 }
-
-type ZSet2SkipListEntryParser = Seq2Parser<StringEncodingParser, SkipBytesParser<8>>;

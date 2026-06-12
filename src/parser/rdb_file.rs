@@ -45,6 +45,7 @@ enum ItemParser {
     StreamListPack(StreamListPackRecordParser<{ StreamEncoding::ListPacks }>),
     StreamListPack2(StreamListPackRecordParser<{ StreamEncoding::ListPacks2 }>),
     StreamListPack3(StreamListPackRecordParser<{ StreamEncoding::ListPacks3 }>),
+    StreamListPack4(StreamListPackRecordParser<{ StreamEncoding::ListPacks4 }>),
     Set(SetRecordParser),
     SetIntSet(SetIntSetRecordParser),
     SetListPack(SetListPackRecordParser),
@@ -88,7 +89,7 @@ impl RDBFileParser {
         let version = std::str::from_utf8(version).context("version should be utf8")?;
         let version: u64 = version.parse().context("version should be a number")?;
         ensure!(version >= 1, "version should be >= 1");
-        ensure!(version <= 12, "version should be <= 12");
+        ensure!(version <= 13, "version should be <= 13");
 
         self.version = version;
         buffer.consume_to(input.as_ptr());
@@ -317,6 +318,9 @@ impl RDBFileParser {
                 >>(buffer, child_input_offset),
                 RDBType::StreamListPacks3 => self.init_and_run::<StreamListPackRecordParser<
                     { StreamEncoding::ListPacks3 },
+                >>(buffer, child_input_offset),
+                RDBType::StreamListPacks4 => self.init_and_run::<StreamListPackRecordParser<
+                    { StreamEncoding::ListPacks4 },
                 >>(buffer, child_input_offset),
                 RDBType::HashMetadataPreGA => bail!("unsupported type: HashMetadataPreGA"),
                 RDBType::HashListPackExPreGA => bail!("unsupported type: HashListPackExPreGA"),

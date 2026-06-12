@@ -217,6 +217,7 @@ pub enum StreamEncoding {
     ListPacks,
     ListPacks2,
     ListPacks3,
+    ListPacks4,
 }
 
 /// Opcode of RDB, ref: https://github.com/redis/redis/blob/2ba81b70957691a6a010e785225672e6657e53e8/src/rdb.h#L93
@@ -266,6 +267,7 @@ pub enum RDBType {
     HashListPackExPreGA = 23, // RDB_TYPE_HASH_LISTPACK_EX_PRE_GA
     HashMetadata = 24,        // RDB_TYPE_HASH_METADATA
     HashListPackEx = 25,      // RDB_TYPE_HASH_LISTPACK_EX
+    StreamListPacks4 = 26,    // RDB_TYPE_STREAM_LISTPACKS_4
 }
 
 /// Module serialized values sub opcodes, ref: https://github.com/redis/redis/blob/2ba81b70957691a6a010e785225672e6657e53e8/src/rdb.h#L133

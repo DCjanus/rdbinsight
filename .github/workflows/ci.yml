@@ -88,17 +88,31 @@ jobs:
         run: ${SCCACHE_PATH} --show-stats
 
   parser-benchmark:
-    name: Parser Benchmark
+    name: Parser Benchmark (${{ matrix.shard }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: strings-lists
+            profiles: "string,string-int,list,list-ziplist,list-quicklist,list-quicklist2"
+          - shard: sets-arrays
+            profiles: "set,set-intset,set-listpack,array"
+          - shard: hashes
+            profiles: "hash,hash-ziplist,hash-listpack,hash-zipmap,hash-metadata,hash-listpack-ex"
+          - shard: zsets
+            profiles: "zset,zset2,zset-ziplist,zset-listpack"
+          - shard: mixed
+            profiles: "mixed"
     env:
-      RDBINSIGHT_BENCH_PROFILES: "string,string-int,list,list-ziplist,list-quicklist,list-quicklist2,set,set-intset,set-listpack,hash,hash-ziplist,hash-listpack,hash-zipmap,hash-metadata,hash-listpack-ex,array,zset,zset2,zset-ziplist,zset-listpack,mixed"
+      RDBINSIGHT_BENCH_PROFILES: ${{ matrix.profiles }}
       RDBINSIGHT_BENCH_GENERATED_BYTES: "16777216"
       RDBINSIGHT_BENCH_MAX_SLOWDOWN_PERCENT: "30"
       RDBINSIGHT_BENCH_SAMPLE_SIZE: "10"
       RDBINSIGHT_BENCH_WARM_UP_SECS: "1"
-      RDBINSIGHT_BENCH_MEASUREMENT_SECS: "1"
+      RDBINSIGHT_BENCH_MEASUREMENT_SECS: "2"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -128,7 +142,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: parser-benchmark
+          name: parser-benchmark-${{ matrix.shard }}
           path: |
             parser-benchmark-*.txt
             target/criterion-base

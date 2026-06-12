@@ -54,10 +54,15 @@ jobs:
           mkdir -p /tmp/parser-benchmark-comment
           if ! gh run download "$run_id" \
             --repo "$REPO" \
-            --name parser-benchmark \
+            --pattern "parser-benchmark-*" \
             --dir /tmp/parser-benchmark-comment; then
-            echo "No parser-benchmark artifact found on CI run $run_id; skipping benchmark comment."
-            exit 0
+            if ! gh run download "$run_id" \
+              --repo "$REPO" \
+              --name parser-benchmark \
+              --dir /tmp/parser-benchmark-comment; then
+              echo "No parser-benchmark artifact found on CI run $run_id; skipping benchmark comment."
+              exit 0
+            fi
           fi
 
           export BENCHMARK_RUN_ID="$run_id"
@@ -66,8 +71,9 @@ jobs:
           const path = require("node:path");
 
           const marker = "<!-- rdbinsight-parser-benchmark -->";
-          const baseRoot = "/tmp/parser-benchmark-comment/target/criterion-base";
-          const currentRoot = "/tmp/parser-benchmark-comment/target/criterion-current";
+          const artifactRoot = "/tmp/parser-benchmark-comment";
+          const baseRoots = [];
+          const currentRoots = [];
           const expectedBenchmarkNames = [
             "parser/parse_rdb/synthetic-hash-listpack-ex-records-16MiB",
             "parser/parse_rdb/synthetic-hash-listpack-records-16MiB",
@@ -114,8 +120,22 @@ jobs:
             return out;
           }
 
-          function benchmarkName(estimatesPath) {
-            return path.relative(currentRoot, estimatesPath).split(path.sep).slice(0, -2).join("/");
+          function collectCriterionRoots(dir) {
+            if (!fileExists(dir)) return;
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const entryPath = path.join(dir, entry.name);
+              if (!entry.isDirectory()) continue;
+              if (entryPath.endsWith(`${path.sep}target${path.sep}criterion-base`)) {
+                baseRoots.push(entryPath);
+              } else if (entryPath.endsWith(`${path.sep}target${path.sep}criterion-current`)) {
+                currentRoots.push(entryPath);
+              }
+              collectCriterionRoots(entryPath);
+            }
+          }
+
+          function benchmarkName(root, estimatesPath) {
+            return path.relative(root, estimatesPath).split(path.sep).slice(0, -2).join("/");
           }
 
           function median(filePath) {
@@ -127,8 +147,10 @@ jobs:
           }
 
           function bytesFor(name) {
-            const benchmarkPath = path.join(currentRoot, ...name.split("/"), "new", "benchmark.json");
-            if (!fileExists(benchmarkPath)) return Number.NaN;
+            const benchmarkPath = currentRoots
+              .map((root) => path.join(root, ...name.split("/"), "new", "benchmark.json"))
+              .find(fileExists);
+            if (!benchmarkPath) return Number.NaN;
             const value = readJson(benchmarkPath).throughput?.Bytes ?? Number.NaN;
             return Number.isFinite(value) && value > 0 ? value : Number.NaN;
           }
@@ -178,19 +200,32 @@ jobs:
             return `[${markdownTableCell(label)}](https://github.com/${process.env.REPO}/actions/runs/${runId})`;
           }
 
-          const rows = walkFiles(currentRoot, "estimates.json")
-            .filter((filePath) => filePath.endsWith(`${path.sep}new${path.sep}estimates.json`))
-            .flatMap((filePath) => {
-              const name = benchmarkName(filePath);
-              if (!expectedBenchmarkNameSet.has(name)) {
-                console.log(`Skipping unexpected benchmark name: ${name}`);
-                return [];
-              }
-              const basePath = path.join(baseRoot, ...name.split("/"), "base", "estimates.json");
-              const currentNs = median(filePath);
-              const baseNs = fileExists(basePath) ? median(basePath) : Number.NaN;
-              return [{ name, currentNs, baseNs, bytes: bytesFor(name) }];
-            })
+          collectCriterionRoots(artifactRoot);
+          if (currentRoots.length === 0) {
+            throw new Error("no criterion-current directories found in benchmark artifacts");
+          }
+          if (baseRoots.length === 0) {
+            throw new Error("no criterion-base directories found in benchmark artifacts");
+          }
+
+          const rows = currentRoots
+            .flatMap((currentRoot) =>
+              walkFiles(currentRoot, "estimates.json")
+                .filter((filePath) => filePath.endsWith(`${path.sep}new${path.sep}estimates.json`))
+                .flatMap((filePath) => {
+                  const name = benchmarkName(currentRoot, filePath);
+                  if (!expectedBenchmarkNameSet.has(name)) {
+                    console.log(`Skipping unexpected benchmark name: ${name}`);
+                    return [];
+                  }
+                  const basePath = baseRoots
+                    .map((baseRoot) => path.join(baseRoot, ...name.split("/"), "base", "estimates.json"))
+                    .find(fileExists);
+                  const currentNs = median(filePath);
+                  const baseNs = basePath ? median(basePath) : Number.NaN;
+                  return [{ name, currentNs, baseNs, bytes: bytesFor(name) }];
+                }),
+            )
             .sort((a, b) => a.name.localeCompare(b.name));
 
           const foundBenchmarkNameSet = new Set(rows.map((row) => row.name));

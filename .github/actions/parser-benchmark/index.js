@@ -205,7 +205,7 @@ function collectBenchmarkRows(hasBaseBaseline) {
   return rows;
 }
 
-function benchmarkTable(rows) {
+function benchmarkMarkdownTable(rows) {
   if (rows.length === 0) {
     return "_No Criterion benchmark estimates were found._";
   }
@@ -222,6 +222,48 @@ function benchmarkTable(rows) {
   }
 
   return table.join("\n");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function benchmarkHtmlTable(rows) {
+  if (rows.length === 0) {
+    return "<p><em>No Criterion benchmark estimates were found.</em></p>";
+  }
+
+  const body = rows
+    .map(
+      (row) => `<tr>
+<td><code>${escapeHtml(row.name)}</code></td>
+<td align="right">${escapeHtml(formatDuration(row.baseNs))}</td>
+<td align="right">${escapeHtml(formatDuration(row.currentNs))}</td>
+<td align="right">${escapeHtml(formatChange(row.currentNs, row.baseNs))}</td>
+<td align="right">${escapeHtml(formatThroughput(row.bytes, row.currentNs))}</td>
+</tr>`,
+    )
+    .join("\n");
+
+  return `<table>
+<thead>
+<tr>
+<th>Benchmark</th>
+<th align="right">Base median</th>
+<th align="right">Current median</th>
+<th align="right">Change</th>
+<th align="right">Current throughput</th>
+</tr>
+</thead>
+<tbody>
+${body}
+</tbody>
+</table>`;
 }
 
 function benchmarkNotes() {
@@ -252,7 +294,7 @@ async function publishSummary(rows) {
     .addHeading("Parser benchmark", 2)
     .addList(notes)
     .addHeading("Comparison", 3)
-    .addRaw(`${benchmarkTable(rows)}\n`);
+    .addRaw(benchmarkHtmlTable(rows), true);
 
   if (fileExists(BASE_OUTPUT)) {
     core.summary
@@ -325,7 +367,7 @@ async function upsertPullRequestComment(rows) {
     "",
     notes,
     "",
-    benchmarkTable(rows),
+    benchmarkMarkdownTable(rows),
     "",
     "_This comment is updated automatically by CI._",
   ].join("\n");

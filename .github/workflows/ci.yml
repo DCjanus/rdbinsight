@@ -14,12 +14,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: Check (fmt + clippy + tests)
+  lint:
+    name: Lint (fmt + clippy)
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,27 +31,51 @@ jobs:
         id: toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:
-          components: rustfmt, llvm-tools-preview, clippy
+          components: rustfmt, clippy
 
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Enable sccache for Rust builds
-        run: |
-          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
-          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-target-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-${{ steps.toolchain.outputs.cachekey }}-
 
       - name: Run cargo fmt --check (nightly)
         run: cargo +nightly fmt --all -- --check
 
       - name: Run cargo clippy (nightly)
         run: cargo +nightly clippy --all -- -D warnings
+
+  coverage:
+    name: Coverage (llvm-cov + nextest)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install nightly Rust toolchain (llvm-tools-preview)
+        id: toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-target-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-${{ steps.toolchain.outputs.cachekey }}-
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage report (cargo llvm-cov + nextest)
         run: |
@@ -68,13 +91,9 @@ jobs:
           files: codecov.json
           fail_ci_if_error: true
 
-      - name: Show sccache stats
-        if: always()
-        run: ${SCCACHE_PATH} --show-stats
-
   docker-builds:
     name: Docker Build (${{ matrix.name }})
-    needs: [check]
+    needs: [lint, coverage]
     if: ${{ github.event_name != 'pull_request' }}
     strategy:
       fail-fast: false

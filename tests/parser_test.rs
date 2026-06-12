@@ -8,6 +8,7 @@
 // `repl-diskless-sync-delay` which should be set to 0 in tests to avoid slowdowns.
 
 use std::{
+    io::Cursor,
     path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -51,6 +52,20 @@ async fn empty_rdb_test() -> AnyResult<()> {
     let items = utils::collect_items(file).await?;
     assert_eq!(items.len(), 5);
     assert!(items.iter().all(|item| matches!(item, Item::Aux { .. })));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn unknown_rdb_flag_reports_context() -> AnyResult<()> {
+    let err = utils::collect_items(Cursor::new(b"REDIS0014\x08".to_vec()))
+        .await
+        .expect_err("unknown RDB flag should fail");
+    let message = format!("{err:#}");
+
+    assert!(message.contains("unknown RDB flag: 0x08"), "{message}");
+    assert!(message.contains("RDB version: 14"), "{message}");
+    assert!(message.contains("remaining bytes: 0"), "{message}");
 
     Ok(())
 }
@@ -1237,13 +1252,22 @@ async fn module2_encoding_test() -> AnyResult<()> {
         .await?;
 
     let guard = trace::capture();
-    let items = read_filtered_items(&rdb_path).await?;
+    let file = tokio::fs::File::open(&rdb_path).await?;
+    let raw_items = utils::collect_items(file).await?;
+    let has_module_aux = raw_items
+        .iter()
+        .any(|it| matches!(it, Item::ModuleAux { .. }));
+    let items = utils::filter_items(raw_items);
 
     let modules: Vec<_> = items
         .iter()
         .filter(|it| matches!(it, Item::ModuleRecord { .. }))
         .collect();
     assert!(!modules.is_empty(), "expected at least one ModuleRecord");
+    assert!(
+        has_module_aux,
+        "expected Redis Stack dump to include ModuleAux"
+    );
     assert!(guard.hit("module2.raw"));
 
     Ok(())
@@ -1304,6 +1328,44 @@ async fn expiry_time_ms_item_order_test() -> AnyResult<()> {
         _ => panic!("first item should be ExpiryMs"),
     };
     assert_eq!(actual_expire_at_ms, expected_expire_at_ms);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn expiry_time_seconds_legacy_rdb_item_order_test() -> AnyResult<()> {
+    let expected_expire_at_s = 1_700_000_000_u32;
+    let mut rdb = Vec::new();
+    rdb.extend_from_slice(b"REDIS0002");
+    rdb.push(0xfd); // RDB_OPCODE_EXPIRETIME
+    rdb.extend_from_slice(&expected_expire_at_s.to_le_bytes());
+    rdb.push(0x00); // RDB_TYPE_STRING
+    rdb.push(0x0b);
+    rdb.extend_from_slice(b"seconds_key");
+    rdb.push(0x03);
+    rdb.extend_from_slice(b"foo");
+    rdb.push(0xff); // RDB_OPCODE_EOF without checksum in legacy RDB versions
+
+    let guard = trace::capture();
+    let items = utils::filter_items(utils::collect_items(Cursor::new(rdb)).await?);
+    assert!(
+        guard.hit("expiry.s"),
+        "expected expiry.s trace event; captured: {:?}",
+        guard.collected()
+    );
+
+    assert_eq!(items.len(), 2, "should emit ExpiryMs + StringRecord");
+
+    let Item::StringRecord { key, .. } = &items[1] else {
+        panic!("expected StringRecord after ExpiryMs");
+    };
+    assert_eq!(*key, RDBStr::Str(Bytes::from("seconds_key")));
+
+    let actual_expire_at_ms = match &items[0] {
+        Item::ExpiryMs { expire_at_ms } => *expire_at_ms,
+        _ => panic!("first item should be ExpiryMs"),
+    };
+    assert_eq!(actual_expire_at_ms, u64::from(expected_expire_at_s) * 1000);
 
     Ok(())
 }

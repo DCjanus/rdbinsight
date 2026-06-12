@@ -4,7 +4,6 @@ use crate::{
     helper::AnyResult,
     parse_try,
     parser::{
-        StringEncoding,
         core::{
             buffer::{Buffer, skip_bytes},
             combinators::{read_be_u32, read_le_u64, read_u8},
@@ -14,7 +13,9 @@ use crate::{
         },
         model::{HashEncoding, Item},
         record::{
-            list::ZipListLengthParser, set::ListPackLengthParser, string::StringEncodingParser,
+            list::ZipListLengthParser,
+            set::ListPackLengthParser,
+            string::{RawStringCountParser, StringEncodingParser},
         },
         runtime::combinators::{RDBLenParser, RDBStrBox, ReduceParser, Seq3Parser},
     },
@@ -23,7 +24,7 @@ use crate::{
 pub struct HashRecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ReduceParser<StringEncodingParser, u64>,
+    entrust: RawStringCountParser,
 }
 
 impl ParserInit for HashRecordParser {
@@ -34,11 +35,7 @@ impl ParserInit for HashRecordParser {
             let pair_count = pair_count
                 .as_u64()
                 .context("hash length should be a number")?;
-            let entrust = ReduceParser::<StringEncodingParser, u64>::new(
-                pair_count * 2,
-                0,
-                |acc, _: StringEncoding| acc + 1,
-            );
+            let entrust = RawStringCountParser::new(pair_count * 2);
 
             Ok((input, Self {
                 started: buffer.tell(),

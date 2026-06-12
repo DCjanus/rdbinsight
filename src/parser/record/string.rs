@@ -54,6 +54,59 @@ impl Parser for StringEncodingParser {
     }
 }
 
+pub struct RawStringCountParser {
+    remain: u64,
+    to_skip: u64,
+    counted: u64,
+}
+
+impl RawStringCountParser {
+    pub fn new(remain: u64) -> Self {
+        Self {
+            remain,
+            to_skip: 0,
+            counted: 0,
+        }
+    }
+}
+
+impl Parser for RawStringCountParser {
+    type Output = u64;
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        while self.remain > 0 {
+            if self.to_skip > 0 {
+                skip_bytes(buffer, &mut self.to_skip)?;
+                self.remain -= 1;
+                self.counted += 1;
+                continue;
+            }
+
+            let (input, str_len) = read_rdb_len(buffer.as_slice()).context("read string length")?;
+            let (input, to_skip) = match str_len {
+                RDBLen::Simple(len) => (input, len),
+                RDBLen::IntStr(_) => (input, 0),
+                RDBLen::LZFStr => {
+                    let (input, in_len) = read_rdb_len(input).context("read lzf string length")?;
+                    let in_len = in_len.as_u64().context("in_len should be a number")?;
+                    let (input, _out_len) =
+                        read_rdb_len(input).context("read lzf string length")?;
+                    (input, in_len)
+                }
+            };
+
+            buffer.consume_to(input.as_ptr());
+            self.to_skip = to_skip;
+            if self.to_skip == 0 {
+                self.remain -= 1;
+                self.counted += 1;
+            }
+        }
+
+        Ok(self.counted)
+    }
+}
+
 pub struct StringRecordParser {
     started: u64,
     key: RDBStr,

@@ -12,8 +12,11 @@ use crate::{
             raw::{RDBStr, read_rdb_len, read_rdb_str},
             view::View,
         },
-        model::{Item, ListEncoding, StringEncoding},
-        record::{set::ListPackLengthParser, string::StringEncodingParser},
+        model::{Item, ListEncoding},
+        record::{
+            set::ListPackLengthParser,
+            string::{RawStringCountParser, StringEncodingParser},
+        },
         runtime::combinators::{RDBStrBox, ReduceParser},
     },
 };
@@ -21,7 +24,7 @@ use crate::{
 pub struct ListRecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ReduceParser<StringEncodingParser, u64>,
+    entrust: RawStringCountParser,
 }
 
 impl ParserInit for ListRecordParser {
@@ -32,8 +35,7 @@ impl ParserInit for ListRecordParser {
             let member_count = member_count
                 .as_u64()
                 .context("list length should be a number")?;
-            let entrust: ReduceParser<StringEncodingParser, u64> =
-                ReduceParser::new(member_count, 0, |acc, _: StringEncoding| acc + 1);
+            let entrust = RawStringCountParser::new(member_count);
             Ok((input, Self {
                 started: buffer.tell(),
                 key,

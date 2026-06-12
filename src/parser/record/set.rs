@@ -4,7 +4,6 @@ use crate::{
     helper::AnyResult,
     parse_try,
     parser::{
-        StringEncoding,
         core::{
             buffer::{Buffer, skip_bytes},
             combinators::{read_exact, read_u8},
@@ -13,15 +12,15 @@ use crate::{
             view::View,
         },
         model::{Item, SetEncoding},
-        record::string::StringEncodingParser,
-        runtime::combinators::{RDBStrBox, ReduceParser},
+        record::string::RawStringCountParser,
+        runtime::combinators::RDBStrBox,
     },
 };
 
 pub struct SetRecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ReduceParser<StringEncodingParser, u64>,
+    entrust: RawStringCountParser,
 }
 
 impl ParserInit for SetRecordParser {
@@ -33,8 +32,7 @@ impl ParserInit for SetRecordParser {
                 .as_u64()
                 .context("set length should be a number")?;
 
-            let entrust: ReduceParser<StringEncodingParser, u64> =
-                ReduceParser::new(member_count, 0, |acc, _: StringEncoding| acc + 1);
+            let entrust = RawStringCountParser::new(member_count);
             Ok((input, Self {
                 started: buffer.tell(),
                 key,

@@ -4,7 +4,6 @@ use crate::{
     helper::AnyResult,
     parse_try,
     parser::{
-        StringEncoding,
         core::{
             buffer::Buffer,
             parse::{ParseResult, Parser, ParserInit},
@@ -13,7 +12,9 @@ use crate::{
         },
         model::{Item, ZSetEncoding},
         record::{
-            list::ZipListLengthParser, set::ListPackLengthParser, string::StringEncodingParser,
+            list::ZipListLengthParser,
+            set::ListPackLengthParser,
+            string::{RawStringCountParser, StringEncodingParser},
         },
         runtime::combinators::{RDBStrBox, ReduceParser, Seq2Parser, skip_bytes::SkipBytesParser},
     },
@@ -22,7 +23,7 @@ use crate::{
 pub struct ZSetRecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ReduceParser<StringEncodingParser, u64>,
+    entrust: RawStringCountParser,
 }
 
 impl ParserInit for ZSetRecordParser {
@@ -33,8 +34,7 @@ impl ParserInit for ZSetRecordParser {
             let member_count = member_count
                 .as_u64()
                 .context("zset length should be a number")?;
-            let entrust: ReduceParser<StringEncodingParser, u64> =
-                ReduceParser::new(member_count * 2, 0, |acc, _: StringEncoding| acc + 1);
+            let entrust = RawStringCountParser::new(member_count * 2);
 
             crate::parser_trace!("zset.skiplist");
 

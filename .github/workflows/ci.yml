@@ -92,9 +92,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: write
     env:
-      RDBINSIGHT_BENCH_PROFILE: "mixed"
-      RDBINSIGHT_BENCH_GENERATED_BYTES: "67108864"
+      RDBINSIGHT_BENCH_PROFILES: "string,list,set,hash,zset,zset2,mixed"
+      RDBINSIGHT_BENCH_GENERATED_BYTES: "16777216"
       RDBINSIGHT_BENCH_SAMPLE_SIZE: "10"
       RDBINSIGHT_BENCH_WARM_UP_SECS: "1"
       RDBINSIGHT_BENCH_MEASUREMENT_SECS: "1"
@@ -121,6 +122,7 @@ jobs:
       - name: Run parser benchmark
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: node .github/actions/parser-benchmark/index.js
 
       - name: Upload benchmark artifacts

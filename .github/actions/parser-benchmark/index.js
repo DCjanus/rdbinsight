@@ -12,7 +12,6 @@ const COMMENT_MARKER = "<!-- rdbinsight-parser-benchmark -->";
 const CRITERION_DIR = repoPath("target", "criterion");
 const BASE_CRITERION_DIR = repoPath("target", "criterion-base");
 const CURRENT_CRITERION_DIR = repoPath("target", "criterion-current");
-const BASE_COMPATIBLE_PROFILES = "string,list,set,hash,zset,zset2,mixed";
 const DEFAULT_CURRENT_PROFILES =
   "string,string-int,list,list-ziplist,list-quicklist,list-quicklist2,set,set-intset,set-listpack,hash,hash-ziplist,hash-listpack,hash-zipmap,hash-metadata,hash-listpack-ex,zset,zset2,zset-ziplist,zset-listpack,mixed";
 
@@ -90,6 +89,7 @@ async function benchmarkBase() {
     return false;
   }
 
+  fs.copyFileSync(repoPath("benches", "parser.rs"), path.join(worktree, "benches", "parser.rs"));
   await run(
     "cargo",
     ["+nightly", "bench", "--bench", "parser", "--", "--noplot", "--save-baseline", "base"],
@@ -97,7 +97,10 @@ async function benchmarkBase() {
         cwd: worktree,
         env: envWith({
           CARGO_TARGET_DIR: repoPath("target"),
-          RDBINSIGHT_BENCH_PROFILES: BASE_COMPATIBLE_PROFILES,
+          RDBINSIGHT_BENCH_PROFILES:
+            process.env.RDBINSIGHT_BENCH_PROFILES ||
+            process.env.RDBINSIGHT_BENCH_PROFILE ||
+            DEFAULT_CURRENT_PROFILES,
         }),
         outputPath: BASE_OUTPUT,
       },

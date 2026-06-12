@@ -71,11 +71,11 @@ fn push_rdb_int_str(out: &mut Vec<u8>, value: u64) {
         }
         0x100..=0xffff => {
             out.push(0xc1);
-            out.extend_from_slice(&(value as u16).to_be_bytes());
+            out.extend_from_slice(&(value as u16).to_le_bytes());
         }
         _ => {
             out.push(0xc2);
-            out.extend_from_slice(&(value as u32).to_be_bytes());
+            out.extend_from_slice(&(value as u32).to_le_bytes());
         }
     }
 }

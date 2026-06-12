@@ -11,7 +11,9 @@ use wincode::{
 
 use crate::{
     helper::AnyResult,
-    parser::core::combinators::{read_be_u16, read_be_u32, read_be_u64, read_exact, read_u8},
+    parser::core::combinators::{
+        read_be_u32, read_be_u64, read_exact, read_le_u16, read_le_u32, read_u8,
+    },
 };
 
 #[derive(Clone, Hash, Debug)]
@@ -55,11 +57,11 @@ pub fn read_rdb_len(input: &[u8]) -> AnyResult<(&[u8], RDBLen)> {
             Ok((input, RDBLen::IntStr(ret as u64)))
         }
         0b1100_0001 => {
-            let (input, ret) = read_be_u16(input)?;
+            let (input, ret) = read_le_u16(input)?;
             Ok((input, RDBLen::IntStr(ret as u64)))
         }
         0b1100_0010 => {
-            let (input, ret) = read_be_u32(input)?;
+            let (input, ret) = read_le_u32(input)?;
             Ok((input, RDBLen::IntStr(ret as u64)))
         }
         0b1100_0011 => Ok((input, RDBLen::LZFStr)),
@@ -199,6 +201,15 @@ impl Display for RDBStr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rdb_integer_string_uses_little_endian_payload() {
+        let (_, value) = read_rdb_str(&[0xc1, 0x00, 0x01]).unwrap();
+        assert_eq!(value, RDBStr::Int(256));
+
+        let (_, value) = read_rdb_str(&[0xc2, 0x00, 0x00, 0x01, 0x00]).unwrap();
+        assert_eq!(value, RDBStr::Int(65_536));
+    }
 
     #[test]
     fn str_vs_str_ordering() {

@@ -12,6 +12,9 @@ const COMMENT_MARKER = "<!-- rdbinsight-parser-benchmark -->";
 const CRITERION_DIR = repoPath("target", "criterion");
 const BASE_CRITERION_DIR = repoPath("target", "criterion-base");
 const CURRENT_CRITERION_DIR = repoPath("target", "criterion-current");
+const BASE_COMPATIBLE_PROFILES = "string,list,set,hash,zset,zset2,mixed";
+const DEFAULT_CURRENT_PROFILES =
+  "string,string-int,list,list-ziplist,list-quicklist,list-quicklist2,set,set-intset,set-listpack,hash,hash-ziplist,hash-listpack,hash-zipmap,hash-metadata,hash-listpack-ex,zset,zset2,zset-ziplist,zset-listpack,mixed";
 
 function repoPath(...segments) {
   return path.join(process.env.GITHUB_WORKSPACE || process.cwd(), ...segments);
@@ -90,12 +93,15 @@ async function benchmarkBase() {
   await run(
     "cargo",
     ["+nightly", "bench", "--bench", "parser", "--", "--noplot", "--save-baseline", "base"],
-    {
-      cwd: worktree,
-      env: envWith({ CARGO_TARGET_DIR: repoPath("target") }),
-      outputPath: BASE_OUTPUT,
-    },
-  );
+      {
+        cwd: worktree,
+        env: envWith({
+          CARGO_TARGET_DIR: repoPath("target"),
+          RDBINSIGHT_BENCH_PROFILES: BASE_COMPATIBLE_PROFILES,
+        }),
+        outputPath: BASE_OUTPUT,
+      },
+    );
   copyCriterionOutput(BASE_CRITERION_DIR);
   return true;
 }
@@ -296,10 +302,10 @@ function benchmarkNotes() {
   }
 
   const generatedBytes = process.env.RDBINSIGHT_BENCH_GENERATED_BYTES || "16777216";
-	  const profiles =
-	    process.env.RDBINSIGHT_BENCH_PROFILES ||
-	    process.env.RDBINSIGHT_BENCH_PROFILE ||
-	    "string,string-int,list,list-ziplist,list-quicklist,list-quicklist2,set,set-intset,set-listpack,hash,hash-ziplist,hash-listpack,hash-zipmap,hash-metadata,hash-listpack-ex,zset,zset2,zset-ziplist,zset-listpack,mixed";
+    const profiles =
+      process.env.RDBINSIGHT_BENCH_PROFILES ||
+      process.env.RDBINSIGHT_BENCH_PROFILE ||
+      DEFAULT_CURRENT_PROFILES;
   const inputDescription = process.env.RDBINSIGHT_BENCH_RDB
     ? `Input: external RDB from ${process.env.RDBINSIGHT_BENCH_RDB}.`
     : `Input: generated ${generatedBytes} byte synthetic RDB profiles: ${profiles}.`;

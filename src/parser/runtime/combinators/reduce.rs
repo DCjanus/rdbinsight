@@ -2,7 +2,6 @@ use crate::{
     helper::AnyResult,
     parser::core::{
         buffer::Buffer,
-        cursor::Cursor,
         parse::{Parser, ParserInit},
     },
 };
@@ -64,11 +63,7 @@ where
                     .take()
                     .expect("Accumulator should contain final value"));
             }
-
-            let entrust = {
-                let mut cursor = Cursor::new(buffer);
-                cursor.init_commit::<P>()?
-            };
+            let entrust = buffer.init_commit::<P>()?;
             self.entrust = Some(entrust);
         }
     }

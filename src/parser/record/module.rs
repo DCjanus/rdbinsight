@@ -10,7 +10,6 @@ use crate::{
         core::{
             buffer::Buffer,
             combinators::read_exact,
-            cursor::Cursor,
             parse::{ParseResult, Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
             view::View,
@@ -91,12 +90,9 @@ impl Parser for Module2RecordParser {
                 }
                 RDBModuleOpcode::String => {
                     let input_offset = buffer.len() - input.len();
-                    let entrust = {
-                        let mut cursor = Cursor::new(buffer);
-                        cursor
-                            .init_commit_from_offset::<StringEncodingParser>(input_offset)
-                            .into_any_result()?
-                    };
+                    let entrust = buffer
+                        .init_commit_from_offset::<StringEncodingParser>(input_offset)
+                        .into_any_result()?;
                     self.entrust = Some(entrust);
                 }
             }
@@ -175,12 +171,9 @@ impl Parser for ModuleAuxParser {
                 }
                 RDBModuleOpcode::String => {
                     let input_offset = buffer.len() - input.len();
-                    let entrust = {
-                        let mut cursor = Cursor::new(buffer);
-                        cursor
-                            .init_commit_from_offset::<StringEncodingParser>(input_offset)
-                            .into_any_result()?
-                    };
+                    let entrust = buffer
+                        .init_commit_from_offset::<StringEncodingParser>(input_offset)
+                        .into_any_result()?;
                     self.entrust = Some(entrust);
                 }
             };

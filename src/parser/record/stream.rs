@@ -6,7 +6,6 @@ use crate::{
     parser::{
         core::{
             buffer::{Buffer, skip_bytes},
-            cursor::Cursor,
             parse::{ParseResult, Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
             view::View,
@@ -559,16 +558,13 @@ impl<const ENC: StreamEncoding> Parser for StreamIdmpParser<ENC> {
         }
 
         if self.entrust.is_none() {
-            let entrust = {
-                let mut cursor = Cursor::new(buffer);
-                cursor.init_commit::<Seq5Parser<
-                    RDBLenParser,
-                    RDBLenParser,
-                    StreamIdmpProducersParser,
-                    RDBLenParser,
-                    RDBLenParser,
-                >>()?
-            };
+            let entrust = buffer.init_commit::<Seq5Parser<
+                RDBLenParser,
+                RDBLenParser,
+                StreamIdmpProducersParser,
+                RDBLenParser,
+                RDBLenParser,
+            >>()?;
             self.entrust = Some(entrust);
         }
 

@@ -8,7 +8,6 @@ use crate::{
         core::{
             buffer::Buffer,
             combinators::{read_exact, read_le_u32, read_le_u64, read_tag, read_u8},
-            cursor::Cursor,
             parse::{Parser, ParserInit},
             raw::{read_rdb_len, read_rdb_str},
         },
@@ -126,12 +125,9 @@ impl RDBFileParser {
     where
         E: Parser<Output = Item> + ParserInit + Into<ItemParser>,
     {
-        let entrust = {
-            let mut cursor = Cursor::new(buffer);
-            cursor
-                .init_commit_from_offset::<E>(input_offset)
-                .into_any_result()?
-        };
+        let entrust = buffer
+            .init_commit_from_offset::<E>(input_offset)
+            .into_any_result()?;
         let item = self.set_entrust(entrust, buffer)?;
         self.return_item(item)
     }

@@ -8,7 +8,6 @@ use crate::{
         core::{
             buffer::{Buffer, skip_bytes},
             combinators::{read_be_u32, read_le_u64, read_u8},
-            cursor::Cursor,
             parse::{ParseResult, Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
             view::View,
@@ -262,10 +261,7 @@ impl Parser for ZipMapPairCountParser {
                 self.entrust = None;
             }
 
-            let entrust = {
-                let mut cursor = Cursor::new(buffer);
-                cursor.init_commit::<IsEndZipMapPairParser>()?
-            };
+            let entrust = buffer.init_commit::<IsEndZipMapPairParser>()?;
             self.entrust = Some(entrust);
         }
     }

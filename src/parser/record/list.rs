@@ -8,7 +8,6 @@ use crate::{
         core::{
             buffer::{Buffer, skip_bytes},
             combinators::{read_be_u32, read_exact, read_u8},
-            cursor::Cursor,
             parse::{ParseResult, Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
             view::View,
@@ -273,10 +272,7 @@ impl Parser for QuickListLengthParser {
                 break;
             }
 
-            let entrust = {
-                let mut cursor = Cursor::new(buffer);
-                cursor.init_commit::<RDBStrBox<ZipListLengthParser>>()?
-            };
+            let entrust = buffer.init_commit::<RDBStrBox<ZipListLengthParser>>()?;
             if entrust.is_lzf() {
                 crate::parser_trace!("quicklist.ziplist.lzf");
             } else {

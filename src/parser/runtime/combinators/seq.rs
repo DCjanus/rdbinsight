@@ -2,7 +2,6 @@ use crate::{
     helper::AnyResult,
     parser::core::{
         buffer::Buffer,
-        cursor::Cursor,
         parse::{ParseResult, Parser, ParserInit},
         view::View,
     },
@@ -24,10 +23,7 @@ where P: Parser + ParserInit
         loop {
             match self {
                 Self::Init => {
-                    let p = {
-                        let mut cursor = Cursor::new(buffer);
-                        cursor.init_commit::<P>()?
-                    };
+                    let p = buffer.init_commit::<P>()?;
                     *self = Self::Call(p);
                 }
                 Self::Call(p) => {
@@ -148,10 +144,7 @@ mod tests {
         let mut buffer = Buffer::new(3);
         buffer.extend(&[0x12, 0x34, 0x56])?;
 
-        let mut parser = {
-            let mut cursor = Cursor::new(&mut buffer);
-            cursor.init_commit::<Seq2Parser<ByteParser, U16LeParser>>()?
-        };
+        let mut parser = buffer.init_commit::<Seq2Parser<ByteParser, U16LeParser>>()?;
 
         let (b, n) = parser.call(&mut buffer)?;
         assert_eq!(b, 0x12);
@@ -165,10 +158,7 @@ mod tests {
         let mut buffer = Buffer::new(1);
         buffer.extend(&[0xAA])?;
 
-        let mut parser = {
-            let mut cursor = Cursor::new(&mut buffer);
-            cursor.init_commit::<Seq2Parser<ByteParser, U16LeParser>>()?
-        };
+        let mut parser = buffer.init_commit::<Seq2Parser<ByteParser, U16LeParser>>()?;
 
         let err = parser
             .call(&mut buffer)

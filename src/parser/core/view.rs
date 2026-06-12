@@ -1,4 +1,4 @@
-use super::parse::{ParseError, ParseResult, ParserInit};
+use super::parse::{ParseResult, ParserInit};
 use crate::{
     helper::AnyResult,
     parser::{core::buffer::Buffer, error::NeedMoreData},
@@ -50,7 +50,7 @@ impl<'a> View<'a> {
                 ParseResult::Ok(output)
             }
             Err(e) if e.is::<NeedMoreData>() => ParseResult::NeedMore,
-            Err(e) => ParseResult::Err(ParseError::fatal(e)),
+            Err(e) => ParseResult::Err(e),
         }
     }
 
@@ -179,10 +179,13 @@ mod tests {
         ));
         assert_eq!(view.consumed(), 0);
 
-        match view.read::<()>(|_| Err(anyhow!("bad input"))) {
-            ParseResult::Err(ParseError::Fatal(e)) => assert_eq!(e.to_string(), "bad input"),
-            other => panic!("unexpected parse result: {other:?}"),
-        }
+        assert_eq!(
+            view.read::<()>(|_| Err(anyhow!("bad input")))
+                .into_any_result()
+                .unwrap_err()
+                .to_string(),
+            "bad input"
+        );
         Ok(())
     }
 
@@ -206,7 +209,7 @@ mod tests {
 
         assert!(matches!(
             view.init_parser::<FatalParser>(),
-            ParseResult::Err(ParseError::Fatal(_))
+            ParseResult::Err(_)
         ));
         assert_eq!(view.consumed(), 2);
         assert_eq!(buffer.as_slice(), &[1, 2, 3]);

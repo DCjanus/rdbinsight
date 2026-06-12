@@ -6,7 +6,6 @@ use crate::{
     parser::{
         core::{
             buffer::{Buffer, skip_bytes},
-            cursor::Cursor,
             parse::{ParseResult, Parser, ParserInit},
             raw::{RDBLen, RDBStr, read_rdb_len, read_rdb_str},
             view::View,
@@ -104,10 +103,7 @@ impl Parser for ArrayEntriesParser {
                 return Ok(());
             }
 
-            let entry = {
-                let mut cursor = Cursor::new(buffer);
-                cursor.init_commit::<ArrayElementParser>()?
-            };
+            let entry = buffer.init_commit::<ArrayElementParser>()?;
             self.entry = Some(entry);
         }
     }

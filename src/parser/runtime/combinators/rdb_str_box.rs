@@ -6,7 +6,6 @@ use crate::{
     parser::{
         core::{
             buffer::Buffer,
-            cursor::Cursor,
             parse::{ParseResult, Parser, ParserInit, fatal},
             raw::{RDBLen, read_rdb_len},
             view::View,
@@ -123,10 +122,7 @@ where P: Parser + ParserInit
         entrust: &mut Option<P>,
     ) -> AnyResult<<P as Parser>::Output> {
         if entrust.is_none() {
-            let parser = {
-                let mut cursor = Cursor::new(out_buffer);
-                cursor.init_commit::<P>()?
-            };
+            let parser = out_buffer.init_commit::<P>()?;
             *entrust = Some(parser);
         }
 

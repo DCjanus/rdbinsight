@@ -10,8 +10,10 @@ use crate::{
         core::{
             buffer::Buffer,
             combinators::read_exact,
-            parse::{Parser, ParserInit},
+            cursor::Cursor,
+            parse::{ParseResult, Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
+            view::View,
         },
         model::{Item, RDBModuleOpcode},
         record::string::StringEncodingParser,
@@ -25,15 +27,18 @@ pub struct Module2RecordParser {
 }
 
 impl ParserInit for Module2RecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, _module_id) = read_rdb_len(input).context("read module id")?;
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let started = view.base_offset();
+        view.parse_init(|_buffer, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            let (input, _module_id) = read_rdb_len(input).context("read module id")?;
 
-        Ok((input, Self {
-            started: buffer.tell(),
-            key,
-            entrust: None,
-        }))
+            Ok((input, Self {
+                started,
+                key,
+                entrust: None,
+            }))
+        })
     }
 }
 
@@ -85,9 +90,14 @@ impl Parser for Module2RecordParser {
                     buffer.consume_to(input.as_ptr());
                 }
                 RDBModuleOpcode::String => {
-                    let (input, entrust) = StringEncodingParser::init(buffer, input)?;
+                    let input_offset = buffer.len() - input.len();
+                    let entrust = {
+                        let mut cursor = Cursor::new(buffer);
+                        cursor
+                            .init_commit_from_offset::<StringEncodingParser>(input_offset)
+                            .into_any_result()?
+                    };
                     self.entrust = Some(entrust);
-                    buffer.consume_to(input.as_ptr());
                 }
             }
         }
@@ -101,15 +111,18 @@ pub struct ModuleAuxParser {
 }
 
 impl ParserInit for ModuleAuxParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, _module_id) = read_rdb_len(input)?;
-        let (input, opcode) = Self::read_module_opcode(input)?;
-        ensure!(opcode == RDBModuleOpcode::UInt);
-        let (input, _when) = read_rdb_len(input)?;
-        Ok((input, Self {
-            started: buffer.tell(),
-            entrust: None,
-        }))
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let started = view.base_offset();
+        view.parse_init(|_buffer, input| {
+            let (input, _module_id) = read_rdb_len(input)?;
+            let (input, opcode) = Self::read_module_opcode(input)?;
+            ensure!(opcode == RDBModuleOpcode::UInt);
+            let (input, _when) = read_rdb_len(input)?;
+            Ok((input, Self {
+                started,
+                entrust: None,
+            }))
+        })
     }
 }
 
@@ -161,9 +174,14 @@ impl Parser for ModuleAuxParser {
                     buffer.consume_to(input.as_ptr());
                 }
                 RDBModuleOpcode::String => {
-                    let (input, entrust) = StringEncodingParser::init(buffer, input)?;
+                    let input_offset = buffer.len() - input.len();
+                    let entrust = {
+                        let mut cursor = Cursor::new(buffer);
+                        cursor
+                            .init_commit_from_offset::<StringEncodingParser>(input_offset)
+                            .into_any_result()?
+                    };
                     self.entrust = Some(entrust);
-                    buffer.consume_to(input.as_ptr());
                 }
             };
         }

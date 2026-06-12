@@ -2,13 +2,16 @@ use anyhow::{Context, anyhow, ensure};
 
 use crate::{
     helper::AnyResult,
+    parse_try,
     parser::{
         StringEncoding,
         core::{
             buffer::{Buffer, skip_bytes},
             combinators::{read_be_u32, read_le_u64, read_u8},
-            parse::{Parser, ParserInit},
+            cursor::Cursor,
+            parse::{ParseResult, Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
+            view::View,
         },
         model::{HashEncoding, Item},
         record::{
@@ -25,23 +28,25 @@ pub struct HashRecordParser {
 }
 
 impl ParserInit for HashRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, pair_count) = read_rdb_len(input).context("read hash length")?;
-        let pair_count = pair_count
-            .as_u64()
-            .context("hash length should be a number")?;
-        let entrust = ReduceParser::<StringEncodingParser, u64>::new(
-            pair_count * 2,
-            0,
-            |acc, _: StringEncoding| acc + 1,
-        );
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|buffer, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            let (input, pair_count) = read_rdb_len(input).context("read hash length")?;
+            let pair_count = pair_count
+                .as_u64()
+                .context("hash length should be a number")?;
+            let entrust = ReduceParser::<StringEncodingParser, u64>::new(
+                pair_count * 2,
+                0,
+                |acc, _: StringEncoding| acc + 1,
+            );
 
-        Ok((input, Self {
-            started: buffer.tell(),
-            key,
-            entrust,
-        }))
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
+        })
     }
 }
 
@@ -68,14 +73,18 @@ pub struct HashZipListRecordParser {
 }
 
 impl ParserInit for HashZipListRecordParser {
-    fn init<'a>(buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = RDBStrBox::<ZipListLengthParser>::init(buf, input)?;
-        Ok((input, Self {
-            started: buf.tell(),
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let started = view.base_offset();
+        let key = parse_try!(view.parse_init(|_, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            Ok((input, key))
+        }));
+        let entrust = parse_try!(view.init_parser::<RDBStrBox<ZipListLengthParser>>());
+        ParseResult::Ok(Self {
+            started,
             key,
             entrust,
-        }))
+        })
     }
 }
 
@@ -106,14 +115,18 @@ pub struct HashListPackRecordParser {
 }
 
 impl ParserInit for HashListPackRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = RDBStrBox::<ListPackLengthParser>::init(buffer, input)?;
-        Ok((input, Self {
-            started: buffer.tell(),
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let started = view.base_offset();
+        let key = parse_try!(view.parse_init(|_, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            Ok((input, key))
+        }));
+        let entrust = parse_try!(view.init_parser::<RDBStrBox<ListPackLengthParser>>());
+        ParseResult::Ok(Self {
+            started,
             key,
             entrust,
-        }))
+        })
     }
 }
 
@@ -144,16 +157,19 @@ pub struct HashListPackExRecordParser {
 }
 
 impl ParserInit for HashListPackExRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, _min_expire) = read_le_u64(input).context("read minExpire")?;
-        let (input, entrust) = RDBStrBox::<ListPackLengthParser>::init(buffer, input)?;
-
-        Ok((input, Self {
-            started: buffer.tell(),
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let started = view.base_offset();
+        let key = parse_try!(view.parse_init(|_, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            let (input, _min_expire) = read_le_u64(input).context("read minExpire")?;
+            Ok((input, key))
+        }));
+        let entrust = parse_try!(view.init_parser::<RDBStrBox<ListPackLengthParser>>());
+        ParseResult::Ok(Self {
+            started,
             key,
             entrust,
-        }))
+        })
     }
 }
 
@@ -184,20 +200,23 @@ pub struct HashZipMapRecordParser {
 }
 
 impl ParserInit for HashZipMapRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let started = buffer.tell();
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = RDBStrBox::<ZipMapPairCountParser>::init(buffer, input)?;
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let started = view.base_offset();
+        let key = parse_try!(view.parse_init(|_, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            Ok((input, key))
+        }));
+        let entrust = parse_try!(view.init_parser::<RDBStrBox<ZipMapPairCountParser>>());
         if entrust.is_lzf() {
             crate::parser_trace!("hash.zipmap.lzf");
         } else {
             crate::parser_trace!("hash.zipmap.raw");
         }
-        Ok((input, Self {
+        ParseResult::Ok(Self {
             started,
             key,
             entrust,
-        }))
+        })
     }
 }
 impl Parser for HashZipMapRecordParser {
@@ -220,12 +239,14 @@ struct ZipMapPairCountParser {
 }
 
 impl ParserInit for ZipMapPairCountParser {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, _) = read_u8(input)?;
-        Ok((input, Self {
-            entrust: None,
-            member_count: 0,
-        }))
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            let (input, _) = read_u8(input)?;
+            Ok((input, Self {
+                entrust: None,
+                member_count: 0,
+            }))
+        })
     }
 }
 
@@ -241,8 +262,10 @@ impl Parser for ZipMapPairCountParser {
                 self.entrust = None;
             }
 
-            let (input, entrust) = IsEndZipMapPairParser::init(buffer, buffer.as_slice())?;
-            buffer.consume_to(input.as_ptr());
+            let entrust = {
+                let mut cursor = Cursor::new(buffer);
+                cursor.init_commit::<IsEndZipMapPairParser>()?
+            };
             self.entrust = Some(entrust);
         }
     }
@@ -255,12 +278,14 @@ enum IsEndZipMapPairParser {
 }
 
 impl ParserInit for IsEndZipMapPairParser {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, size) = read_zipmap_size(input)?;
-        match size {
-            Some(key_len) => Ok((input, Self::ReadingKey { remain: key_len })),
-            None => Ok((input, Self::EndOfList)),
-        }
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            let (input, size) = read_zipmap_size(input)?;
+            match size {
+                Some(key_len) => Ok((input, Self::ReadingKey { remain: key_len })),
+                None => Ok((input, Self::EndOfList)),
+            }
+        })
     }
 }
 
@@ -315,22 +340,24 @@ pub struct HashMetadataRecordParser {
 }
 
 impl ParserInit for HashMetadataRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, _min_expire) = read_le_u64(input).context("read minExpire")?;
-        let (input, pair_len) = read_rdb_len(input).context("read field-value pair count")?;
-        let pair_total = pair_len
-            .as_u64()
-            .context("hash pair count should be a number")?;
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|buffer, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            let (input, _min_expire) = read_le_u64(input).context("read minExpire")?;
+            let (input, pair_len) = read_rdb_len(input).context("read field-value pair count")?;
+            let pair_total = pair_len
+                .as_u64()
+                .context("hash pair count should be a number")?;
 
-        let entrust =
-            ReduceParser::<HashMetadataFieldParser, u64>::new(pair_total, 0, |acc, _| acc + 1);
+            let entrust =
+                ReduceParser::<HashMetadataFieldParser, u64>::new(pair_total, 0, |acc, _| acc + 1);
 
-        Ok((input, Self {
-            started: buffer.tell(),
-            key,
-            entrust,
-        }))
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
+        })
     }
 }
 

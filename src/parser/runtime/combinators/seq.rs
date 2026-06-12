@@ -3,7 +3,8 @@ use crate::{
     parser::core::{
         buffer::Buffer,
         cursor::Cursor,
-        parse::{Parser, ParserInit},
+        parse::{ParseResult, Parser, ParserInit},
+        view::View,
     },
 };
 
@@ -59,8 +60,8 @@ macro_rules! seq_parser {
         where
             $( $Pi : Parser + ParserInit ),+
         {
-            fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-                Ok((input, ( $( ParserPhase::<$Pi>::default(), )+ )))
+            fn init(_: &mut View<'_>) -> ParseResult<Self> {
+                ParseResult::Ok(( $( ParserPhase::<$Pi>::default(), )+ ))
             }
         }
 
@@ -113,8 +114,8 @@ mod tests {
     }
 
     impl ParserInit for ByteParser {
-        fn init<'a>(_buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-            Ok((input, Self))
+        fn init(_: &mut View<'_>) -> ParseResult<Self> {
+            ParseResult::Ok(Self)
         }
     }
 
@@ -137,8 +138,8 @@ mod tests {
     }
 
     impl ParserInit for U16LeParser {
-        fn init<'a>(_buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-            Ok((input, Self))
+        fn init(_: &mut View<'_>) -> ParseResult<Self> {
+            ParseResult::Ok(Self)
         }
     }
 
@@ -147,9 +148,10 @@ mod tests {
         let mut buffer = Buffer::new(3);
         buffer.extend(&[0x12, 0x34, 0x56])?;
 
-        let (input, mut parser) =
-            <Seq2Parser<ByteParser, U16LeParser> as ParserInit>::init(&buffer, buffer.as_slice())?;
-        buffer.consume_to(input.as_ptr());
+        let mut parser = {
+            let mut cursor = Cursor::new(&mut buffer);
+            cursor.init_commit::<Seq2Parser<ByteParser, U16LeParser>>()?
+        };
 
         let (b, n) = parser.call(&mut buffer)?;
         assert_eq!(b, 0x12);
@@ -163,9 +165,10 @@ mod tests {
         let mut buffer = Buffer::new(1);
         buffer.extend(&[0xAA])?;
 
-        let (input, mut parser) =
-            <Seq2Parser<ByteParser, U16LeParser> as ParserInit>::init(&buffer, buffer.as_slice())?;
-        buffer.consume_to(input.as_ptr());
+        let mut parser = {
+            let mut cursor = Cursor::new(&mut buffer);
+            cursor.init_commit::<Seq2Parser<ByteParser, U16LeParser>>()?
+        };
 
         let err = parser
             .call(&mut buffer)

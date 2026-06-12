@@ -125,7 +125,9 @@ impl RDBFileParser {
     {
         let entrust = {
             let mut cursor = Cursor::new(buffer);
-            cursor.init_commit_from_offset::<E>(input_offset)?
+            cursor
+                .init_commit_from_offset::<E>(input_offset)
+                .into_any_result()?
         };
         let item = self.set_entrust(entrust, buffer)?;
         self.return_item(item)

@@ -2,13 +2,15 @@ use anyhow::{Context, bail};
 
 use crate::{
     helper::AnyResult,
+    parse_try,
     parser::{
         StringEncoding,
         core::{
             buffer::{Buffer, skip_bytes},
             combinators::{read_exact, read_u8},
-            parse::{Parser, ParserInit},
+            parse::{ParseResult, Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
+            view::View,
         },
         model::{Item, SetEncoding},
         record::string::StringEncodingParser,
@@ -23,20 +25,22 @@ pub struct SetRecordParser {
 }
 
 impl ParserInit for SetRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, member_count) = read_rdb_len(input).context("read set length")?;
-        let member_count = member_count
-            .as_u64()
-            .context("set length should be a number")?;
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|buffer, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            let (input, member_count) = read_rdb_len(input).context("read set length")?;
+            let member_count = member_count
+                .as_u64()
+                .context("set length should be a number")?;
 
-        let entrust: ReduceParser<StringEncodingParser, u64> =
-            ReduceParser::new(member_count, 0, |acc, _: StringEncoding| acc + 1);
-        Ok((input, Self {
-            started: buffer.tell(),
-            key,
-            entrust,
-        }))
+            let entrust: ReduceParser<StringEncodingParser, u64> =
+                ReduceParser::new(member_count, 0, |acc, _: StringEncoding| acc + 1);
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
+        })
     }
 }
 
@@ -62,14 +66,18 @@ pub struct SetIntSetRecordParser {
 }
 
 impl ParserInit for SetIntSetRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = RDBStrBox::<IntSetInnerParser>::init(buffer, input)?;
-        Ok((input, Self {
-            started: buffer.tell(),
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let started = view.base_offset();
+        let key = parse_try!(view.parse_init(|_, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            Ok((input, key))
+        }));
+        let entrust = parse_try!(view.init_parser::<RDBStrBox<IntSetInnerParser>>());
+        ParseResult::Ok(Self {
+            started,
             key,
             entrust,
-        }))
+        })
     }
 }
 
@@ -97,29 +105,32 @@ pub struct IntSetInnerParser {
 }
 
 impl ParserInit for IntSetInnerParser {
-    fn init<'a>(_buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        // When called inside RDBStrBox, the RDB string length has already been
-        // consumed; here we directly read the intset header (8 bytes) and
-        // compute payload length from element size and member_count.
-        let (input, header) = read_exact(input, 8).context("read intset header")?;
-        let encoding = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
-        let member_count = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as u64;
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            // When called inside RDBStrBox, the RDB string length has already been
+            // consumed; here we directly read the intset header (8 bytes) and
+            // compute payload length from element size and member_count.
+            let (input, header) = read_exact(input, 8).context("read intset header")?;
+            let encoding = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+            let member_count =
+                u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as u64;
 
-        let elem_size = match encoding {
-            2 => 2u64,
-            4 => 4u64,
-            8 => 8u64,
-            _ => bail!("unknown intset encoding: {}", encoding),
-        };
+            let elem_size = match encoding {
+                2 => 2u64,
+                4 => 4u64,
+                8 => 8u64,
+                _ => bail!("unknown intset encoding: {}", encoding),
+            };
 
-        let to_skip = elem_size
-            .checked_mul(member_count)
-            .context("intset payload overflow")?;
+            let to_skip = elem_size
+                .checked_mul(member_count)
+                .context("intset payload overflow")?;
 
-        Ok((input, Self {
-            to_skip,
-            member_count,
-        }))
+            Ok((input, Self {
+                to_skip,
+                member_count,
+            }))
+        })
     }
 }
 
@@ -139,14 +150,18 @@ pub struct SetListPackRecordParser {
 }
 
 impl ParserInit for SetListPackRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = RDBStrBox::<ListPackLengthParser>::init(buffer, input)?;
-        Ok((input, Self {
-            started: buffer.tell(),
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let started = view.base_offset();
+        let key = parse_try!(view.parse_init(|_, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            Ok((input, key))
+        }));
+        let entrust = parse_try!(view.init_parser::<RDBStrBox<ListPackLengthParser>>());
+        ParseResult::Ok(Self {
+            started,
             key,
             entrust,
-        }))
+        })
     }
 }
 
@@ -171,12 +186,14 @@ pub struct ListPackLengthParser {
 }
 
 impl ParserInit for ListPackLengthParser {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, _header) = read_exact(input, 6).context("read listpack header")?;
-        Ok((input, Self {
-            entrust: None,
-            counted: 0,
-        }))
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            let (input, _header) = read_exact(input, 6).context("read listpack header")?;
+            Ok((input, Self {
+                entrust: None,
+                counted: 0,
+            }))
+        })
     }
 }
 

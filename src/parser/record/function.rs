@@ -1,9 +1,11 @@
 use crate::{
     helper::AnyResult,
+    parse_try,
     parser::{
         core::{
             buffer::Buffer,
-            parse::{Parser, ParserInit},
+            parse::{ParseResult, Parser, ParserInit},
+            view::View,
         },
         model::Item,
         string::StringEncodingParser,
@@ -16,13 +18,12 @@ pub struct Function2RecordParser {
 }
 
 impl ParserInit for Function2RecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, entrust) = StringEncodingParser::init(buffer, input)?;
-
-        Ok((input, Self {
-            started: buffer.tell(),
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let entrust = parse_try!(view.init_parser::<StringEncodingParser>());
+        ParseResult::Ok(Self {
+            started: view.base_offset(),
             entrust,
-        }))
+        })
     }
 }
 

@@ -2,12 +2,14 @@ use anyhow::{Context, anyhow, bail, ensure};
 
 use crate::{
     helper::AnyResult,
+    parse_try,
     parser::{
         core::{
             buffer::Buffer,
             cursor::Cursor,
-            parse::{Parser, ParserInit},
+            parse::{ParseResult, Parser, ParserInit, fatal},
             raw::{RDBLen, read_rdb_len},
+            view::View,
         },
         error::NeedMoreData,
         runtime::lzf::LzfChunkDecoder,
@@ -136,33 +138,48 @@ where P: Parser + ParserInit
 impl<P> ParserInit for RDBStrBox<P>
 where P: Parser + ParserInit
 {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, len) = read_rdb_len(input).context("read string length")?;
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let len = parse_try!(view.parse_init(|_, input| {
+            let (input, len) = read_rdb_len(input).context("read string length")?;
+            Ok((input, len))
+        }));
         match len {
             RDBLen::Simple(length) | RDBLen::IntStr(length) => {
-                let expect_end = buffer.tell_to(input.as_ptr()) + length;
-                let (input, entrust) = P::init(buffer, input)?;
-                Ok((input, Self::Simple {
+                let expect_end = view.offset() + length;
+                let entrust = parse_try!(view.init_parser::<P>());
+                ParseResult::Ok(Self::Simple {
                     expect_end,
                     entrust,
-                }))
+                })
             }
             RDBLen::LZFStr => {
-                let (input, in_len) = read_rdb_len(input).context("read compressed in_len")?;
-                let in_len = in_len
+                let in_len = parse_try!(view.parse_init(|_, input| {
+                    let (input, in_len) = read_rdb_len(input).context("read compressed in_len")?;
+                    Ok((input, in_len))
+                }));
+                let in_len = match in_len.as_u64().context("compressed in_len must be simple") {
+                    Ok(in_len) => in_len,
+                    Err(e) => return fatal(e),
+                };
+                let out_len = parse_try!(view.parse_init(|_, input| {
+                    let (input, out_len) =
+                        read_rdb_len(input).context("read compressed out_len")?;
+                    Ok((input, out_len))
+                }));
+                let out_len = match out_len
                     .as_u64()
-                    .context("compressed in_len must be simple")?;
-                let (input, out_len) = read_rdb_len(input).context("read compressed out_len")?;
-                let out_len = out_len
-                    .as_u64()
-                    .context("compressed out_len must be simple")?;
-                Ok((input, Self::Lzf {
+                    .context("compressed out_len must be simple")
+                {
+                    Ok(out_len) => out_len,
+                    Err(e) => return fatal(e),
+                };
+                ParseResult::Ok(Self::Lzf {
                     remain_in: in_len,
                     remain_out: out_len,
                     out_buffer: Buffer::new(out_len as usize),
                     decoder: LzfChunkDecoder::default(),
                     entrust: None,
-                }))
+                })
             }
         }
     }

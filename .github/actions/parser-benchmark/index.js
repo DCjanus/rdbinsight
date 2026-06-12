@@ -42,7 +42,6 @@ async function run(command, args, options = {}) {
       ignoreReturnCode: true,
       listeners: {
         stdout: (chunk) => output?.write(chunk),
-        stderr: (chunk) => output?.write(chunk),
       },
     });
     if (exitCode !== 0) {

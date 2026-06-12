@@ -89,12 +89,10 @@ async function benchmarkBase() {
   return true;
 }
 
-async function benchmarkCurrent(hasBaseBaseline) {
-  const args = ["+nightly", "bench", "--bench", "parser", "--", "--noplot"];
-  if (hasBaseBaseline) {
-    args.push("--baseline", "base");
-  }
-  await run("cargo", args, { outputPath: CURRENT_OUTPUT });
+async function benchmarkCurrent() {
+  await run("cargo", ["+nightly", "bench", "--bench", "parser", "--", "--noplot"], {
+    outputPath: CURRENT_OUTPUT,
+  });
 }
 
 function walkFiles(root, basename, out = []) {
@@ -364,7 +362,7 @@ async function main() {
   try {
     fs.rmSync(repoPath("target", "criterion"), { recursive: true, force: true });
     hasBaseBaseline = await benchmarkBase();
-    await benchmarkCurrent(hasBaseBaseline);
+    await benchmarkCurrent();
   } catch (err) {
     runError = err;
   } finally {

@@ -1,18 +1,19 @@
 use crate::{
     helper::AnyResult,
-    parser::{
-        core::{buffer::Buffer, cursor::Cursor},
-        state::traits::{InitializableParser, StateParser},
+    parser::core::{
+        buffer::Buffer,
+        cursor::Cursor,
+        parse::{Parser, ParserInit},
     },
 };
 
 /// A generic **reduce**-style combinator: it invokes an inner parser `P` exactly
 /// `remain` times, each time folding the produced value into an accumulator via
 /// the user-supplied closure `reduce`.
-pub struct ReduceParser<P, R, F = fn(R, <P as StateParser>::Output) -> R>
+pub struct ReduceParser<P, R, F = fn(R, <P as Parser>::Output) -> R>
 where
-    P: InitializableParser,
-    F: FnMut(R, <P as StateParser>::Output) -> R,
+    P: Parser + ParserInit,
+    F: FnMut(R, <P as Parser>::Output) -> R,
 {
     remain: u64,
     entrust: Option<P>,
@@ -22,8 +23,8 @@ where
 
 impl<P, R, F> ReduceParser<P, R, F>
 where
-    P: InitializableParser,
-    F: FnMut(R, <P as StateParser>::Output) -> R,
+    P: Parser + ParserInit,
+    F: FnMut(R, <P as Parser>::Output) -> R,
 {
     pub fn new(remain: u64, init: R, reduce: F) -> Self {
         Self {
@@ -35,10 +36,10 @@ where
     }
 }
 
-impl<P, R, F> StateParser for ReduceParser<P, R, F>
+impl<P, R, F> Parser for ReduceParser<P, R, F>
 where
-    P: InitializableParser,
-    F: FnMut(R, <P as StateParser>::Output) -> R,
+    P: Parser + ParserInit,
+    F: FnMut(R, <P as Parser>::Output) -> R,
 {
     type Output = R;
 

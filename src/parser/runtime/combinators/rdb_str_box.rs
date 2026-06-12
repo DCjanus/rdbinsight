@@ -6,13 +6,11 @@ use crate::{
         core::{
             buffer::Buffer,
             cursor::Cursor,
+            parse::{Parser, ParserInit},
             raw::{RDBLen, read_rdb_len},
         },
         error::NeedMoreData,
-        state::{
-            lzf::LzfChunkDecoder,
-            traits::{InitializableParser, StateParser},
-        },
+        runtime::lzf::LzfChunkDecoder,
     },
 };
 
@@ -32,7 +30,7 @@ pub enum RDBStrBox<P> {
 }
 
 impl<P> RDBStrBox<P>
-where P: InitializableParser + StateParser
+where P: Parser + ParserInit
 {
     pub fn is_lzf(&self) -> bool {
         matches!(self, Self::Lzf { .. })
@@ -121,7 +119,7 @@ where P: InitializableParser + StateParser
     fn call_lzf_inner(
         out_buffer: &mut Buffer,
         entrust: &mut Option<P>,
-    ) -> AnyResult<<P as StateParser>::Output> {
+    ) -> AnyResult<<P as Parser>::Output> {
         if entrust.is_none() {
             let parser = {
                 let mut cursor = Cursor::new(out_buffer);
@@ -135,8 +133,8 @@ where P: InitializableParser + StateParser
     }
 }
 
-impl<P> InitializableParser for RDBStrBox<P>
-where P: InitializableParser
+impl<P> ParserInit for RDBStrBox<P>
+where P: Parser + ParserInit
 {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, len) = read_rdb_len(input).context("read string length")?;
@@ -170,10 +168,10 @@ where P: InitializableParser
     }
 }
 
-impl<P> StateParser for RDBStrBox<P>
-where P: InitializableParser + StateParser
+impl<P> Parser for RDBStrBox<P>
+where P: Parser + ParserInit
 {
-    type Output = <P as StateParser>::Output;
+    type Output = <P as Parser>::Output;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
         match self {

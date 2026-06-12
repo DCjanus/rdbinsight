@@ -1,9 +1,6 @@
 use crate::{
     helper::AnyResult,
-    parser::{
-        core::{buffer::Buffer, view::View},
-        state::traits::InitializableParser,
-    },
+    parser::core::{buffer::Buffer, parse::ParserInit, view::View},
 };
 
 pub struct Cursor<'a> {
@@ -25,14 +22,11 @@ impl<'a> Cursor<'a> {
         self.buffer.consume(view.consumed());
     }
 
-    pub fn init_commit<P: InitializableParser>(&mut self) -> AnyResult<P> {
+    pub fn init_commit<P: ParserInit>(&mut self) -> AnyResult<P> {
         self.init_commit_from_offset::<P>(0)
     }
 
-    pub fn init_commit_from_offset<P: InitializableParser>(
-        &mut self,
-        offset: usize,
-    ) -> AnyResult<P> {
+    pub fn init_commit_from_offset<P: ParserInit>(&mut self, offset: usize) -> AnyResult<P> {
         assert!(
             offset <= self.buffer.len(),
             "init offset exceeds buffer length"
@@ -53,20 +47,24 @@ impl<'a> Cursor<'a> {
 mod tests {
     use super::*;
     use crate::parser::{
-        core::combinators::read_exact, error::NeedMoreData, state::traits::StateParser,
+        core::{
+            combinators::read_exact,
+            parse::{Parser, ParserInit},
+        },
+        error::NeedMoreData,
     };
 
     #[derive(Debug)]
     struct TwoByteParser;
 
-    impl InitializableParser for TwoByteParser {
+    impl ParserInit for TwoByteParser {
         fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
             let (input, _) = read_exact(input, 2)?;
             Ok((input, Self))
         }
     }
 
-    impl StateParser for TwoByteParser {
+    impl Parser for TwoByteParser {
         type Output = ();
 
         fn call(&mut self, _: &mut Buffer) -> AnyResult<Self::Output> {

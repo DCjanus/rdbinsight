@@ -7,14 +7,12 @@ use crate::{
         core::{
             buffer::{Buffer, skip_bytes},
             combinators::{read_be_u32, read_exact, read_u8},
+            parse::{Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
         },
         model::{Item, ListEncoding, StringEncoding},
         record::{set::ListPackLengthParser, string::StringEncodingParser},
-        state::{
-            combinators::{RDBStrBox, ReduceParser},
-            traits::{InitializableParser, StateParser},
-        },
+        runtime::combinators::{RDBStrBox, ReduceParser},
     },
 };
 
@@ -24,7 +22,7 @@ pub struct ListRecordParser {
     entrust: ReduceParser<StringEncodingParser, u64>,
 }
 
-impl InitializableParser for ListRecordParser {
+impl ParserInit for ListRecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, member_count) = read_rdb_len(input).context("read list length")?;
@@ -41,7 +39,7 @@ impl InitializableParser for ListRecordParser {
     }
 }
 
-impl StateParser for ListRecordParser {
+impl Parser for ListRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -61,7 +59,7 @@ pub struct ListZipListRecordParser {
     entrust: RDBStrBox<ZipListLengthParser>,
 }
 
-impl InitializableParser for ListZipListRecordParser {
+impl ParserInit for ListZipListRecordParser {
     fn init<'a>(buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, entrust) = RDBStrBox::<ZipListLengthParser>::init(buf, input)?;
@@ -73,7 +71,7 @@ impl InitializableParser for ListZipListRecordParser {
     }
 }
 
-impl StateParser for ListZipListRecordParser {
+impl Parser for ListZipListRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -92,7 +90,7 @@ pub struct ZipListLengthParser {
     counted: u64,
 }
 
-impl InitializableParser for ZipListLengthParser {
+impl ParserInit for ZipListLengthParser {
     fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, _) = read_exact(input, 10)?;
         Ok((input, Self {
@@ -102,7 +100,7 @@ impl InitializableParser for ZipListLengthParser {
     }
 }
 
-impl StateParser for ZipListLengthParser {
+impl Parser for ZipListLengthParser {
     type Output = u64;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -182,7 +180,7 @@ impl IsEndZipListEntryParser {
     }
 }
 
-impl StateParser for IsEndZipListEntryParser {
+impl Parser for IsEndZipListEntryParser {
     type Output = bool;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -197,7 +195,7 @@ pub struct ListQuickListRecordParser {
     entrust: QuickListLengthParser,
 }
 
-impl InitializableParser for ListQuickListRecordParser {
+impl ParserInit for ListQuickListRecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, entrust) = QuickListLengthParser::init(buffer, input)?;
@@ -209,7 +207,7 @@ impl InitializableParser for ListQuickListRecordParser {
     }
 }
 
-impl StateParser for ListQuickListRecordParser {
+impl Parser for ListQuickListRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -229,7 +227,7 @@ struct QuickListLengthParser {
     entrust: Option<RDBStrBox<ZipListLengthParser>>,
 }
 
-impl InitializableParser for QuickListLengthParser {
+impl ParserInit for QuickListLengthParser {
     fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, nodes_remain) = read_rdb_len(input)?;
         let nodes_remain = nodes_remain
@@ -243,7 +241,7 @@ impl InitializableParser for QuickListLengthParser {
     }
 }
 
-impl StateParser for QuickListLengthParser {
+impl Parser for QuickListLengthParser {
     type Output = u64;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -279,7 +277,7 @@ pub struct ListQuickList2RecordParser {
     entrust: ReduceParser<ListQuickList2NodeLengthParser, u64>,
 }
 
-impl InitializableParser for ListQuickList2RecordParser {
+impl ParserInit for ListQuickList2RecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let started = buffer.tell();
         let (input, key) = read_rdb_str(input)?;
@@ -300,7 +298,7 @@ impl InitializableParser for ListQuickList2RecordParser {
     }
 }
 
-impl StateParser for ListQuickList2RecordParser {
+impl Parser for ListQuickList2RecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -318,7 +316,7 @@ pub struct ListQuickList2NodeLengthParser {
     entrust: Either<StringEncodingParser, RDBStrBox<ListPackLengthParser>>,
 }
 
-impl InitializableParser for ListQuickList2NodeLengthParser {
+impl ParserInit for ListQuickList2NodeLengthParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, flag) = read_u8(input)?;
         match flag {
@@ -345,7 +343,7 @@ impl InitializableParser for ListQuickList2NodeLengthParser {
     }
 }
 
-impl StateParser for ListQuickList2NodeLengthParser {
+impl Parser for ListQuickList2NodeLengthParser {
     type Output = u64;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {

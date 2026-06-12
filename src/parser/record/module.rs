@@ -10,11 +10,11 @@ use crate::{
         core::{
             buffer::Buffer,
             combinators::read_exact,
+            parse::{Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
         },
         model::{Item, RDBModuleOpcode},
         record::string::StringEncodingParser,
-        state::traits::{InitializableParser, StateParser},
     },
 };
 
@@ -24,7 +24,7 @@ pub struct Module2RecordParser {
     entrust: Option<StringEncodingParser>,
 }
 
-impl InitializableParser for Module2RecordParser {
+impl ParserInit for Module2RecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, _module_id) = read_rdb_len(input).context("read module id")?;
@@ -50,7 +50,7 @@ impl Module2RecordParser {
     }
 }
 
-impl StateParser for Module2RecordParser {
+impl Parser for Module2RecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -100,7 +100,7 @@ pub struct ModuleAuxParser {
     entrust: Option<StringEncodingParser>,
 }
 
-impl InitializableParser for ModuleAuxParser {
+impl ParserInit for ModuleAuxParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, _module_id) = read_rdb_len(input)?;
         let (input, opcode) = Self::read_module_opcode(input)?;
@@ -125,7 +125,7 @@ impl ModuleAuxParser {
     }
 }
 
-impl StateParser for ModuleAuxParser {
+impl Parser for ModuleAuxParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {

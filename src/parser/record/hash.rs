@@ -7,16 +7,14 @@ use crate::{
         core::{
             buffer::{Buffer, skip_bytes},
             combinators::{read_be_u32, read_le_u64, read_u8},
+            parse::{Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
         },
         model::{HashEncoding, Item},
         record::{
             list::ZipListLengthParser, set::ListPackLengthParser, string::StringEncodingParser,
         },
-        state::{
-            combinators::{RDBLenParser, RDBStrBox, ReduceParser, Seq3Parser},
-            traits::{InitializableParser, StateParser},
-        },
+        runtime::combinators::{RDBLenParser, RDBStrBox, ReduceParser, Seq3Parser},
     },
 };
 
@@ -26,7 +24,7 @@ pub struct HashRecordParser {
     entrust: ReduceParser<StringEncodingParser, u64>,
 }
 
-impl InitializableParser for HashRecordParser {
+impl ParserInit for HashRecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, pair_count) = read_rdb_len(input).context("read hash length")?;
@@ -47,7 +45,7 @@ impl InitializableParser for HashRecordParser {
     }
 }
 
-impl StateParser for HashRecordParser {
+impl Parser for HashRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -69,7 +67,7 @@ pub struct HashZipListRecordParser {
     entrust: RDBStrBox<ZipListLengthParser>,
 }
 
-impl InitializableParser for HashZipListRecordParser {
+impl ParserInit for HashZipListRecordParser {
     fn init<'a>(buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, entrust) = RDBStrBox::<ZipListLengthParser>::init(buf, input)?;
@@ -81,7 +79,7 @@ impl InitializableParser for HashZipListRecordParser {
     }
 }
 
-impl StateParser for HashZipListRecordParser {
+impl Parser for HashZipListRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -107,7 +105,7 @@ pub struct HashListPackRecordParser {
     entrust: RDBStrBox<ListPackLengthParser>,
 }
 
-impl InitializableParser for HashListPackRecordParser {
+impl ParserInit for HashListPackRecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, entrust) = RDBStrBox::<ListPackLengthParser>::init(buffer, input)?;
@@ -119,7 +117,7 @@ impl InitializableParser for HashListPackRecordParser {
     }
 }
 
-impl StateParser for HashListPackRecordParser {
+impl Parser for HashListPackRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -145,7 +143,7 @@ pub struct HashListPackExRecordParser {
     entrust: RDBStrBox<ListPackLengthParser>,
 }
 
-impl InitializableParser for HashListPackExRecordParser {
+impl ParserInit for HashListPackExRecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, _min_expire) = read_le_u64(input).context("read minExpire")?;
@@ -159,7 +157,7 @@ impl InitializableParser for HashListPackExRecordParser {
     }
 }
 
-impl StateParser for HashListPackExRecordParser {
+impl Parser for HashListPackExRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -185,7 +183,7 @@ pub struct HashZipMapRecordParser {
     entrust: RDBStrBox<ZipMapPairCountParser>,
 }
 
-impl InitializableParser for HashZipMapRecordParser {
+impl ParserInit for HashZipMapRecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let started = buffer.tell();
         let (input, key) = read_rdb_str(input).context("read key")?;
@@ -202,7 +200,7 @@ impl InitializableParser for HashZipMapRecordParser {
         }))
     }
 }
-impl StateParser for HashZipMapRecordParser {
+impl Parser for HashZipMapRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -221,7 +219,7 @@ struct ZipMapPairCountParser {
     member_count: u64,
 }
 
-impl InitializableParser for ZipMapPairCountParser {
+impl ParserInit for ZipMapPairCountParser {
     fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, _) = read_u8(input)?;
         Ok((input, Self {
@@ -231,7 +229,7 @@ impl InitializableParser for ZipMapPairCountParser {
     }
 }
 
-impl StateParser for ZipMapPairCountParser {
+impl Parser for ZipMapPairCountParser {
     type Output = u64;
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
         loop {
@@ -256,7 +254,7 @@ enum IsEndZipMapPairParser {
     EndOfList,
 }
 
-impl InitializableParser for IsEndZipMapPairParser {
+impl ParserInit for IsEndZipMapPairParser {
     fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, size) = read_zipmap_size(input)?;
         match size {
@@ -279,7 +277,7 @@ fn read_zipmap_size(input: &[u8]) -> AnyResult<(&[u8], Option<u64>)> {
     Ok((input, Some(key_len as u64)))
 }
 
-impl StateParser for IsEndZipMapPairParser {
+impl Parser for IsEndZipMapPairParser {
     type Output = bool;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -316,7 +314,7 @@ pub struct HashMetadataRecordParser {
     entrust: ReduceParser<HashMetadataFieldParser, u64>,
 }
 
-impl InitializableParser for HashMetadataRecordParser {
+impl ParserInit for HashMetadataRecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, _min_expire) = read_le_u64(input).context("read minExpire")?;
@@ -336,7 +334,7 @@ impl InitializableParser for HashMetadataRecordParser {
     }
 }
 
-impl StateParser for HashMetadataRecordParser {
+impl Parser for HashMetadataRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {

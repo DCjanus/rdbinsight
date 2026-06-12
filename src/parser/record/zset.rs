@@ -6,16 +6,14 @@ use crate::{
         StringEncoding,
         core::{
             buffer::Buffer,
+            parse::{Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
         },
         model::{Item, ZSetEncoding},
         record::{
             list::ZipListLengthParser, set::ListPackLengthParser, string::StringEncodingParser,
         },
-        state::{
-            combinators::{RDBStrBox, ReduceParser, Seq2Parser, skip_bytes::SkipBytesParser},
-            traits::{InitializableParser, StateParser},
-        },
+        runtime::combinators::{RDBStrBox, ReduceParser, Seq2Parser, skip_bytes::SkipBytesParser},
     },
 };
 
@@ -25,7 +23,7 @@ pub struct ZSetRecordParser {
     entrust: ReduceParser<StringEncodingParser, u64>,
 }
 
-impl InitializableParser for ZSetRecordParser {
+impl ParserInit for ZSetRecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, member_count) = read_rdb_len(input).context("read zset length")?;
@@ -45,7 +43,7 @@ impl InitializableParser for ZSetRecordParser {
     }
 }
 
-impl StateParser for ZSetRecordParser {
+impl Parser for ZSetRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -66,7 +64,7 @@ pub struct ZSetZipListRecordParser {
     entrust: RDBStrBox<ZipListLengthParser>,
 }
 
-impl InitializableParser for ZSetZipListRecordParser {
+impl ParserInit for ZSetZipListRecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, entrust) = RDBStrBox::<ZipListLengthParser>::init(buffer, input)?;
@@ -78,7 +76,7 @@ impl InitializableParser for ZSetZipListRecordParser {
     }
 }
 
-impl StateParser for ZSetZipListRecordParser {
+impl Parser for ZSetZipListRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -104,7 +102,7 @@ pub struct ZSetListPackRecordParser {
     entrust: RDBStrBox<ListPackLengthParser>,
 }
 
-impl InitializableParser for ZSetListPackRecordParser {
+impl ParserInit for ZSetListPackRecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, entrust) = RDBStrBox::<ListPackLengthParser>::init(buffer, input)?;
@@ -122,7 +120,7 @@ impl InitializableParser for ZSetListPackRecordParser {
     }
 }
 
-impl StateParser for ZSetListPackRecordParser {
+impl Parser for ZSetListPackRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -149,7 +147,7 @@ pub struct ZSet2RecordParser {
     entrust: ReduceParser<ZSet2SkipListEntryParser, u64>,
 }
 
-impl InitializableParser for ZSet2RecordParser {
+impl ParserInit for ZSet2RecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, key) = read_rdb_str(input).context("read key")?;
         let (input, member_count) = read_rdb_len(input).context("read zset2 length")?;
@@ -170,7 +168,7 @@ impl InitializableParser for ZSet2RecordParser {
     }
 }
 
-impl StateParser for ZSet2RecordParser {
+impl Parser for ZSet2RecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {

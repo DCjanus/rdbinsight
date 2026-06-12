@@ -1,14 +1,15 @@
 use crate::{
     helper::AnyResult,
-    parser::{
-        core::{buffer::Buffer, cursor::Cursor},
-        state::traits::{InitializableParser, StateParser},
+    parser::core::{
+        buffer::Buffer,
+        cursor::Cursor,
+        parse::{Parser, ParserInit},
     },
 };
 
 /// Internal state machine wrapper used by `seq_parser!` macro.
 #[derive(Debug, Default)]
-pub enum ParserPhase<P: StateParser> {
+pub enum ParserPhase<P: Parser> {
     #[default]
     Init,
     Call(P),
@@ -16,7 +17,7 @@ pub enum ParserPhase<P: StateParser> {
 }
 
 impl<P> ParserPhase<P>
-where P: StateParser + InitializableParser
+where P: Parser + ParserInit
 {
     fn step(&mut self, buffer: &mut Buffer) -> AnyResult {
         loop {
@@ -54,18 +55,18 @@ macro_rules! seq_parser {
     ) => {
         pub type $name< $( $Pi ),+ > = ( $( ParserPhase<$Pi>, )+ );
 
-        impl< $( $Pi ),+ > InitializableParser for $name< $( $Pi ),+ >
+        impl< $( $Pi ),+ > ParserInit for $name< $( $Pi ),+ >
         where
-            $( $Pi : InitializableParser ),+
+            $( $Pi : Parser + ParserInit ),+
         {
             fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
                 Ok((input, ( $( ParserPhase::<$Pi>::default(), )+ )))
             }
         }
 
-        impl< $( $Pi ),+ > StateParser for $name< $( $Pi ),+ >
+        impl< $( $Pi ),+ > Parser for $name< $( $Pi ),+ >
         where
-            $( $Pi : StateParser + InitializableParser ),+
+            $( $Pi : Parser + ParserInit ),+
         {
             type Output = ( $( $Pi::Output, )+ );
 
@@ -97,7 +98,7 @@ mod tests {
     #[derive(Default)]
     struct ByteParser;
 
-    impl StateParser for ByteParser {
+    impl Parser for ByteParser {
         type Output = u8;
 
         fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -111,7 +112,7 @@ mod tests {
         }
     }
 
-    impl InitializableParser for ByteParser {
+    impl ParserInit for ByteParser {
         fn init<'a>(_buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
             Ok((input, Self))
         }
@@ -121,7 +122,7 @@ mod tests {
     #[derive(Default)]
     struct U16LeParser;
 
-    impl StateParser for U16LeParser {
+    impl Parser for U16LeParser {
         type Output = u16;
 
         fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -135,7 +136,7 @@ mod tests {
         }
     }
 
-    impl InitializableParser for U16LeParser {
+    impl ParserInit for U16LeParser {
         fn init<'a>(_buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
             Ok((input, Self))
         }
@@ -147,10 +148,7 @@ mod tests {
         buffer.extend(&[0x12, 0x34, 0x56])?;
 
         let (input, mut parser) =
-            <Seq2Parser<ByteParser, U16LeParser> as InitializableParser>::init(
-                &buffer,
-                buffer.as_slice(),
-            )?;
+            <Seq2Parser<ByteParser, U16LeParser> as ParserInit>::init(&buffer, buffer.as_slice())?;
         buffer.consume_to(input.as_ptr());
 
         let (b, n) = parser.call(&mut buffer)?;
@@ -166,10 +164,7 @@ mod tests {
         buffer.extend(&[0xAA])?;
 
         let (input, mut parser) =
-            <Seq2Parser<ByteParser, U16LeParser> as InitializableParser>::init(
-                &buffer,
-                buffer.as_slice(),
-            )?;
+            <Seq2Parser<ByteParser, U16LeParser> as ParserInit>::init(&buffer, buffer.as_slice())?;
         buffer.consume_to(input.as_ptr());
 
         let err = parser

@@ -9,6 +9,7 @@ use crate::{
             buffer::Buffer,
             combinators::{read_exact, read_le_u32, read_le_u64, read_tag, read_u8},
             cursor::Cursor,
+            parse::{Parser, ParserInit},
             raw::{read_rdb_len, read_rdb_str},
         },
         model::{Item, RDBOpcode, RDBType, StreamEncoding},
@@ -31,7 +32,6 @@ use crate::{
                 ZSetZipListRecordParser,
             },
         },
-        state::traits::{InitializableParser, StateParser},
     },
 };
 
@@ -65,7 +65,7 @@ enum ItemParser {
 }
 
 #[delegate_impl]
-impl StateParser for ItemParser {
+impl Parser for ItemParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output>;
@@ -104,7 +104,7 @@ impl RDBFileParser {
 
     // Execute a child parser immediately if possible, otherwise stash it for later.
     fn set_entrust<E>(&mut self, mut entrust: E, buffer: &mut Buffer) -> AnyResult<Item>
-    where E: StateParser<Output = Item> + Into<ItemParser> {
+    where E: Parser<Output = Item> + Into<ItemParser> {
         debug_assert!(self.entrust.is_none());
         match entrust.call(buffer) {
             Ok(item) => Ok(item),
@@ -121,7 +121,7 @@ impl RDBFileParser {
         input_offset: usize,
     ) -> AnyResult<Option<Item>>
     where
-        E: InitializableParser + StateParser<Output = Item> + Into<ItemParser>,
+        E: Parser<Output = Item> + ParserInit + Into<ItemParser>,
     {
         let entrust = {
             let mut cursor = Cursor::new(buffer);

@@ -1,9 +1,11 @@
 use crate::{
     helper::AnyResult,
     parser::{
-        core::buffer::Buffer,
+        core::{
+            buffer::Buffer,
+            parse::{Parser, ParserInit},
+        },
         model::Item,
-        state::traits::{InitializableParser, StateParser},
         string::StringEncodingParser,
     },
 };
@@ -13,7 +15,7 @@ pub struct Function2RecordParser {
     entrust: StringEncodingParser,
 }
 
-impl InitializableParser for Function2RecordParser {
+impl ParserInit for Function2RecordParser {
     fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         let (input, entrust) = StringEncodingParser::init(buffer, input)?;
 
@@ -24,7 +26,7 @@ impl InitializableParser for Function2RecordParser {
     }
 }
 
-impl StateParser for Function2RecordParser {
+impl Parser for Function2RecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {

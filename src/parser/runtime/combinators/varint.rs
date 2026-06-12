@@ -1,17 +1,15 @@
 use crate::{
     helper::AnyResult,
-    parser::{
-        core::{
-            buffer::Buffer,
-            raw::{RDBLen, read_rdb_len},
-        },
-        state::traits::{InitializableParser, StateParser},
+    parser::core::{
+        buffer::Buffer,
+        parse::{Parser, ParserInit},
+        raw::{RDBLen, read_rdb_len},
     },
 };
 
 pub struct RDBLenParser;
 
-impl StateParser for RDBLenParser {
+impl Parser for RDBLenParser {
     type Output = RDBLen;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -21,7 +19,7 @@ impl StateParser for RDBLenParser {
     }
 }
 
-impl InitializableParser for RDBLenParser {
+impl ParserInit for RDBLenParser {
     fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
         Ok((input, Self))
     }

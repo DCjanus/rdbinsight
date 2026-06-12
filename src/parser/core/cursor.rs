@@ -1,6 +1,6 @@
 use crate::{
     helper::AnyResult,
-    parser::core::{buffer::Buffer, parse::ParserInit, view::View},
+    parser::core::{buffer::Buffer, parse::ParserInit},
 };
 
 pub struct Cursor<'a> {
@@ -10,16 +10,6 @@ pub struct Cursor<'a> {
 impl<'a> Cursor<'a> {
     pub fn new(buffer: &'a mut Buffer) -> Self {
         Self { buffer }
-    }
-
-    pub fn view(&self) -> View<'_> {
-        View::new(self.buffer)
-    }
-
-    pub fn commit_view(&mut self, view: View<'_>) {
-        debug_assert_eq!(view.base_ptr(), self.buffer.as_slice().as_ptr());
-        debug_assert_eq!(view.offset(), self.buffer.tell() + view.consumed() as u64);
-        self.buffer.consume(view.consumed());
     }
 
     pub fn init_commit<P: ParserInit>(&mut self) -> AnyResult<P> {
@@ -36,10 +26,6 @@ impl<'a> Cursor<'a> {
         let consumed = self.buffer.len() - remaining.len();
         self.buffer.consume(consumed);
         Ok(parser)
-    }
-
-    pub fn buffer_mut(&mut self) -> &mut Buffer {
-        self.buffer
     }
 }
 
@@ -103,23 +89,6 @@ mod tests {
         assert!(err.is::<NeedMoreData>());
         assert_eq!(buffer.tell(), 0);
         assert_eq!(buffer.as_slice(), &[1]);
-        Ok(())
-    }
-
-    #[test]
-    fn view_does_not_consume_buffer() -> AnyResult<()> {
-        let mut buffer = Buffer::new(8);
-        buffer.extend(&[1, 2, 3])?;
-
-        {
-            let cursor = Cursor::new(&mut buffer);
-            let view = cursor.view();
-            assert_eq!(view.remaining(), &[1, 2, 3]);
-            assert_eq!(view.offset(), 0);
-        }
-
-        assert_eq!(buffer.tell(), 0);
-        assert_eq!(buffer.as_slice(), &[1, 2, 3]);
         Ok(())
     }
 }

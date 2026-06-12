@@ -12,8 +12,6 @@ const COMMENT_MARKER = "<!-- rdbinsight-parser-benchmark -->";
 const CRITERION_DIR = repoPath("target", "criterion");
 const BASE_CRITERION_DIR = repoPath("target", "criterion-base");
 const CURRENT_CRITERION_DIR = repoPath("target", "criterion-current");
-const BENCHMARK_NAME_PATTERN =
-  /^parser\/parse_rdb\/synthetic-(?:(?:string|list|set|hash|zset|zset2)-records|mixed-raw-types)-[1-9][0-9]*MiB$/;
 
 function repoPath(...segments) {
   return path.join(process.env.GITHUB_WORKSPACE || process.cwd(), ...segments);
@@ -211,10 +209,6 @@ function collectBenchmarkRows(hasBaseBaseline) {
     }
 
     const name = benchmarkName(CURRENT_CRITERION_DIR, estimatesPath);
-    if (!BENCHMARK_NAME_PATTERN.test(name)) {
-      core.warning(`Skipping unexpected benchmark name: ${name}`);
-      continue;
-    }
     const baseEstimatesPath = path.join(BASE_CRITERION_DIR, ...name.split("/"), "base", "estimates.json");
     const currentNs = medianPointEstimate(estimatesPath);
     const baseNs =

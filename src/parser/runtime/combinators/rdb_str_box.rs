@@ -140,7 +140,7 @@ where P: Parser + ParserInit
             Ok((input, len))
         }));
         match len {
-            RDBLen::Simple(length) | RDBLen::IntStr(length) => {
+            RDBLen::Simple(length) => {
                 let expect_end = view.offset() + length;
                 let entrust = parse_try!(view.init_parser::<P>());
                 ParseResult::Ok(Self::Simple {
@@ -148,6 +148,7 @@ where P: Parser + ParserInit
                     entrust,
                 })
             }
+            RDBLen::IntStr(_) => fatal(anyhow!("encoded integer cannot wrap nested RDB content")),
             RDBLen::LZFStr => {
                 let in_len = parse_try!(view.parse_init(|_, input| {
                     let (input, in_len) = read_rdb_len(input).context("read compressed in_len")?;

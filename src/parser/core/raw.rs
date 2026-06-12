@@ -19,7 +19,7 @@ use crate::{
 #[derive(Clone, Hash, Debug)]
 pub enum RDBLen {
     Simple(u64),
-    IntStr(u64),
+    IntStr(i64),
     LZFStr,
 }
 
@@ -27,7 +27,6 @@ impl RDBLen {
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             RDBLen::Simple(len) => Some(*len),
-            RDBLen::IntStr(len) => Some(*len),
             _ => None,
         }
     }
@@ -54,15 +53,15 @@ pub fn read_rdb_len(input: &[u8]) -> AnyResult<(&[u8], RDBLen)> {
         }
         0b1100_0000 => {
             let (input, ret) = read_u8(input)?;
-            Ok((input, RDBLen::IntStr(ret as u64)))
+            Ok((input, RDBLen::IntStr(ret as i8 as i64)))
         }
         0b1100_0001 => {
             let (input, ret) = read_le_u16(input)?;
-            Ok((input, RDBLen::IntStr(ret as u64)))
+            Ok((input, RDBLen::IntStr(ret as i16 as i64)))
         }
         0b1100_0010 => {
             let (input, ret) = read_le_u32(input)?;
-            Ok((input, RDBLen::IntStr(ret as u64)))
+            Ok((input, RDBLen::IntStr(ret as i32 as i64)))
         }
         0b1100_0011 => Ok((input, RDBLen::LZFStr)),
         _ => bail!("Invalid length leading byte: {:02x}", first_byte),
@@ -72,7 +71,7 @@ pub fn read_rdb_len(input: &[u8]) -> AnyResult<(&[u8], RDBLen)> {
 #[derive(Clone, Hash, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RDBStr {
     Str(Bytes), /* XXX: tricky way to avoid lifetime issue, might be slow than &[u8], but easy to use */
-    Int(u64),
+    Int(i64),
 }
 
 unsafe impl<C: Config> SchemaWrite<C> for RDBStr {
@@ -83,7 +82,7 @@ unsafe impl<C: Config> SchemaWrite<C> for RDBStr {
             RDBStr::Str(bytes) => Ok(<u8 as SchemaWrite<C>>::size_of(&0)?
                 + <[u8] as SchemaWrite<C>>::size_of(bytes.as_ref())?),
             RDBStr::Int(v) => {
-                Ok(<u8 as SchemaWrite<C>>::size_of(&1)? + <u64 as SchemaWrite<C>>::size_of(v)?)
+                Ok(<u8 as SchemaWrite<C>>::size_of(&1)? + <i64 as SchemaWrite<C>>::size_of(v)?)
             }
         }
     }
@@ -96,7 +95,7 @@ unsafe impl<C: Config> SchemaWrite<C> for RDBStr {
             }
             RDBStr::Int(v) => {
                 <u8 as SchemaWrite<C>>::write(&mut writer, &1)?;
-                <u64 as SchemaWrite<C>>::write(writer, v)
+                <i64 as SchemaWrite<C>>::write(writer, v)
             }
         }
     }
@@ -116,7 +115,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for RDBStr {
                 dst.write(RDBStr::Str(Bytes::from(data)));
             }
             1 => {
-                let v = <u64 as SchemaRead<'de, C>>::get(reader)?;
+                let v = <i64 as SchemaRead<'de, C>>::get(reader)?;
                 dst.write(RDBStr::Int(v));
             }
             other => {
@@ -204,11 +203,20 @@ mod tests {
 
     #[test]
     fn rdb_integer_string_uses_little_endian_payload() {
+        let (_, value) = read_rdb_str(&[0xc0, 0xff]).unwrap();
+        assert_eq!(value, RDBStr::Int(-1));
+
         let (_, value) = read_rdb_str(&[0xc1, 0x00, 0x01]).unwrap();
         assert_eq!(value, RDBStr::Int(256));
 
+        let (_, value) = read_rdb_str(&[0xc1, 0xff, 0xff]).unwrap();
+        assert_eq!(value, RDBStr::Int(-1));
+
         let (_, value) = read_rdb_str(&[0xc2, 0x00, 0x00, 0x01, 0x00]).unwrap();
         assert_eq!(value, RDBStr::Int(65_536));
+
+        let (_, value) = read_rdb_str(&[0xc2, 0xff, 0xff, 0xff, 0xff]).unwrap();
+        assert_eq!(value, RDBStr::Int(-1));
     }
 
     #[test]

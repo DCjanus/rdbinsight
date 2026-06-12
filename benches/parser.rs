@@ -63,19 +63,19 @@ fn push_rdb_str(out: &mut Vec<u8>, value: &[u8]) {
     out.extend_from_slice(value);
 }
 
-fn push_rdb_int_str(out: &mut Vec<u8>, value: u64) {
+fn push_rdb_int_str(out: &mut Vec<u8>, value: i64) {
     match value {
-        0..=0xff => {
+        -128..=127 => {
             out.push(0xc0);
-            out.push(value as u8);
+            out.push(value as i8 as u8);
         }
-        0x100..=0xffff => {
+        -32_768..=32_767 => {
             out.push(0xc1);
-            out.extend_from_slice(&(value as u16).to_le_bytes());
+            out.extend_from_slice(&(value as i16).to_le_bytes());
         }
         _ => {
             out.push(0xc2);
-            out.extend_from_slice(&(value as u32).to_le_bytes());
+            out.extend_from_slice(&(value as i32).to_le_bytes());
         }
     }
 }
@@ -152,7 +152,7 @@ fn push_string_record(out: &mut Vec<u8>, key: &[u8], value: &[u8]) {
     push_rdb_str(out, value);
 }
 
-fn push_string_int_record(out: &mut Vec<u8>, key: &[u8], value: u64) {
+fn push_string_int_record(out: &mut Vec<u8>, key: &[u8], value: i64) {
     out.push(0x00); // RDB_TYPE_STRING.
     push_rdb_str(out, key);
     push_rdb_int_str(out, value);
@@ -360,7 +360,15 @@ where F: FnMut(&mut Vec<u8>, &[u8], u64) {
 
 fn synthetic_string_int_rdb(target_bytes: usize) -> Vec<u8> {
     synthetic_repeated_rdb(target_bytes, "string-int", |out, key, index| {
-        push_string_int_record(out, key, index);
+        let value = match index % 6 {
+            0 => -1,
+            1 => 127,
+            2 => -129,
+            3 => 32_767,
+            4 => -32_769,
+            _ => index as i64,
+        };
+        push_string_int_record(out, key, value);
     })
 }
 

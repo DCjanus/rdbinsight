@@ -152,6 +152,238 @@ jobs:
             target/criterion-base
             target/criterion-current
 
+  parser-benchmark-summary:
+    name: Parser Benchmark Summary
+    runs-on: ubuntu-latest
+    needs: [parser-benchmark]
+    permissions:
+      contents: read
+    steps:
+      - name: Download benchmark artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: parser-benchmark-*
+          path: parser-benchmark-artifacts
+
+      - name: Write aggregate benchmark summary
+        env:
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          const artifactRoot = "parser-benchmark-artifacts";
+          const baseRoots = [];
+          const currentRoots = [];
+          const expectedBenchmarkNames = [
+            "parser/parse_rdb/synthetic-array-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-listpack-ex-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-listpack-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-metadata-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-ziplist-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-zipmap-records-16MiB",
+            "parser/parse_rdb/synthetic-list-quicklist-records-16MiB",
+            "parser/parse_rdb/synthetic-list-quicklist2-records-16MiB",
+            "parser/parse_rdb/synthetic-list-records-16MiB",
+            "parser/parse_rdb/synthetic-list-ziplist-records-16MiB",
+            "parser/parse_rdb/synthetic-mixed-raw-types-16MiB",
+            "parser/parse_rdb/synthetic-set-intset-records-16MiB",
+            "parser/parse_rdb/synthetic-set-listpack-records-16MiB",
+            "parser/parse_rdb/synthetic-set-records-16MiB",
+            "parser/parse_rdb/synthetic-string-int-records-16MiB",
+            "parser/parse_rdb/synthetic-string-records-16MiB",
+            "parser/parse_rdb/synthetic-zset-listpack-records-16MiB",
+            "parser/parse_rdb/synthetic-zset-records-16MiB",
+            "parser/parse_rdb/synthetic-zset-ziplist-records-16MiB",
+            "parser/parse_rdb/synthetic-zset2-records-16MiB",
+          ];
+          const expectedBenchmarkNameSet = new Set(expectedBenchmarkNames);
+          const isPullRequest = process.env.EVENT_NAME === "pull_request";
+
+          function fileExists(filePath) {
+            return fs.existsSync(filePath);
+          }
+
+          function readJson(filePath) {
+            return JSON.parse(fs.readFileSync(filePath, "utf8"));
+          }
+
+          function walkFiles(dir, basename, out = []) {
+            if (!fileExists(dir)) return out;
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const entryPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                walkFiles(entryPath, basename, out);
+              } else if (entry.name === basename) {
+                out.push(entryPath);
+              }
+            }
+            return out;
+          }
+
+          function collectCriterionRoots(dir) {
+            if (!fileExists(dir)) return;
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const entryPath = path.join(dir, entry.name);
+              if (!entry.isDirectory()) continue;
+              if (entryPath.endsWith(`${path.sep}target${path.sep}criterion-base`)) {
+                baseRoots.push(entryPath);
+              } else if (entryPath.endsWith(`${path.sep}target${path.sep}criterion-current`)) {
+                currentRoots.push(entryPath);
+              }
+              collectCriterionRoots(entryPath);
+            }
+          }
+
+          function benchmarkName(root, estimatesPath) {
+            return path.relative(root, estimatesPath).split(path.sep).slice(0, -2).join("/");
+          }
+
+          function median(filePath) {
+            const value = readJson(filePath).median?.point_estimate;
+            if (!Number.isFinite(value) || value <= 0) {
+              throw new Error(`invalid median estimate in ${filePath}`);
+            }
+            return value;
+          }
+
+          function bytesFor(name) {
+            const benchmarkPath = currentRoots
+              .map((root) => path.join(root, ...name.split("/"), "new", "benchmark.json"))
+              .find(fileExists);
+            if (!benchmarkPath) return Number.NaN;
+            const value = readJson(benchmarkPath).throughput?.Bytes ?? Number.NaN;
+            return Number.isFinite(value) && value > 0 ? value : Number.NaN;
+          }
+
+          function cell(value) {
+            return String(value)
+              .slice(0, 200)
+              .replaceAll("\\", "\\\\")
+              .replaceAll("|", "\\|")
+              .replaceAll("`", "\\`")
+              .replaceAll("\r", " ")
+              .replaceAll("\n", " ")
+              .replaceAll("<", "&lt;")
+              .replaceAll(">", "&gt;");
+          }
+
+          function duration(ns) {
+            if (!Number.isFinite(ns)) return "-";
+            if (ns < 1_000) return `${ns.toFixed(2)} ns`;
+            if (ns < 1_000_000) return `${(ns / 1_000).toFixed(2)} us`;
+            if (ns < 1_000_000_000) return `${(ns / 1_000_000).toFixed(2)} ms`;
+            return `${(ns / 1_000_000_000).toFixed(2)} s`;
+          }
+
+          function throughput(bytes, ns) {
+            if (!Number.isFinite(bytes) || !Number.isFinite(ns) || ns <= 0) return "-";
+            return `${(bytes / (1024 * 1024) / (ns / 1_000_000_000)).toFixed(2)} MiB/s`;
+          }
+
+          function change(currentNs, baseNs) {
+            if (!Number.isFinite(currentNs) || !Number.isFinite(baseNs) || baseNs <= 0) return "-";
+            const value = (currentNs / baseNs - 1) * 100;
+            const prefix = value > 0 ? "+" : "";
+            const direction = value > 0 ? "slower" : value < 0 ? "faster" : "same";
+            return `${prefix}${value.toFixed(2)}% ${direction}`;
+          }
+
+          function shortSha(sha) {
+            return (sha || "").slice(0, 7);
+          }
+
+          function commitLink(repo, sha) {
+            if (!repo || !sha) return "-";
+            return `[${cell(shortSha(sha))}](https://github.com/${repo}/commit/${sha})`;
+          }
+
+          function runLink(label, runId) {
+            return `[${cell(label)}](https://github.com/${process.env.REPO}/actions/runs/${runId})`;
+          }
+
+          collectCriterionRoots(artifactRoot);
+          if (currentRoots.length === 0) {
+            throw new Error("no criterion-current directories found in benchmark artifacts");
+          }
+          if (isPullRequest && baseRoots.length === 0) {
+            throw new Error("no criterion-base directories found in benchmark artifacts");
+          }
+
+          const rows = currentRoots
+            .flatMap((currentRoot) =>
+              walkFiles(currentRoot, "estimates.json")
+                .filter((filePath) => filePath.endsWith(`${path.sep}new${path.sep}estimates.json`))
+                .flatMap((filePath) => {
+                  const name = benchmarkName(currentRoot, filePath);
+                  if (!expectedBenchmarkNameSet.has(name)) {
+                    console.log(`Skipping unexpected benchmark name: ${name}`);
+                    return [];
+                  }
+                  const basePath = baseRoots
+                    .map((baseRoot) => path.join(baseRoot, ...name.split("/"), "base", "estimates.json"))
+                    .find(fileExists);
+                  const currentNs = median(filePath);
+                  const baseNs = basePath ? median(basePath) : Number.NaN;
+                  return [{ name, currentNs, baseNs, bytes: bytesFor(name) }];
+                }),
+            )
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+          const foundBenchmarkNameSet = new Set(rows.map((row) => row.name));
+          const missingBenchmarkNames = expectedBenchmarkNames.filter(
+            (name) => !foundBenchmarkNameSet.has(name),
+          );
+          if (missingBenchmarkNames.length > 0) {
+            throw new Error(`missing expected benchmark rows: ${missingBenchmarkNames.join(", ")}`);
+          }
+
+          const missingBaseNames = rows
+            .filter((row) => !Number.isFinite(row.baseNs))
+            .map((row) => row.name);
+          if (isPullRequest && missingBaseNames.length > 0) {
+            throw new Error(`missing base benchmark rows: ${missingBaseNames.join(", ")}`);
+          }
+
+          const table = [
+            "| Benchmark | Base median | Current median | Change | Current throughput |",
+            "| --- | ---: | ---: | ---: | ---: |",
+            ...rows.map((row) =>
+              `| \`${cell(row.name)}\` | ${cell(duration(row.baseNs))} | ${cell(duration(row.currentNs))} | ${cell(change(row.currentNs, row.baseNs))} | ${cell(throughput(row.bytes, row.currentNs))} |`,
+            ),
+          ].join("\n");
+
+          const summary = [
+            "## Parser benchmark",
+            "",
+            "- Each profile's base and current benchmarks run in the same shard job on the same GitHub runner.",
+            `- Base commit: ${commitLink(process.env.BASE_REPO, process.env.BASE_SHA)}; head commit: ${commitLink(process.env.HEAD_REPO, process.env.HEAD_SHA)}.`,
+            `- Benchmark workflow: ${runLink(`CI run ${process.env.GITHUB_RUN_ID}`, process.env.GITHUB_RUN_ID)}.`,
+            "- Benchmark excludes disk I/O; RDB bytes are prepared before timing starts.",
+            "- Positive change means the current PR is slower than the base commit.",
+            "- Parser benchmark fails when any comparable profile slows down by more than 30%.",
+            "",
+            table,
+            "",
+          ].join("\n");
+
+          fs.writeFileSync("parser-benchmark-summary.md", summary);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+          NODE
+
+      - name: Upload aggregate benchmark summary
+        uses: actions/upload-artifact@v7
+        with:
+          name: parser-benchmark-summary
+          path: parser-benchmark-summary.md
+
   docker-builds:
     name: Docker Build (${{ matrix.name }})
     needs: [lint, coverage]

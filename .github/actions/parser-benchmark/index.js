@@ -406,7 +406,7 @@ function pullRequestBenchmarkLinks() {
     notes.push(`Base commit: ${baseCommit}; head commit: ${headCommit}.`);
   }
   if (workflowRun) {
-    notes.push(`Benchmark and comment workflow: ${workflowRun}.`);
+    notes.push(`Benchmark workflow: ${workflowRun}.`);
   }
 
   return notes;

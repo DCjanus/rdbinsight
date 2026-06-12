@@ -12,6 +12,8 @@ const COMMENT_MARKER = "<!-- rdbinsight-parser-benchmark -->";
 const CRITERION_DIR = repoPath("target", "criterion");
 const BASE_CRITERION_DIR = repoPath("target", "criterion-base");
 const CURRENT_CRITERION_DIR = repoPath("target", "criterion-current");
+const BENCHMARK_NAME_PATTERN =
+  /^parser\/parse_rdb\/synthetic-(?:(?:string|list|set|hash|zset|zset2)-records|mixed-raw-types)-[1-9][0-9]*MiB$/;
 
 function repoPath(...segments) {
   return path.join(process.env.GITHUB_WORKSPACE || process.cwd(), ...segments);
@@ -171,6 +173,18 @@ function formatChange(currentNs, baseNs) {
   return `${prefix}${change.toFixed(2)}% ${direction}`;
 }
 
+function markdownTableCell(value) {
+  return String(value)
+    .slice(0, 200)
+    .replaceAll("\\", "\\\\")
+    .replaceAll("|", "\\|")
+    .replaceAll("`", "\\`")
+    .replaceAll("\r", " ")
+    .replaceAll("\n", " ")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
 function medianPointEstimate(filePath) {
   return readJson(filePath).median.point_estimate;
 }
@@ -197,6 +211,10 @@ function collectBenchmarkRows(hasBaseBaseline) {
     }
 
     const name = benchmarkName(CURRENT_CRITERION_DIR, estimatesPath);
+    if (!BENCHMARK_NAME_PATTERN.test(name)) {
+      core.warning(`Skipping unexpected benchmark name: ${name}`);
+      continue;
+    }
     const baseEstimatesPath = path.join(BASE_CRITERION_DIR, ...name.split("/"), "base", "estimates.json");
     const currentNs = medianPointEstimate(estimatesPath);
     const baseNs =
@@ -229,7 +247,7 @@ function benchmarkMarkdownTable(rows) {
 
   for (const row of rows) {
     table.push(
-      `| \`${row.name}\` | ${formatDuration(row.baseNs)} | ${formatDuration(row.currentNs)} | ${formatChange(row.currentNs, row.baseNs)} | ${formatThroughput(row.bytes, row.currentNs)} |`,
+      `| \`${markdownTableCell(row.name)}\` | ${markdownTableCell(formatDuration(row.baseNs))} | ${markdownTableCell(formatDuration(row.currentNs))} | ${markdownTableCell(formatChange(row.currentNs, row.baseNs))} | ${markdownTableCell(formatThroughput(row.bytes, row.currentNs))} |`,
     );
   }
 

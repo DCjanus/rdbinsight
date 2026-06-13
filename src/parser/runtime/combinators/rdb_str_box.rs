@@ -37,6 +37,42 @@ where P: Parser + ParserInit
         matches!(self, Self::Lzf { .. })
     }
 
+    pub(crate) fn init_from_input<'a>(
+        buffer: &Buffer,
+        input: &'a [u8],
+        init_inner: impl FnOnce(&'a [u8]) -> AnyResult<(&'a [u8], P)>,
+    ) -> AnyResult<(&'a [u8], Self)> {
+        let (input, len) = read_rdb_len(input).context("read string length")?;
+        match len {
+            RDBLen::Simple(length) => {
+                let expect_end = buffer.tell_to(input.as_ptr()) + length;
+                let (input, entrust) = init_inner(input)?;
+                Ok((input, Self::Simple {
+                    expect_end,
+                    entrust,
+                }))
+            }
+            RDBLen::IntStr(_) => bail!("encoded integer cannot wrap nested RDB content"),
+            RDBLen::LZFStr => {
+                let (input, in_len) = read_rdb_len(input).context("read compressed in_len")?;
+                let in_len = in_len
+                    .as_u64()
+                    .context("compressed in_len must be simple")?;
+                let (input, out_len) = read_rdb_len(input).context("read compressed out_len")?;
+                let out_len = out_len
+                    .as_u64()
+                    .context("compressed out_len must be simple")?;
+                Ok((input, Self::Lzf {
+                    remain_in: in_len,
+                    remain_out: out_len,
+                    out_buffer: Buffer::new(out_len as usize),
+                    decoder: LzfChunkDecoder::default(),
+                    entrust: None,
+                }))
+            }
+        }
+    }
+
     fn call_simple(buffer: &mut Buffer, expect_end: u64, entrust: &mut P) -> AnyResult<P::Output> {
         let ret = entrust.call(buffer);
         let e = match ret {

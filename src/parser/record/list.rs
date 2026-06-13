@@ -67,16 +67,15 @@ pub struct ListZipListRecordParser {
 
 impl ParserInit for ListZipListRecordParser {
     fn init(view: &mut View<'_>) -> ParseResult<Self> {
-        let started = view.base_offset();
-        let key = parse_try!(view.parse_init(|_, input| {
+        view.parse_init(|buffer, input| {
             let (input, key) = read_rdb_str(input).context("read key")?;
-            Ok((input, key))
-        }));
-        let entrust = parse_try!(view.init_parser::<RDBStrBox<ZipListLengthParser>>());
-        ParseResult::Ok(Self {
-            started,
-            key,
-            entrust,
+            let (input, entrust) =
+                RDBStrBox::init_from_input(buffer, input, ZipListLengthParser::init_from_input)?;
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
         })
     }
 }
@@ -101,7 +100,7 @@ pub struct ZipListLengthParser {
 }
 
 impl ZipListLengthParser {
-    fn init_from_input(input: &[u8]) -> AnyResult<(&[u8], Self)> {
+    pub(crate) fn init_from_input(input: &[u8]) -> AnyResult<(&[u8], Self)> {
         let (input, _) = read_exact(input, 10)?;
         Ok((input, Self {
             entrust: None,

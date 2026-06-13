@@ -68,16 +68,15 @@ pub struct ZSetZipListRecordParser {
 
 impl ParserInit for ZSetZipListRecordParser {
     fn init(view: &mut View<'_>) -> ParseResult<Self> {
-        let started = view.base_offset();
-        let key = parse_try!(view.parse_init(|_, input| {
+        view.parse_init(|buffer, input| {
             let (input, key) = read_rdb_str(input).context("read key")?;
-            Ok((input, key))
-        }));
-        let entrust = parse_try!(view.init_parser::<RDBStrBox<ZipListLengthParser>>());
-        ParseResult::Ok(Self {
-            started,
-            key,
-            entrust,
+            let (input, entrust) =
+                RDBStrBox::init_from_input(buffer, input, ZipListLengthParser::init_from_input)?;
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
         })
     }
 }
@@ -110,22 +109,22 @@ pub struct ZSetListPackRecordParser {
 
 impl ParserInit for ZSetListPackRecordParser {
     fn init(view: &mut View<'_>) -> ParseResult<Self> {
-        let started = view.base_offset();
-        let key = parse_try!(view.parse_init(|_, input| {
+        let parser = parse_try!(view.parse_init(|buffer, input| {
             let (input, key) = read_rdb_str(input).context("read key")?;
-            Ok((input, key))
+            let (input, entrust) =
+                RDBStrBox::init_from_input(buffer, input, ListPackLengthParser::init_from_input)?;
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
         }));
-        let entrust = parse_try!(view.init_parser::<RDBStrBox<ListPackLengthParser>>());
-        if entrust.is_lzf() {
+        if parser.entrust.is_lzf() {
             crate::parser_trace!("zset.listpack.lzf");
         } else {
             crate::parser_trace!("zset.listpack.raw");
         }
-        ParseResult::Ok(Self {
-            started,
-            key,
-            entrust,
-        })
+        ParseResult::Ok(parser)
     }
 }
 

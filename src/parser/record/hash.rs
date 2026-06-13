@@ -70,16 +70,15 @@ pub struct HashZipListRecordParser {
 
 impl ParserInit for HashZipListRecordParser {
     fn init(view: &mut View<'_>) -> ParseResult<Self> {
-        let started = view.base_offset();
-        let key = parse_try!(view.parse_init(|_, input| {
+        view.parse_init(|buffer, input| {
             let (input, key) = read_rdb_str(input).context("read key")?;
-            Ok((input, key))
-        }));
-        let entrust = parse_try!(view.init_parser::<RDBStrBox<ZipListLengthParser>>());
-        ParseResult::Ok(Self {
-            started,
-            key,
-            entrust,
+            let (input, entrust) =
+                RDBStrBox::init_from_input(buffer, input, ZipListLengthParser::init_from_input)?;
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
         })
     }
 }
@@ -112,16 +111,15 @@ pub struct HashListPackRecordParser {
 
 impl ParserInit for HashListPackRecordParser {
     fn init(view: &mut View<'_>) -> ParseResult<Self> {
-        let started = view.base_offset();
-        let key = parse_try!(view.parse_init(|_, input| {
+        view.parse_init(|buffer, input| {
             let (input, key) = read_rdb_str(input).context("read key")?;
-            Ok((input, key))
-        }));
-        let entrust = parse_try!(view.init_parser::<RDBStrBox<ListPackLengthParser>>());
-        ParseResult::Ok(Self {
-            started,
-            key,
-            entrust,
+            let (input, entrust) =
+                RDBStrBox::init_from_input(buffer, input, ListPackLengthParser::init_from_input)?;
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
         })
     }
 }
@@ -154,17 +152,16 @@ pub struct HashListPackExRecordParser {
 
 impl ParserInit for HashListPackExRecordParser {
     fn init(view: &mut View<'_>) -> ParseResult<Self> {
-        let started = view.base_offset();
-        let key = parse_try!(view.parse_init(|_, input| {
+        view.parse_init(|buffer, input| {
             let (input, key) = read_rdb_str(input).context("read key")?;
             let (input, _min_expire) = read_le_u64(input).context("read minExpire")?;
-            Ok((input, key))
-        }));
-        let entrust = parse_try!(view.init_parser::<RDBStrBox<ListPackLengthParser>>());
-        ParseResult::Ok(Self {
-            started,
-            key,
-            entrust,
+            let (input, entrust) =
+                RDBStrBox::init_from_input(buffer, input, ListPackLengthParser::init_from_input)?;
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
         })
     }
 }

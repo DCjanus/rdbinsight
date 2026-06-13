@@ -1157,13 +1157,44 @@ async fn hash_listpack_encoding_test() -> AnyResult<()> {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn hash_zipmap_fixture_raw_test() -> AnyResult<()> {
-    use std::path::Path;
+async fn hash_zipmap_raw_integration_test() -> AnyResult<()> {
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_4)
+        .build()
+        .await?;
+
+    let rdb_path = redis
+        .generate_rdb("hash_zipmap_raw_integration_test", |conn| {
+            async move {
+                config_set_many(conn, &[
+                    ("hash-max-zipmap-entries", "1024"),
+                    ("hash-max-zipmap-value", "1024"),
+                ])
+                .await?;
+                let field_a: Vec<u8> = (0..96).map(|idx| ((idx * 149 + 31) % 251) as u8).collect();
+                let value_a: Vec<u8> = (0..96).map(|idx| ((idx * 157 + 43) % 251) as u8).collect();
+                let field_b: Vec<u8> = (0..96).map(|idx| ((idx * 163 + 59) % 251) as u8).collect();
+                let value_b: Vec<u8> = (0..96).map(|idx| ((idx * 167 + 71) % 251) as u8).collect();
+                redis::cmd("HSET")
+                    .arg("zm_raw")
+                    .arg(field_a)
+                    .arg(value_a)
+                    .query_async::<()>(conn)
+                    .await?;
+                redis::cmd("HSET")
+                    .arg("zm_raw")
+                    .arg(field_b)
+                    .arg(value_b)
+                    .query_async::<()>(conn)
+                    .await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
 
     let guard = trace::capture();
-    let path = Path::new("tests/fixtures/zipmap_that_doesnt_compress.rdb");
-
-    let items = read_filtered_items(path).await?;
+    let items = read_filtered_items(&rdb_path).await?;
 
     // Expect exactly one HashRecord encoded as ZipMap.
     assert_eq!(items.len(), 1, "expected exactly one HashRecord");
@@ -1177,10 +1208,7 @@ async fn hash_zipmap_fixture_raw_test() -> AnyResult<()> {
         panic!("expected HashRecord");
     };
 
-    assert_eq!(
-        *key,
-        RDBStr::Str(Bytes::copy_from_slice(b"zimap_doesnt_compress"))
-    );
+    assert_eq!(*key, RDBStr::Str(Bytes::from("zm_raw")));
     assert_eq!(*encoding, HashEncoding::ZipMap);
     assert_eq!(*pair_count, 2);
     assert!(
@@ -1193,13 +1221,37 @@ async fn hash_zipmap_fixture_raw_test() -> AnyResult<()> {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn hash_zipmap_fixture_lzf_test() -> AnyResult<()> {
-    use std::path::Path;
+async fn hash_zipmap_lzf_integration_test() -> AnyResult<()> {
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_4)
+        .build()
+        .await?;
+
+    let compressible_value = "a".repeat(120);
+    let rdb_path = redis
+        .generate_rdb("hash_zipmap_lzf_integration_test", |conn| {
+            async move {
+                config_set_many(conn, &[
+                    ("hash-max-zipmap-entries", "1024"),
+                    ("hash-max-zipmap-value", "1024"),
+                ])
+                .await?;
+                for field in ["f1", "f2", "f3"] {
+                    redis::cmd("HSET")
+                        .arg("zm_lzf")
+                        .arg(field)
+                        .arg(&compressible_value)
+                        .query_async::<()>(conn)
+                        .await?;
+                }
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
 
     let guard = trace::capture();
-    let path = Path::new("tests/fixtures/zipmap_that_compresses_easily.rdb");
-
-    let items = read_filtered_items(path).await?;
+    let items = read_filtered_items(&rdb_path).await?;
 
     assert_eq!(items.len(), 1, "expected exactly one HashRecord");
     let Item::HashRecord {
@@ -1212,10 +1264,7 @@ async fn hash_zipmap_fixture_lzf_test() -> AnyResult<()> {
         panic!("expected HashRecord");
     };
 
-    assert_eq!(
-        *key,
-        RDBStr::Str(Bytes::copy_from_slice(b"zipmap_compresses_easily"))
-    );
+    assert_eq!(*key, RDBStr::Str(Bytes::from("zm_lzf")));
     assert_eq!(*pair_count, 3);
     assert_eq!(*encoding, HashEncoding::ZipMap);
     assert!(
@@ -1390,21 +1439,40 @@ async fn expiry_time_ms_item_order_test() -> AnyResult<()> {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn expiry_time_seconds_legacy_rdb_item_order_test() -> AnyResult<()> {
-    let expected_expire_at_s = 1_700_000_000_u32;
-    let mut rdb = Vec::new();
-    rdb.extend_from_slice(b"REDIS0002");
-    rdb.push(0xfd); // RDB_OPCODE_EXPIRETIME
-    rdb.extend_from_slice(&expected_expire_at_s.to_le_bytes());
-    rdb.push(0x00); // RDB_TYPE_STRING
-    rdb.push(0x0b);
-    rdb.extend_from_slice(b"seconds_key");
-    rdb.push(0x03);
-    rdb.extend_from_slice(b"foo");
-    rdb.push(0xff); // RDB_OPCODE_EOF without checksum in legacy RDB versions
+async fn expiry_time_seconds_integration_item_order_test() -> AnyResult<()> {
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_4)
+        .build()
+        .await?;
+
+    let expected_expire_at_s = SystemTime::now()
+        .checked_add(Duration::from_secs(3600))
+        .expect("should not overflow")
+        .duration_since(UNIX_EPOCH)
+        .expect("should not overflow")
+        .as_secs() as u32;
+
+    let rdb_path = redis
+        .generate_rdb("expiry_time_seconds_integration_item_order_test", |conn| {
+            async move {
+                redis::cmd("SET")
+                    .arg("seconds_key")
+                    .arg("foo")
+                    .query_async::<()>(conn)
+                    .await?;
+                redis::cmd("EXPIREAT")
+                    .arg("seconds_key")
+                    .arg(expected_expire_at_s)
+                    .query_async::<()>(conn)
+                    .await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
 
     let guard = trace::capture();
-    let items = utils::filter_items(utils::collect_items(Cursor::new(rdb)).await?);
+    let items = read_filtered_items(&rdb_path).await?;
     assert!(
         guard.hit("expiry.s"),
         "expected expiry.s trace event; captured: {:?}",

@@ -1228,6 +1228,63 @@ async fn hash_zipmap_fixture_lzf_test() -> AnyResult<()> {
 }
 
 #[tokio::test]
+async fn hash_zipmap_large_length_little_endian_test() -> AnyResult<()> {
+    let redis = RedisConfig::default()
+        .with_version(RedisVariant::Redis2_4)
+        .build()
+        .await?;
+
+    let large_field: Vec<u8> = (0..300)
+        .map(|idx| (((idx * 131 + 17) % 251) + 1) as u8)
+        .collect();
+    let rdb_path = redis
+        .generate_rdb("hash_zipmap_large_length_little_endian_test", move |conn| {
+            async move {
+                config_set_many(conn, &[
+                    ("hash-max-zipmap-entries", "1024"),
+                    ("hash-max-zipmap-value", "1024"),
+                ])
+                .await?;
+                redis::cmd("HSET")
+                    .arg("hm_zm_large_len_key")
+                    .arg(large_field)
+                    .arg("v")
+                    .query_async::<()>(conn)
+                    .await?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?;
+
+    let dump = tokio::fs::read(&rdb_path).await?;
+    ensure!(
+        dump.windows(5)
+            .any(|window| window == [0xFE, 0x2C, 0x01, 0x00, 0x00]),
+        "expected zipmap large length marker 0xFE followed by little-endian 300"
+    );
+
+    let items = read_filtered_items(&rdb_path).await?;
+
+    assert_eq!(items.len(), 1, "expected exactly one HashRecord");
+    let Item::HashRecord {
+        key,
+        encoding,
+        pair_count,
+        ..
+    } = &items[0]
+    else {
+        panic!("expected HashRecord");
+    };
+
+    assert_eq!(*key, RDBStr::Str(Bytes::from("hm_zm_large_len_key")));
+    assert_eq!(*encoding, HashEncoding::ZipMap);
+    assert_eq!(*pair_count, 1);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn module2_encoding_test() -> AnyResult<()> {
     // Use redis-stack image that ships with official modules; encoding will be Module2 (type id = 7).
     let redis = RedisConfig::default()

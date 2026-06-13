@@ -185,13 +185,17 @@ pub struct ListPackLengthParser {
 
 impl ParserInit for ListPackLengthParser {
     fn init(view: &mut View<'_>) -> ParseResult<Self> {
-        view.parse_init(|_buffer, input| {
-            let (input, _header) = read_exact(input, 6).context("read listpack header")?;
-            Ok((input, Self {
-                entrust: None,
-                counted: 0,
-            }))
-        })
+        view.parse_init(|_buffer, input| Self::init_from_input(input))
+    }
+}
+
+impl ListPackLengthParser {
+    pub(crate) fn init_from_input(input: &[u8]) -> AnyResult<(&[u8], Self)> {
+        let (input, _header) = read_exact(input, 6).context("read listpack header")?;
+        Ok((input, Self {
+            entrust: None,
+            counted: 0,
+        }))
     }
 }
 

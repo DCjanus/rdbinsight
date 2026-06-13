@@ -1,0 +1,4 @@
+interface:
+  display_name: "Parser Performance Regression"
+  short_description: "Investigate parser benchmark regressions."
+  default_prompt: "Use this when parser benchmark results or PR changes show a possible performance regression. Quantify the slowdown, inspect CI artifacts, profile hotspots when useful, and either optimize or document why further optimization has low ROI."

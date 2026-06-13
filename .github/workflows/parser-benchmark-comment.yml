@@ -38,7 +38,7 @@ jobs:
               --workflow CI \
               --commit "$HEAD_SHA" \
               --json databaseId,event,status,conclusion \
-              --jq '[.[] | select(.event == "pull_request") | select(.status == "completed") | select(.conclusion == "success")][0].databaseId // ""')"
+              --jq '[.[] | select(.event == "pull_request") | select(.status == "completed") | select(.conclusion == "success" or .conclusion == "failure")][0].databaseId // ""')"
             if [ -n "$run_id" ]; then
               break
             fi

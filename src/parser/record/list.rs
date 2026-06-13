@@ -1,5 +1,4 @@
 use anyhow::{Context, bail, ensure};
-use futures_util::future::Either;
 
 use crate::{
     helper::AnyResult,
@@ -18,10 +17,7 @@ use crate::{
             set::ListPackLengthParser,
             string::{RawStringCountParser, StringEncodingParser},
         },
-        runtime::{
-            combinators::{RDBStrBox, ReduceParser},
-            lzf::LzfChunkDecoder,
-        },
+        runtime::{combinators::RDBStrBox, lzf::LzfChunkDecoder},
     },
 };
 
@@ -386,7 +382,7 @@ impl Parser for QuickListZipListParser {
 pub struct ListQuickList2RecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ReduceParser<ListQuickList2NodeLengthParser, u64>,
+    entrust: QuickList2LengthParser,
 }
 
 impl ParserInit for ListQuickList2RecordParser {
@@ -398,11 +394,7 @@ impl ParserInit for ListQuickList2RecordParser {
             let node_count = node_count
                 .as_u64()
                 .context("node count should be a number")?;
-            let entrust = ReduceParser::<ListQuickList2NodeLengthParser, _>::new(
-                node_count,
-                0,
-                |acc, item: u64| acc + item,
-            );
+            let entrust = QuickList2LengthParser::new(node_count);
             Ok((input, Self {
                 started,
                 key,
@@ -426,40 +418,74 @@ impl Parser for ListQuickList2RecordParser {
     }
 }
 
-pub struct ListQuickList2NodeLengthParser {
-    entrust: Either<StringEncodingParser, RDBStrBox<ListPackLengthParser>>,
+struct QuickList2LengthParser {
+    nodes_remain: u64,
+    count: u64,
+    entrust: Option<ListQuickList2NodeLengthParser>,
 }
 
-impl ParserInit for ListQuickList2NodeLengthParser {
-    fn init(view: &mut View<'_>) -> ParseResult<Self> {
-        let flag = parse_try!(view.parse_init(|_, input| {
-            let (input, flag) = read_u8(input)?;
-            Ok((input, flag))
-        }));
-        match flag {
+impl QuickList2LengthParser {
+    fn new(nodes_remain: u64) -> Self {
+        Self {
+            nodes_remain,
+            count: 0,
+            entrust: None,
+        }
+    }
+}
+
+impl Parser for QuickList2LengthParser {
+    type Output = u64;
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        loop {
+            if let Some(parser) = self.entrust.as_mut() {
+                self.count += parser.call(buffer)?;
+                self.nodes_remain -= 1;
+                self.entrust = None;
+            }
+
+            if self.nodes_remain == 0 {
+                return Ok(self.count);
+            }
+
+            let (input, entrust) = ListQuickList2NodeLengthParser::init(buffer)?;
+            buffer.consume_to(input.as_ptr());
+            self.entrust = Some(entrust);
+        }
+    }
+}
+
+pub struct ListQuickList2NodeLengthParser {
+    entrust: QuickList2NodeParser,
+}
+
+enum QuickList2NodeParser {
+    Plain(StringEncodingParser),
+    Packed(QuickList2ListPackParser),
+}
+
+impl ListQuickList2NodeLengthParser {
+    fn init(buffer: &Buffer) -> AnyResult<(&[u8], Self)> {
+        let (input, flag) = read_u8(buffer.as_slice())?;
+        let (input, entrust) = match flag {
             1 => {
                 crate::parser_trace!("quicklist2.plain");
-                let entrust = parse_try!(view.init_parser::<StringEncodingParser>());
-                ParseResult::Ok(Self {
-                    entrust: Either::Left(entrust),
-                })
+                let (input, parser) = StringEncodingParser::init_from_input(input)?;
+                (input, QuickList2NodeParser::Plain(parser))
             }
             2 => {
-                let entrust = parse_try!(view.init_parser::<RDBStrBox<ListPackLengthParser>>());
+                let (input, entrust) = QuickList2ListPackParser::init(buffer, input)?;
                 if entrust.is_lzf() {
                     crate::parser_trace!("quicklist2.packed.lzf");
                 } else {
                     crate::parser_trace!("quicklist2.packed.raw");
                 }
-                ParseResult::Ok(Self {
-                    entrust: Either::Right(entrust),
-                })
+                (input, QuickList2NodeParser::Packed(entrust))
             }
-            _ => crate::parser::core::parse::fatal(anyhow::anyhow!(
-                "unknown quicklist2 node flag: {:#04x}",
-                flag
-            )),
-        }
+            _ => bail!("unknown quicklist2 node flag: {:#04x}", flag),
+        };
+        Ok((input, Self { entrust }))
     }
 }
 
@@ -468,12 +494,99 @@ impl Parser for ListQuickList2NodeLengthParser {
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
         match &mut self.entrust {
-            Either::Left(parser) => {
+            QuickList2NodeParser::Plain(parser) => {
                 // plain node always contains only one element
                 let _ = parser.call(buffer)?;
                 Ok(1)
             }
-            Either::Right(parser) => parser.call(buffer),
+            QuickList2NodeParser::Packed(parser) => parser.call(buffer),
+        }
+    }
+}
+
+enum QuickList2ListPackParser {
+    Simple {
+        expect_end: u64,
+        entrust: ListPackLengthParser,
+    },
+    Lzf(RDBStrBox<ListPackLengthParser>),
+}
+
+impl QuickList2ListPackParser {
+    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+        let (input, len) = read_rdb_len(input).context("read quicklist2 node length")?;
+        match len {
+            RDBLen::Simple(length) => {
+                let expect_end = buffer.tell_to(input.as_ptr()) + length;
+                let (input, entrust) = ListPackLengthParser::init_from_input(input)?;
+                Ok((input, Self::Simple {
+                    expect_end,
+                    entrust,
+                }))
+            }
+            RDBLen::IntStr(_) => bail!("encoded integer cannot wrap quicklist2 listpack content"),
+            RDBLen::LZFStr => {
+                let (input, in_len) =
+                    read_rdb_len(input).context("read compressed quicklist2 node in_len")?;
+                let in_len = in_len
+                    .as_u64()
+                    .context("compressed in_len must be simple")?;
+                let (input, out_len) =
+                    read_rdb_len(input).context("read compressed quicklist2 node out_len")?;
+                let out_len = out_len
+                    .as_u64()
+                    .context("compressed out_len must be simple")?;
+                Ok((
+                    input,
+                    Self::Lzf(RDBStrBox::Lzf {
+                        remain_in: in_len,
+                        remain_out: out_len,
+                        out_buffer: Buffer::new(out_len as usize),
+                        decoder: LzfChunkDecoder::default(),
+                        entrust: None,
+                    }),
+                ))
+            }
+        }
+    }
+
+    fn is_lzf(&self) -> bool {
+        matches!(self, Self::Lzf(_))
+    }
+}
+
+impl Parser for QuickList2ListPackParser {
+    type Output = u64;
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        match self {
+            Self::Simple {
+                expect_end,
+                entrust,
+            } => {
+                let ret = entrust.call(buffer);
+                let e = match ret {
+                    Ok(output) => {
+                        ensure!(
+                            buffer.tell() == *expect_end,
+                            "quicklist2 listpack offset mismatch: expect: {}, actual: {}",
+                            expect_end,
+                            buffer.tell()
+                        );
+                        return Ok(output);
+                    }
+                    Err(e) => e,
+                };
+
+                if buffer.tell() >= *expect_end && e.is::<NeedMoreData>() {
+                    bail!(
+                        "all quicklist2 listpack content should be consumed, parser not finished: {e}"
+                    );
+                }
+
+                Err(e)
+            }
+            Self::Lzf(parser) => parser.call(buffer),
         }
     }
 }

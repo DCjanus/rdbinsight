@@ -17,7 +17,7 @@ use crate::{
             set::ListPackLengthParser,
             string::{RawStringCountParser, StringEncodingParser},
         },
-        runtime::combinators::{RDBLenParser, RDBStrBox, ReduceParser, Seq3Parser},
+        runtime::combinators::RDBStrBox,
     },
 };
 
@@ -334,7 +334,7 @@ impl Parser for IsEndZipMapPairParser {
 pub struct HashMetadataRecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ReduceParser<HashMetadataFieldParser, u64>,
+    entrust: HashMetadataFieldCountParser,
 }
 
 impl ParserInit for HashMetadataRecordParser {
@@ -347,8 +347,7 @@ impl ParserInit for HashMetadataRecordParser {
                 .as_u64()
                 .context("hash pair count should be a number")?;
 
-            let entrust =
-                ReduceParser::<HashMetadataFieldParser, u64>::new(pair_total, 0, |acc, _| acc + 1);
+            let entrust = HashMetadataFieldCountParser::new(pair_total);
 
             Ok((input, Self {
                 started: buffer.tell(),
@@ -374,4 +373,67 @@ impl Parser for HashMetadataRecordParser {
     }
 }
 
-type HashMetadataFieldParser = Seq3Parser<RDBLenParser, StringEncodingParser, StringEncodingParser>;
+enum HashMetadataFieldStage {
+    Ttl,
+    Field,
+    Value,
+}
+
+struct HashMetadataFieldCountParser {
+    remain: u64,
+    counted: u64,
+    stage: HashMetadataFieldStage,
+    entrust: Option<StringEncodingParser>,
+}
+
+impl HashMetadataFieldCountParser {
+    fn new(remain: u64) -> Self {
+        Self {
+            remain,
+            counted: 0,
+            stage: HashMetadataFieldStage::Ttl,
+            entrust: None,
+        }
+    }
+}
+
+impl Parser for HashMetadataFieldCountParser {
+    type Output = u64;
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        while self.remain > 0 {
+            if let Some(parser) = self.entrust.as_mut() {
+                parser.call(buffer)?;
+                self.entrust = None;
+                match self.stage {
+                    HashMetadataFieldStage::Field => {
+                        self.stage = HashMetadataFieldStage::Value;
+                    }
+                    HashMetadataFieldStage::Value => {
+                        self.remain -= 1;
+                        self.counted += 1;
+                        self.stage = HashMetadataFieldStage::Ttl;
+                    }
+                    HashMetadataFieldStage::Ttl => unreachable!("ttl has no delegated parser"),
+                }
+                continue;
+            }
+
+            match self.stage {
+                HashMetadataFieldStage::Ttl => {
+                    let (input, ttl) = read_rdb_len(buffer.as_slice()).context("read field ttl")?;
+                    ttl.as_u64().context("field ttl should be a number")?;
+                    buffer.consume_to(input.as_ptr());
+                    self.stage = HashMetadataFieldStage::Field;
+                }
+                HashMetadataFieldStage::Field | HashMetadataFieldStage::Value => {
+                    let (input, parser) = StringEncodingParser::init_from_input(buffer.as_slice())?;
+                    buffer.consume_to(input.as_ptr());
+                    self.entrust = Some(parser);
+                }
+            }
+        }
+
+        Ok(self.counted)
+    }
+}

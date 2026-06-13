@@ -157,6 +157,7 @@ jobs:
     name: Parser Benchmark Summary
     runs-on: ubuntu-latest
     needs: [parser-benchmark]
+    if: ${{ always() }}
     permissions:
       contents: read
     steps:

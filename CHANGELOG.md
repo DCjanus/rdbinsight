@@ -7,17 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-13
+
+### Added
+
+- Parser: support Redis 8.6 RDB version 13 streams with `StreamListPacks4` and IDMP metadata.
+- Parser: support Redis 8.8 RDB version 14 records, including array records and stream listpack v5 metadata.
+- Benchmarks: add parser benchmark coverage for the main Redis value types and CI comparison comments for pull requests.
+- Process: add a parser performance regression skill documenting when and how to investigate parser slowdowns.
+
 ### Changed
 
-- Dependencies: migrate run-file serialization from `bincode` to `wincode` because `bincode` is no longer maintained.
-- Dependencies: upgrade Arrow/Parquet to 57.0.0 and update Parquet sorting metadata construction to use `parquet::file::metadata::SortingColumn`.
-- Dependencies: bump `lz4_flex` to 0.12.0.
-- Dependencies: bump `bytes` from 1.10.1 to 1.11.1.
-- Dependencies: upgrade `rand` from 0.9.2 to 0.10.0.
-- Dependencies: bump `spire_enum` to 1.0.0.
-- Dependencies: bump `reqwest` to 0.13.2.
-- Dependencies: bump `testcontainers` to 0.27.0.
-- Dependencies: bump `redis` to 1.0.3.
+- BREAKING: `RDBStr::Int` now stores `i64` instead of `u64`, matching Redis signed integer-encoded string semantics. Downstream code that constructs or matches `RDBStr::Int(u64)` should migrate those values to `i64` and handle negative encoded integers.
+- Parser: replace the parser state module with a two-phase runtime that makes parser probing reversible and tightens truncated-input and trailing-byte handling around RDB EOF.
+- Tests: replace remaining zipmap fixtures with Redis 2.4.18-backed integration tests and self-built Redis test images.
+- CI: split parser benchmarks across jobs, require base and head rows in benchmark comments, link benchmark comments to compared commits and workflows, and exclude benchmark code from coverage accounting.
+- Dependencies: migrate run-file serialization from `bincode` to `wincode` and update Rust dependencies, including Arrow/Parquet, Redis, reqwest, testcontainers, rand, bytes, spire_enum, and lz4_flex.
+
+### Fixed
+
+- Parser: read zipmap `0xFE` large-length entries as little-endian, matching Redis' on-disk encoding.
 
 ## [0.1.0]
 

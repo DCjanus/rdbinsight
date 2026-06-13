@@ -7,7 +7,7 @@ on:
       redis_versions:
         description: 'Redis versions to publish as a JSON array, for example: ["8.8.0"]'
         required: false
-        default: '["8.8.0", "8.6.4", "8.0.5", "7.0.15", "6.0.20", "2.8.24"]'
+        default: '["8.8.0", "8.6.4", "8.0.5", "7.0.15", "6.0.20", "2.8.24", "2.4.18"]'
 
 permissions:
   contents: read

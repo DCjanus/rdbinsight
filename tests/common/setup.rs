@@ -23,6 +23,7 @@ pub enum RedisVariant {
     Redis8_0,
     Redis7_0,
     Redis6_0,
+    Redis2_4,
     Redis2_8,
     StackLatest,
 }
@@ -41,6 +42,7 @@ impl RedisVariant {
             RedisVariant::Redis8_0 => (repo, "8.0.5".to_string()),
             RedisVariant::Redis7_0 => (repo, "7.0.15".to_string()),
             RedisVariant::Redis6_0 => (repo, "6.0.20".to_string()),
+            RedisVariant::Redis2_4 => (repo, "2.4.18".to_string()),
             RedisVariant::Redis2_8 => (repo, "2.8.24".to_string()),
         }
     }
@@ -52,6 +54,7 @@ impl RedisVariant {
             | RedisVariant::Redis8_0
             | RedisVariant::Redis7_0
             | RedisVariant::Redis6_0
+            | RedisVariant::Redis2_4
             | RedisVariant::Redis2_8 => "redis-server",
             RedisVariant::StackLatest => "redis-stack-server",
         }
@@ -167,22 +170,24 @@ impl RedisInstance {
         let (repo, tag) = cfg.variant.image();
         let mut cmd: Vec<String> = Vec::new();
 
-        cmd.push("--appendonly".into());
-        cmd.push("no".into());
-        // Disable protected mode so test instances accept external connections (unsupported on Redis 2.8)
-        if cfg.variant != RedisVariant::Redis2_8 {
-            cmd.push("--protected-mode".into());
+        if cfg.variant != RedisVariant::Redis2_4 {
+            cmd.push("--appendonly".into());
             cmd.push("no".into());
-        }
+            // Disable protected mode so test instances accept external connections.
+            if cfg.variant != RedisVariant::Redis2_8 {
+                cmd.push("--protected-mode".into());
+                cmd.push("no".into());
+            }
 
-        if cfg.diskless {
-            cmd.push("--repl-diskless-sync".into());
-            cmd.push("yes".into());
-            cmd.push("--repl-diskless-sync-delay".into());
-            cmd.push("0".into());
-        } else {
-            cmd.push("--repl-diskless-sync".into());
-            cmd.push("no".into());
+            if cfg.diskless {
+                cmd.push("--repl-diskless-sync".into());
+                cmd.push("yes".into());
+                cmd.push("--repl-diskless-sync-delay".into());
+                cmd.push("0".into());
+            } else {
+                cmd.push("--repl-diskless-sync".into());
+                cmd.push("no".into());
+            }
         }
 
         if !cfg.snapshot {

@@ -6,7 +6,7 @@ use crate::{
     parser::{
         core::{
             buffer::{Buffer, skip_bytes},
-            combinators::{read_be_u32, read_le_u64, read_u8},
+            combinators::{read_le_u32, read_le_u64, read_u8},
             parse::{ParseResult, Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
             view::View,
@@ -293,7 +293,7 @@ fn read_zipmap_size(input: &[u8]) -> AnyResult<(&[u8], Option<u64>)> {
         return Ok((input, Some(flag as u64)));
     }
 
-    let (input, key_len) = read_be_u32(input)?;
+    let (input, key_len) = read_le_u32(input)?;
     Ok((input, Some(key_len as u64)))
 }
 

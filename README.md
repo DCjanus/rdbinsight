@@ -131,7 +131,7 @@ The query-based workflow removes the need for Redis-side commands, and similar t
 
 ## TODO
 
-- [ ] Use testcontainers to build Redis Cluster integration tests and verify parsing accuracy in cluster scenarios.
-- [ ] Use testcontainers to create a Codis cluster test environment (based on the `pikadb/codis:v3.5.5` image) to ensure compatibility.
-- [ ] Implement DuckDB-based fallback report generation for Parquet when metadata is missing or version is incompatible.
-- [ ] Convert existing integration tests into a module inside the `rdbinsight` crate so most types/functions can be changed from `pub` to `pub(crate)` and dead code is easier to detect.
+- [ ] Add end-to-end Redis Cluster source integration tests that exercise `dump from-cluster` shard discovery, replica selection, and record output.
+- [ ] Add Codis cluster integration tests with a real Codis dashboard and Redis backend to verify dashboard discovery and Codis slot metadata.
+- [ ] Implement a DuckDB-based fallback for Parquet reports when RDBInsight summary metadata is missing or incompatible.
+- [ ] Move integration tests into the `rdbinsight` crate so internal modules can be made `pub(crate)` where possible.

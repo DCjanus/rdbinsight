@@ -128,7 +128,7 @@ ORDER BY key_cnt DESC;
 
 ## TODO
 
-- [ ] 使用 testcontainers 构建 Redis Cluster 集成测试，验证集群场景下的数据解析准确性；
-- [ ] 使用 testcontainers 创建 Codis 集群测试环境（基于 `pikadb/codis:v3.5.5` 镜像），确保 Codis 兼容性；
-- [ ] 使用 DuckDB 实现当 Parquet 元数据缺失或版本不兼容时的降级报告生成逻辑（作为后备方案）。
-- [ ] 将现有的集成测试迁移到 `rdbinsight` crate 的模块中，以便大多数类型/函数可以从 `pub` 改为 `pub(crate)`，更容易发现 dead code。
+- [ ] 补充 Redis Cluster source 端到端集成测试，覆盖 `dump from-cluster` 的分片发现、副本选择与记录输出。
+- [ ] 补充真实 Codis Dashboard 与 Redis backend 的 Codis 集群集成测试，验证 Dashboard 发现流程与 Codis slot 元数据。
+- [ ] 为 Parquet 报告实现 DuckDB 降级路径，用于处理 RDBInsight 汇总元数据缺失或不兼容的 Parquet 文件。
+- [ ] 将集成测试迁移到 `rdbinsight` crate 内部，使内部模块尽可能收敛为 `pub(crate)`。

@@ -6,7 +6,7 @@ use crate::{
     parser::{
         core::{
             buffer::{Buffer, skip_bytes},
-            combinators::{read_be_u32, read_exact, read_u8},
+            combinators::{read_be_u32, read_exact, read_le_u16, read_le_u32, read_u8},
             parse::{ParseResult, Parser, ParserInit},
             raw::{RDBLen, RDBStr, read_rdb_len, read_rdb_str},
             view::View,
@@ -95,14 +95,28 @@ impl Parser for ListZipListRecordParser {
 }
 
 pub struct ZipListLengthParser {
+    fast_count: Option<u64>,
+    fast_skip: u64,
     entrust: Option<IsEndZipListEntryParser>,
     counted: u64,
 }
 
 impl ZipListLengthParser {
     pub(crate) fn init_from_input(input: &[u8]) -> AnyResult<(&[u8], Self)> {
-        let (input, _) = read_exact(input, 10)?;
+        let (input, zlbytes) = read_le_u32(input).context("read ziplist bytes")?;
+        let (input, _zltail) = read_le_u32(input).context("read ziplist tail")?;
+        let (input, zllen) = read_le_u16(input).context("read ziplist length")?;
+        let fast_count = (zllen != u16::MAX).then_some(zllen as u64);
+        let fast_skip = if fast_count.is_some() {
+            u64::from(zlbytes)
+                .checked_sub(10)
+                .context("ziplist payload length underflow")?
+        } else {
+            0
+        };
         Ok((input, Self {
+            fast_count,
+            fast_skip,
             entrust: None,
             counted: 0,
         }))
@@ -119,6 +133,11 @@ impl Parser for ZipListLengthParser {
     type Output = u64;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        if let Some(count) = self.fast_count {
+            skip_bytes(buffer, &mut self.fast_skip)?;
+            return Ok(count);
+        }
+
         loop {
             if let Some(entrust) = self.entrust.as_mut() {
                 if entrust.call(buffer)? {

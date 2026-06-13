@@ -4,13 +4,15 @@ use anyhow::Context;
 
 use crate::{
     helper::AnyResult,
+    parse_try,
     parser::{
         core::{
             buffer::{Buffer, skip_bytes},
+            parse::{ParseResult, Parser, ParserInit},
             raw::{RDBLen, RDBStr, read_rdb_len, read_rdb_str},
+            view::View,
         },
         model::{Item, StringEncoding},
-        state::traits::{InitializableParser, StateParser},
     },
 };
 // --------------------------- StringEncoding ----------------------------
@@ -20,8 +22,8 @@ pub struct StringEncodingParser {
     encoding: StringEncoding,
 }
 
-impl InitializableParser for StringEncodingParser {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+impl StringEncodingParser {
+    pub(crate) fn init_from_input(input: &[u8]) -> AnyResult<(&[u8], Self)> {
         let (input, str_len) = read_rdb_len(input).context("read string length")?;
 
         let (input, to_skip, encoding) = match str_len {
@@ -40,12 +42,77 @@ impl InitializableParser for StringEncodingParser {
     }
 }
 
-impl StateParser for StringEncodingParser {
+impl ParserInit for StringEncodingParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| Self::init_from_input(input))
+    }
+}
+
+impl Parser for StringEncodingParser {
     type Output = StringEncoding;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
         skip_bytes(buffer, &mut self.to_skip)?;
         Ok(self.encoding)
+    }
+}
+
+pub struct RawStringCountParser {
+    remain: u64,
+    to_skip: u64,
+    counted: u64,
+    suffix_len: u64,
+}
+
+impl RawStringCountParser {
+    pub fn new(remain: u64) -> Self {
+        Self::with_suffix(remain, 0)
+    }
+
+    pub fn with_suffix(remain: u64, suffix_len: u64) -> Self {
+        Self {
+            remain,
+            to_skip: 0,
+            counted: 0,
+            suffix_len,
+        }
+    }
+}
+
+impl Parser for RawStringCountParser {
+    type Output = u64;
+
+    fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
+        while self.remain > 0 {
+            if self.to_skip > 0 {
+                skip_bytes(buffer, &mut self.to_skip)?;
+                self.remain -= 1;
+                self.counted += 1;
+                continue;
+            }
+
+            let (input, str_len) = read_rdb_len(buffer.as_slice()).context("read string length")?;
+            let (input, to_skip) = match str_len {
+                RDBLen::Simple(len) => (input, len + self.suffix_len),
+                RDBLen::IntStr(_) => (input, self.suffix_len),
+                RDBLen::LZFStr => {
+                    let (input, in_len) = read_rdb_len(input).context("read lzf string length")?;
+                    let in_len = in_len.as_u64().context("in_len should be a number")?;
+                    let (input, _out_len) =
+                        read_rdb_len(input).context("read lzf string length")?;
+                    (input, in_len + self.suffix_len)
+                }
+            };
+
+            buffer.consume_to(input.as_ptr());
+            self.to_skip = to_skip;
+            if self.to_skip == 0 {
+                self.remain -= 1;
+                self.counted += 1;
+            }
+        }
+
+        Ok(self.counted)
     }
 }
 
@@ -55,19 +122,23 @@ pub struct StringRecordParser {
     entrust: StringEncodingParser,
 }
 
-impl InitializableParser for StringRecordParser {
-    fn init<'a>(buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = StringEncodingParser::init(buf, input)?;
-        Ok((input, Self {
-            started: buf.tell(),
+impl ParserInit for StringRecordParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let started = view.base_offset();
+        let key = parse_try!(view.parse_init(|_, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            Ok((input, key))
+        }));
+        let entrust = parse_try!(view.init_parser::<StringEncodingParser>());
+        ParseResult::Ok(Self {
+            started,
             key,
             entrust,
-        }))
+        })
     }
 }
 
-impl StateParser for StringRecordParser {
+impl Parser for StringRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {

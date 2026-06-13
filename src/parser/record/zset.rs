@@ -2,50 +2,50 @@ use anyhow::{Context, ensure};
 
 use crate::{
     helper::AnyResult,
+    parse_try,
     parser::{
-        StringEncoding,
         core::{
             buffer::Buffer,
+            parse::{ParseResult, Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
+            view::View,
         },
         model::{Item, ZSetEncoding},
         record::{
-            list::ZipListLengthParser, set::ListPackLengthParser, string::StringEncodingParser,
+            list::ZipListLengthParser, set::ListPackLengthParser, string::RawStringCountParser,
         },
-        state::{
-            combinators::{RDBStrBox, ReduceParser, Seq2Parser, skip_bytes::SkipBytesParser},
-            traits::{InitializableParser, StateParser},
-        },
+        runtime::combinators::RDBStrBox,
     },
 };
 
 pub struct ZSetRecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ReduceParser<StringEncodingParser, u64>,
+    entrust: RawStringCountParser,
 }
 
-impl InitializableParser for ZSetRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, member_count) = read_rdb_len(input).context("read zset length")?;
-        let member_count = member_count
-            .as_u64()
-            .context("zset length should be a number")?;
-        let entrust: ReduceParser<StringEncodingParser, u64> =
-            ReduceParser::new(member_count * 2, 0, |acc, _: StringEncoding| acc + 1);
+impl ParserInit for ZSetRecordParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|buffer, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            let (input, member_count) = read_rdb_len(input).context("read zset length")?;
+            let member_count = member_count
+                .as_u64()
+                .context("zset length should be a number")?;
+            let entrust = RawStringCountParser::new(member_count * 2);
 
-        crate::parser_trace!("zset.skiplist");
+            crate::parser_trace!("zset.skiplist");
 
-        Ok((input, Self {
-            started: buffer.tell(),
-            key,
-            entrust,
-        }))
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
+        })
     }
 }
 
-impl StateParser for ZSetRecordParser {
+impl Parser for ZSetRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -66,19 +66,22 @@ pub struct ZSetZipListRecordParser {
     entrust: RDBStrBox<ZipListLengthParser>,
 }
 
-impl ZSetZipListRecordParser {
-    pub fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = RDBStrBox::<ZipListLengthParser>::init(buffer, input)?;
-        Ok((input, Self {
-            started: buffer.tell(),
-            key,
-            entrust,
-        }))
+impl ParserInit for ZSetZipListRecordParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|buffer, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            let (input, entrust) =
+                RDBStrBox::init_from_input(buffer, input, ZipListLengthParser::init_from_input)?;
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
+        })
     }
 }
 
-impl StateParser for ZSetZipListRecordParser {
+impl Parser for ZSetZipListRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -104,25 +107,28 @@ pub struct ZSetListPackRecordParser {
     entrust: RDBStrBox<ListPackLengthParser>,
 }
 
-impl ZSetListPackRecordParser {
-    pub fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = RDBStrBox::<ListPackLengthParser>::init(buffer, input)?;
-        if entrust.is_lzf() {
+impl ParserInit for ZSetListPackRecordParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let parser = parse_try!(view.parse_init(|buffer, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            let (input, entrust) =
+                RDBStrBox::init_from_input(buffer, input, ListPackLengthParser::init_from_input)?;
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
+        }));
+        if parser.entrust.is_lzf() {
             crate::parser_trace!("zset.listpack.lzf");
         } else {
             crate::parser_trace!("zset.listpack.raw");
         }
-
-        Ok((input, Self {
-            started: buffer.tell(),
-            key,
-            entrust,
-        }))
+        ParseResult::Ok(parser)
     }
 }
 
-impl StateParser for ZSetListPackRecordParser {
+impl Parser for ZSetListPackRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -146,31 +152,32 @@ impl StateParser for ZSetListPackRecordParser {
 pub struct ZSet2RecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ReduceParser<ZSet2SkipListEntryParser, u64>,
+    entrust: RawStringCountParser,
 }
 
-impl InitializableParser for ZSet2RecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, member_count) = read_rdb_len(input).context("read zset2 length")?;
-        let member_count = member_count
-            .as_u64()
-            .context("zset2 length should be a number")?;
+impl ParserInit for ZSet2RecordParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|buffer, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            let (input, member_count) = read_rdb_len(input).context("read zset2 length")?;
+            let member_count = member_count
+                .as_u64()
+                .context("zset2 length should be a number")?;
 
-        crate::parser_trace!("zset2.skiplist");
+            crate::parser_trace!("zset2.skiplist");
 
-        let entrust: ReduceParser<ZSet2SkipListEntryParser, u64> =
-            ReduceParser::new(member_count, 0, |acc, _: _| acc + 1);
+            let entrust = RawStringCountParser::with_suffix(member_count, 8);
 
-        Ok((input, Self {
-            started: buffer.tell(),
-            key,
-            entrust,
-        }))
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
+        })
     }
 }
 
-impl StateParser for ZSet2RecordParser {
+impl Parser for ZSet2RecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -184,5 +191,3 @@ impl StateParser for ZSet2RecordParser {
         })
     }
 }
-
-type ZSet2SkipListEntryParser = Seq2Parser<StringEncodingParser, SkipBytesParser<8>>;

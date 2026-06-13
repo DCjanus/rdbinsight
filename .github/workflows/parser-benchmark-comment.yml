@@ -38,7 +38,7 @@ jobs:
               --workflow CI \
               --commit "$HEAD_SHA" \
               --json databaseId,event,status,conclusion \
-              --jq '[.[] | select(.event == "pull_request") | select(.status == "completed") | select(.conclusion == "success")][0].databaseId // ""')"
+              --jq '[.[] | select(.event == "pull_request") | select(.status == "completed") | select(.conclusion == "success" or .conclusion == "failure")][0].databaseId // ""')"
             if [ -n "$run_id" ]; then
               break
             fi
@@ -74,6 +74,30 @@ jobs:
           const artifactRoot = "/tmp/parser-benchmark-comment";
           const baseRoots = [];
           const currentRoots = [];
+          const expectedBenchmarkNames = [
+            "parser/parse_rdb/synthetic-array-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-listpack-ex-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-listpack-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-metadata-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-ziplist-records-16MiB",
+            "parser/parse_rdb/synthetic-hash-zipmap-records-16MiB",
+            "parser/parse_rdb/synthetic-list-quicklist-records-16MiB",
+            "parser/parse_rdb/synthetic-list-quicklist2-records-16MiB",
+            "parser/parse_rdb/synthetic-list-records-16MiB",
+            "parser/parse_rdb/synthetic-list-ziplist-records-16MiB",
+            "parser/parse_rdb/synthetic-mixed-raw-types-16MiB",
+            "parser/parse_rdb/synthetic-set-intset-records-16MiB",
+            "parser/parse_rdb/synthetic-set-listpack-records-16MiB",
+            "parser/parse_rdb/synthetic-set-records-16MiB",
+            "parser/parse_rdb/synthetic-string-int-records-16MiB",
+            "parser/parse_rdb/synthetic-string-records-16MiB",
+            "parser/parse_rdb/synthetic-zset-listpack-records-16MiB",
+            "parser/parse_rdb/synthetic-zset-records-16MiB",
+            "parser/parse_rdb/synthetic-zset-ziplist-records-16MiB",
+            "parser/parse_rdb/synthetic-zset2-records-16MiB",
+          ];
+          const expectedBenchmarkNameSet = new Set(expectedBenchmarkNames);
 
           function fileExists(filePath) {
             return fs.existsSync(filePath);
@@ -184,31 +208,45 @@ jobs:
             throw new Error("no criterion-base directories found in benchmark artifacts");
           }
 
-          const rowsByName = new Map();
-          for (const currentRoot of currentRoots) {
-            for (const filePath of walkFiles(currentRoot, "estimates.json")) {
-              if (!filePath.endsWith(`${path.sep}new${path.sep}estimates.json`)) continue;
-
-              const name = benchmarkName(currentRoot, filePath);
-              const basePath = baseRoots
-                .map((baseRoot) => path.join(baseRoot, ...name.split("/"), "base", "estimates.json"))
-                .find(fileExists);
-              if (!basePath) {
-                throw new Error(`missing base benchmark row for ${name}`);
+          function collectRows(roots, sampleDir) {
+            const rowsByName = new Map();
+            for (const root of roots) {
+              for (const filePath of walkFiles(root, "estimates.json")) {
+                if (!filePath.endsWith(`${path.sep}${sampleDir}${path.sep}estimates.json`)) continue;
+                const name = benchmarkName(root, filePath);
+                if (!expectedBenchmarkNameSet.has(name)) {
+                  console.log(`Skipping unexpected benchmark name: ${name}`);
+                  continue;
+                }
+                rowsByName.set(name, median(filePath));
               }
-
-              rowsByName.set(name, {
-                name,
-                currentNs: median(filePath),
-                baseNs: median(basePath),
-                bytes: bytesFor(name),
-              });
             }
+            return rowsByName;
           }
 
-          const rows = [...rowsByName.values()].sort((a, b) => a.name.localeCompare(b.name));
-          if (rows.length === 0) {
+          const currentRowsByName = collectRows(currentRoots, "new");
+          const baseRowsByName = collectRows(baseRoots, "base");
+          if (currentRowsByName.size === 0) {
             throw new Error("no benchmark rows found in criterion-current artifacts");
+          }
+          const missingCurrentNames = expectedBenchmarkNames.filter(
+            (name) => !currentRowsByName.has(name),
+          );
+          const missingBaseNames = expectedBenchmarkNames.filter(
+            (name) => !baseRowsByName.has(name),
+          );
+          const rows = expectedBenchmarkNames.map((name) => ({
+            name,
+            currentNs: currentRowsByName.get(name) ?? Number.NaN,
+            baseNs: baseRowsByName.get(name) ?? Number.NaN,
+            bytes: bytesFor(name),
+          }));
+          const warningLines = [];
+          if (missingCurrentNames.length > 0) {
+            warningLines.push(`- Missing current benchmark rows: ${markdownTableCell(missingCurrentNames.join(", "))}.`);
+          }
+          if (missingBaseNames.length > 0) {
+            warningLines.push(`- Missing base benchmark rows: ${markdownTableCell(missingBaseNames.join(", "))}.`);
           }
 
           const table = [
@@ -228,6 +266,8 @@ jobs:
             `- Benchmark artifacts: ${runLink(`CI run ${process.env.BENCHMARK_RUN_ID}`, process.env.BENCHMARK_RUN_ID)}; comment workflow: ${runLink(`run ${process.env.COMMENT_RUN_ID}`, process.env.COMMENT_RUN_ID)}.`,
             "- Benchmark excludes disk I/O; RDB bytes are prepared before timing starts.",
             "- Positive change means the current PR is slower than the base commit.",
+            "- Parser benchmark fails when any comparable profile slows down by more than 30%.",
+            ...(warningLines.length > 0 ? ["", "### Benchmark data warnings", "", ...warningLines] : []),
             "",
             table,
             "",
@@ -236,6 +276,10 @@ jobs:
 
           fs.writeFileSync("/tmp/parser-benchmark-comment-body.md", body);
           fs.writeFileSync("/tmp/parser-benchmark-comment-row-count.txt", `${rows.length}\n`);
+          fs.writeFileSync(
+            "/tmp/parser-benchmark-comment-missing-data.txt",
+            warningLines.length > 0 ? "1\n" : "0\n",
+          );
           NODE
 
           comment_id="$(gh api \
@@ -263,5 +307,10 @@ jobs:
             --jq '.body | split("\n") | map(select(startswith("| `"))) | length')"
           if [ "$actual_rows" != "$expected_rows" ]; then
             echo "Benchmark comment row count mismatch: expected $expected_rows, got $actual_rows"
+            exit 1
+          fi
+
+          if [ "$(cat /tmp/parser-benchmark-comment-missing-data.txt)" != "0" ]; then
+            echo "Benchmark comment includes missing expected benchmark data."
             exit 1
           fi

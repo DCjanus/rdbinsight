@@ -2,18 +2,18 @@ use anyhow::Context;
 
 use crate::{
     helper::AnyResult,
+    parse_try,
     parser::{
         core::{
             buffer::{Buffer, skip_bytes},
+            parse::{ParseResult, Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
+            view::View,
         },
         model::{Item, StreamEncoding},
         record::string::StringEncodingParser,
-        state::{
-            combinators::{
-                RDBLenParser, ReduceParser, Seq2Parser, Seq3Parser, Seq4Parser, Seq5Parser,
-            },
-            traits::{InitializableParser, StateParser},
+        runtime::combinators::{
+            RDBLenParser, ReduceParser, Seq2Parser, Seq3Parser, Seq4Parser, Seq5Parser,
         },
     },
 };
@@ -31,28 +31,32 @@ pub struct StreamListPackRecordParser<const ENC: StreamEncoding> {
     message_count: Option<u64>,
 }
 
-impl<const ENC: StreamEncoding> InitializableParser for StreamListPackRecordParser<ENC> {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = <Seq4Parser<
+impl<const ENC: StreamEncoding> ParserInit for StreamListPackRecordParser<ENC> {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let started = view.base_offset();
+        let key = parse_try!(view.parse_init(|_, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            Ok((input, key))
+        }));
+        let entrust = parse_try!(view.init_parser::<Seq4Parser<
             ListPackEntriesParser,
             RDBLenParser,
             StreamMetaParser<ENC>,
             StreamGroupsParser<ENC>,
-        > as InitializableParser>::init(buffer, input)?;
-        let (input, idmp) = StreamIdmpParser::<ENC>::init(buffer, input)?;
+        >>());
+        let idmp = parse_try!(view.init_parser::<StreamIdmpParser<ENC>>());
 
-        Ok((input, Self {
+        ParseResult::Ok(Self {
             key,
-            started: buffer.tell(),
+            started,
             entrust,
             idmp,
             message_count: None,
-        }))
+        })
     }
 }
 
-impl<const ENC: StreamEncoding> StateParser for StreamListPackRecordParser<ENC> {
+impl<const ENC: StreamEncoding> Parser for StreamListPackRecordParser<ENC> {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -81,25 +85,25 @@ struct EntriesReadParser<const ENC: StreamEncoding> {
     inner: Option<RDBLenParser>,
 }
 
-impl<const ENC: StreamEncoding> InitializableParser for EntriesReadParser<ENC> {
-    fn init<'a>(buf: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+impl<const ENC: StreamEncoding> ParserInit for EntriesReadParser<ENC> {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
         // `entries_read` field only exists in v2+, not in v1 (ListPacks).
         match ENC {
-            StreamEncoding::ListPacks => Ok((input, Self { inner: None })),
+            StreamEncoding::ListPacks => ParseResult::Ok(Self { inner: None }),
             StreamEncoding::ListPacks2
             | StreamEncoding::ListPacks3
             | StreamEncoding::ListPacks4
             | StreamEncoding::ListPacks5 => {
-                let (input, parser) = RDBLenParser::init(buf, input)?;
-                Ok((input, Self {
+                let parser = parse_try!(view.init_parser::<RDBLenParser>());
+                ParseResult::Ok(Self {
                     inner: Some(parser),
-                }))
+                })
             }
         }
     }
 }
 
-impl<const ENC: StreamEncoding> StateParser for EntriesReadParser<ENC> {
+impl<const ENC: StreamEncoding> Parser for EntriesReadParser<ENC> {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -115,20 +119,22 @@ struct StreamConsumersParser<const ENC: StreamEncoding> {
     entrust: ReduceParser<StreamConsumerParser<ENC>, ()>,
 }
 
-impl<const ENC: StreamEncoding> InitializableParser for StreamConsumersParser<ENC> {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        // Read the consumer count first.
-        let (input, count) = read_rdb_len(input)?;
-        let count = count.as_u64().context("consumer count should be numeric")?;
+impl<const ENC: StreamEncoding> ParserInit for StreamConsumersParser<ENC> {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            // Read the consumer count first.
+            let (input, count) = read_rdb_len(input)?;
+            let count = count.as_u64().context("consumer count should be numeric")?;
 
-        let entrust: ReduceParser<StreamConsumerParser<ENC>, ()> =
-            ReduceParser::new(count, (), |_, _| ());
+            let entrust: ReduceParser<StreamConsumerParser<ENC>, ()> =
+                ReduceParser::new(count, (), |_, _| ());
 
-        Ok((input, Self { entrust }))
+            Ok((input, Self { entrust }))
+        })
     }
 }
 
-impl<const ENC: StreamEncoding> StateParser for StreamConsumersParser<ENC> {
+impl<const ENC: StreamEncoding> Parser for StreamConsumersParser<ENC> {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -149,25 +155,25 @@ struct StreamGroupParser<const ENC: StreamEncoding> {
     nacks: StreamNackZoneParser<ENC>,
 }
 
-impl<const ENC: StreamEncoding> InitializableParser for StreamGroupParser<ENC> {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, entrust) = <Seq5Parser<
+impl<const ENC: StreamEncoding> ParserInit for StreamGroupParser<ENC> {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let entrust = parse_try!(view.init_parser::<Seq5Parser<
             StringEncodingParser,
             Seq2Parser<RDBLenParser, RDBLenParser>,
             EntriesReadParser<ENC>,
             StreamPELParser<true>,
             StreamConsumersParser<ENC>,
-        > as InitializableParser>::init(buffer, input)?;
-        let (input, nacks) = StreamNackZoneParser::<ENC>::init(buffer, input)?;
-        Ok((input, Self {
+        >>());
+        let nacks = parse_try!(view.init_parser::<StreamNackZoneParser<ENC>>());
+        ParseResult::Ok(Self {
             entrust,
             entrust_done: false,
             nacks,
-        }))
+        })
     }
 }
 
-impl<const ENC: StreamEncoding> StateParser for StreamGroupParser<ENC> {
+impl<const ENC: StreamEncoding> Parser for StreamGroupParser<ENC> {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -185,20 +191,22 @@ struct ConsumerTimeParser<const ENC: StreamEncoding> {
     remain: u64,
 }
 
-impl<const ENC: StreamEncoding> InitializableParser for ConsumerTimeParser<ENC> {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        Ok((input, Self {
-            remain: match ENC {
-                StreamEncoding::ListPacks3
-                | StreamEncoding::ListPacks4
-                | StreamEncoding::ListPacks5 => 16, // seen_time + active_time
-                StreamEncoding::ListPacks | StreamEncoding::ListPacks2 => 8, // only seen_time
-            },
-        }))
+impl<const ENC: StreamEncoding> ParserInit for ConsumerTimeParser<ENC> {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            Ok((input, Self {
+                remain: match ENC {
+                    StreamEncoding::ListPacks3
+                    | StreamEncoding::ListPacks4
+                    | StreamEncoding::ListPacks5 => 16, // seen_time + active_time
+                    StreamEncoding::ListPacks | StreamEncoding::ListPacks2 => 8, // only seen_time
+                },
+            }))
+        })
     }
 }
 
-impl<const ENC: StreamEncoding> StateParser for ConsumerTimeParser<ENC> {
+impl<const ENC: StreamEncoding> Parser for ConsumerTimeParser<ENC> {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -214,19 +222,21 @@ struct StreamPELParser<const WITH_NACK: bool> {
     entrust: ReduceParser<PELEntryParser<WITH_NACK>, ()>,
 }
 
-impl<const WITH_NACK: bool> InitializableParser for StreamPELParser<WITH_NACK> {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, len) = read_rdb_len(input)?;
-        let len = len.as_u64().context("PEL length should be numeric")?;
+impl<const WITH_NACK: bool> ParserInit for StreamPELParser<WITH_NACK> {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            let (input, len) = read_rdb_len(input)?;
+            let len = len.as_u64().context("PEL length should be numeric")?;
 
-        let entrust: ReduceParser<PELEntryParser<WITH_NACK>, ()> =
-            ReduceParser::new(len, (), |_, _| ());
+            let entrust: ReduceParser<PELEntryParser<WITH_NACK>, ()> =
+                ReduceParser::new(len, (), |_, _| ());
 
-        Ok((input, Self { entrust }))
+            Ok((input, Self { entrust }))
+        })
     }
 }
 
-impl<const WITH_NACK: bool> StateParser for StreamPELParser<WITH_NACK> {
+impl<const WITH_NACK: bool> Parser for StreamPELParser<WITH_NACK> {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -240,20 +250,22 @@ struct PELEntryParser<const WITH_NACK: bool> {
     need_read_varint: bool,
 }
 
-impl<const WITH_NACK: bool> InitializableParser for PELEntryParser<WITH_NACK> {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        // Each PEL entry is represented individually by StreamPELParser, so here we only
-        // need to consume the bytes of **one** entry (id + optional nack fields).
-        let remain = 16 + if WITH_NACK { 8 } else { 0 }; // id + delivery_time
+impl<const WITH_NACK: bool> ParserInit for PELEntryParser<WITH_NACK> {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            // Each PEL entry is represented individually by StreamPELParser, so here we only
+            // need to consume the bytes of **one** entry (id + optional nack fields).
+            let remain = 16 + if WITH_NACK { 8 } else { 0 }; // id + delivery_time
 
-        Ok((input, Self {
-            remain,
-            need_read_varint: WITH_NACK, // delivery_count (varint) when WITH_NACK
-        }))
+            Ok((input, Self {
+                remain,
+                need_read_varint: WITH_NACK, // delivery_count (varint) when WITH_NACK
+            }))
+        })
     }
 }
 
-impl<const WITH_NACK: bool> StateParser for PELEntryParser<WITH_NACK> {
+impl<const WITH_NACK: bool> Parser for PELEntryParser<WITH_NACK> {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -272,16 +284,16 @@ struct StreamNackZoneParser<const ENC: StreamEncoding> {
     entries: Option<ReduceParser<StreamIdParser, ()>>,
 }
 
-impl<const ENC: StreamEncoding> InitializableParser for StreamNackZoneParser<ENC> {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        Ok((input, Self {
+impl<const ENC: StreamEncoding> ParserInit for StreamNackZoneParser<ENC> {
+    fn init(_: &mut View<'_>) -> ParseResult<Self> {
+        ParseResult::Ok(Self {
             enabled: ENC == StreamEncoding::ListPacks5,
             entries: None,
-        }))
+        })
     }
 }
 
-impl<const ENC: StreamEncoding> StateParser for StreamNackZoneParser<ENC> {
+impl<const ENC: StreamEncoding> Parser for StreamNackZoneParser<ENC> {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -312,13 +324,13 @@ struct StreamIdParser {
     remain: u64,
 }
 
-impl InitializableParser for StreamIdParser {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        Ok((input, Self { remain: 16 }))
+impl ParserInit for StreamIdParser {
+    fn init(_: &mut View<'_>) -> ParseResult<Self> {
+        ParseResult::Ok(Self { remain: 16 })
     }
 }
 
-impl StateParser for StreamIdParser {
+impl Parser for StreamIdParser {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -331,21 +343,23 @@ struct ListPackEntriesParser {
     entrust: ReduceParser<StringEncodingParser, ()>,
 }
 
-impl InitializableParser for ListPackEntriesParser {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, lp_count) = read_rdb_len(input).context("read listpack count")?;
-        let lp_count = lp_count
-            .as_u64()
-            .context("listpack count should be a number")?;
+impl ParserInit for ListPackEntriesParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            let (input, lp_count) = read_rdb_len(input).context("read listpack count")?;
+            let lp_count = lp_count
+                .as_u64()
+                .context("listpack count should be a number")?;
 
-        let entrust: ReduceParser<StringEncodingParser, ()> =
-            ReduceParser::new(lp_count * 2, (), |_, _| ());
+            let entrust: ReduceParser<StringEncodingParser, ()> =
+                ReduceParser::new(lp_count * 2, (), |_, _| ());
 
-        Ok((input, Self { entrust }))
+            Ok((input, Self { entrust }))
+        })
     }
 }
 
-impl StateParser for ListPackEntriesParser {
+impl Parser for ListPackEntriesParser {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -358,21 +372,23 @@ struct StreamMetaParser<const ENC: StreamEncoding> {
     entrust: ReduceParser<RDBLenParser, ()>,
 }
 
-impl<const ENC: StreamEncoding> InitializableParser for StreamMetaParser<ENC> {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let remain = match ENC {
-            StreamEncoding::ListPacks => 2,  // last_id.ms + last_id.seq
-            StreamEncoding::ListPacks2 => 7, /* last_id + first_id + max_deleted_id (each 2 varints) */
-            StreamEncoding::ListPacks3
-            | StreamEncoding::ListPacks4
-            | StreamEncoding::ListPacks5 => 7, // v2 meta + entries_added
-        };
-        let entrust: ReduceParser<RDBLenParser, ()> = ReduceParser::new(remain, (), |_, _| ());
-        Ok((input, Self { entrust }))
+impl<const ENC: StreamEncoding> ParserInit for StreamMetaParser<ENC> {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            let remain = match ENC {
+                StreamEncoding::ListPacks => 2,  // last_id.ms + last_id.seq
+                StreamEncoding::ListPacks2 => 7, /* last_id + first_id + max_deleted_id (each 2 varints) */
+                StreamEncoding::ListPacks3
+                | StreamEncoding::ListPacks4
+                | StreamEncoding::ListPacks5 => 7, // v2 meta + entries_added
+            };
+            let entrust: ReduceParser<RDBLenParser, ()> = ReduceParser::new(remain, (), |_, _| ());
+            Ok((input, Self { entrust }))
+        })
     }
 }
 
-impl<const ENC: StreamEncoding> StateParser for StreamMetaParser<ENC> {
+impl<const ENC: StreamEncoding> Parser for StreamMetaParser<ENC> {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -385,21 +401,23 @@ struct StreamGroupsParser<const ENC: StreamEncoding> {
     entrust: ReduceParser<StreamGroupParser<ENC>, ()>,
 }
 
-impl<const ENC: StreamEncoding> InitializableParser for StreamGroupsParser<ENC> {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, group_count) = read_rdb_len(input)?;
-        let group_count = group_count
-            .as_u64()
-            .context("group count should be a number")?;
+impl<const ENC: StreamEncoding> ParserInit for StreamGroupsParser<ENC> {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            let (input, group_count) = read_rdb_len(input)?;
+            let group_count = group_count
+                .as_u64()
+                .context("group count should be a number")?;
 
-        let entrust: ReduceParser<StreamGroupParser<ENC>, ()> =
-            ReduceParser::new(group_count, (), |_, _| ());
+            let entrust: ReduceParser<StreamGroupParser<ENC>, ()> =
+                ReduceParser::new(group_count, (), |_, _| ());
 
-        Ok((input, Self { entrust }))
+            Ok((input, Self { entrust }))
+        })
     }
 }
 
-impl<const ENC: StreamEncoding> StateParser for StreamGroupsParser<ENC> {
+impl<const ENC: StreamEncoding> Parser for StreamGroupsParser<ENC> {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -414,17 +432,16 @@ struct StreamIdmpEntryParser {
 
 fn ignore_unit(_: (), _: ()) {}
 
-impl InitializableParser for StreamIdmpEntryParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, entrust) =
-            <Seq3Parser<StringEncodingParser, RDBLenParser, RDBLenParser> as InitializableParser>::init(
-                buffer, input,
-            )?;
-        Ok((input, Self { entrust }))
+impl ParserInit for StreamIdmpEntryParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let entrust = parse_try!(
+            view.init_parser::<Seq3Parser<StringEncodingParser, RDBLenParser, RDBLenParser>>()
+        );
+        ParseResult::Ok(Self { entrust })
     }
 }
 
-impl StateParser for StreamIdmpEntryParser {
+impl Parser for StreamIdmpEntryParser {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -439,18 +456,18 @@ struct StreamIdmpProducerParser {
     entries: Option<ReduceParser<StreamIdmpEntryParser, ()>>,
 }
 
-impl InitializableParser for StreamIdmpProducerParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, producer_id) = StringEncodingParser::init(buffer, input)?;
-        Ok((input, Self {
+impl ParserInit for StreamIdmpProducerParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let producer_id = parse_try!(view.init_parser::<StringEncodingParser>());
+        ParseResult::Ok(Self {
             producer_id,
             producer_id_done: false,
             entries: None,
-        }))
+        })
     }
 }
 
-impl StateParser for StreamIdmpProducerParser {
+impl Parser for StreamIdmpProducerParser {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -484,20 +501,22 @@ struct StreamIdmpProducersParser {
     producers: ReduceParser<StreamIdmpProducerParser, ()>,
 }
 
-impl InitializableParser for StreamIdmpProducersParser {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, producer_count) =
-            read_rdb_len(input).context("read stream IDMP producer count")?;
-        let producer_count = producer_count
-            .as_u64()
-            .context("stream IDMP producer count should be numeric")?;
-        Ok((input, Self {
-            producers: ReduceParser::new(producer_count, (), ignore_unit as fn((), ())),
-        }))
+impl ParserInit for StreamIdmpProducersParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            let (input, producer_count) =
+                read_rdb_len(input).context("read stream IDMP producer count")?;
+            let producer_count = producer_count
+                .as_u64()
+                .context("stream IDMP producer count should be numeric")?;
+            Ok((input, Self {
+                producers: ReduceParser::new(producer_count, (), ignore_unit as fn((), ())),
+            }))
+        })
     }
 }
 
-impl StateParser for StreamIdmpProducersParser {
+impl Parser for StreamIdmpProducersParser {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -519,16 +538,18 @@ struct StreamIdmpParser<const ENC: StreamEncoding> {
     >,
 }
 
-impl<const ENC: StreamEncoding> InitializableParser for StreamIdmpParser<ENC> {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        Ok((input, Self {
-            enabled: ENC == StreamEncoding::ListPacks4 || ENC == StreamEncoding::ListPacks5,
-            entrust: None,
-        }))
+impl<const ENC: StreamEncoding> ParserInit for StreamIdmpParser<ENC> {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            Ok((input, Self {
+                enabled: ENC == StreamEncoding::ListPacks4 || ENC == StreamEncoding::ListPacks5,
+                entrust: None,
+            }))
+        })
     }
 }
 
-impl<const ENC: StreamEncoding> StateParser for StreamIdmpParser<ENC> {
+impl<const ENC: StreamEncoding> Parser for StreamIdmpParser<ENC> {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -537,15 +558,13 @@ impl<const ENC: StreamEncoding> StateParser for StreamIdmpParser<ENC> {
         }
 
         if self.entrust.is_none() {
-            let (input, entrust) =
-                <Seq5Parser<
-                    RDBLenParser,
-                    RDBLenParser,
-                    StreamIdmpProducersParser,
-                    RDBLenParser,
-                    RDBLenParser,
-                > as InitializableParser>::init(buffer, buffer.as_slice())?;
-            buffer.consume_to(input.as_ptr());
+            let entrust = buffer.init_commit::<Seq5Parser<
+                RDBLenParser,
+                RDBLenParser,
+                StreamIdmpProducersParser,
+                RDBLenParser,
+                RDBLenParser,
+            >>()?;
             self.entrust = Some(entrust);
         }
 

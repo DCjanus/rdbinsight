@@ -8,6 +8,7 @@ use crate::{
         core::{
             buffer::Buffer,
             combinators::{read_exact, read_le_u32, read_le_u64, read_tag, read_u8},
+            parse::{Parser, ParserInit},
             raw::{read_rdb_len, read_rdb_str},
         },
         model::{Item, RDBOpcode, RDBType, StreamEncoding},
@@ -31,7 +32,6 @@ use crate::{
                 ZSetZipListRecordParser,
             },
         },
-        state::traits::{InitializableParser, StateParser},
     },
 };
 
@@ -67,7 +67,7 @@ enum ItemParser {
 }
 
 #[delegate_impl]
-impl StateParser for ItemParser {
+impl Parser for ItemParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output>;
@@ -106,7 +106,7 @@ impl RDBFileParser {
 
     // Execute a child parser immediately if possible, otherwise stash it for later.
     fn set_entrust<E>(&mut self, mut entrust: E, buffer: &mut Buffer) -> AnyResult<Item>
-    where E: StateParser<Output = Item> + Into<ItemParser> {
+    where E: Parser<Output = Item> + Into<ItemParser> {
         debug_assert!(self.entrust.is_none());
         match entrust.call(buffer) {
             Ok(item) => Ok(item),
@@ -115,6 +115,21 @@ impl RDBFileParser {
                 Err(e)
             }
         }
+    }
+
+    fn init_and_run<E>(
+        &mut self,
+        buffer: &mut Buffer,
+        input_offset: usize,
+    ) -> AnyResult<Option<Item>>
+    where
+        E: Parser<Output = Item> + ParserInit + Into<ItemParser>,
+    {
+        let entrust = buffer
+            .init_commit_from_offset::<E>(input_offset)
+            .into_any_result()?;
+        let item = self.set_entrust(entrust, buffer)?;
+        self.return_item(item)
     }
 }
 
@@ -133,6 +148,7 @@ impl RDBFileParser {
 
         let input = buffer.as_slice();
         let (input, flag) = read_u8(input).context("read item flag")?;
+        let child_input_offset = buffer.len() - input.len();
 
         // First interpret it as an opcode (aux fields, select-db, etc.).
         if let Ok(opcode) = RDBOpcode::try_from(flag) {
@@ -206,17 +222,11 @@ impl RDBFileParser {
                     })
                 }
                 RDBOpcode::Function2 => {
-                    let (input, entrust) = Function2RecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<Function2RecordParser>(buffer, child_input_offset)
                 }
                 RDBOpcode::FunctionPreGA => bail!("not supported opcode: FunctionPreGA"),
                 RDBOpcode::ModuleAux => {
-                    let (input, entrust) = ModuleAuxParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<ModuleAuxParser>(buffer, child_input_offset)
                 }
                 RDBOpcode::Idle => {
                     let (input, idle_seconds) = read_rdb_len(input).context("read idle seconds")?;
@@ -255,167 +265,74 @@ impl RDBFileParser {
         if let Ok(type_id) = RDBType::try_from(flag) {
             return match type_id {
                 RDBType::String => {
-                    let (input, entrust) = StringRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<StringRecordParser>(buffer, child_input_offset)
                 }
-                RDBType::List => {
-                    let (input, entrust) = ListRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
-                }
+                RDBType::List => self.init_and_run::<ListRecordParser>(buffer, child_input_offset),
                 RDBType::ListZipList => {
-                    let (input, entrust) = ListZipListRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<ListZipListRecordParser>(buffer, child_input_offset)
                 }
                 RDBType::ListQuickList => {
-                    let (input, entrust) = ListQuickListRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<ListQuickListRecordParser>(buffer, child_input_offset)
                 }
                 RDBType::ListQuickList2 => {
-                    let (input, entrust) = ListQuickList2RecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<ListQuickList2RecordParser>(buffer, child_input_offset)
                 }
                 RDBType::Array => {
-                    let (input, entrust) = ArrayRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<ArrayRecordParser>(buffer, child_input_offset)
                 }
-                RDBType::Set => {
-                    let (input, entrust) = SetRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
-                }
+                RDBType::Set => self.init_and_run::<SetRecordParser>(buffer, child_input_offset),
                 RDBType::SetIntSet => {
-                    let (input, entrust) = SetIntSetRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<SetIntSetRecordParser>(buffer, child_input_offset)
                 }
                 RDBType::SetListPack => {
-                    let (input, entrust) = SetListPackRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<SetListPackRecordParser>(buffer, child_input_offset)
                 }
-                RDBType::ZSet => {
-                    let (input, entrust) = ZSetRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
-                }
+                RDBType::ZSet => self.init_and_run::<ZSetRecordParser>(buffer, child_input_offset),
                 RDBType::ZSet2 => {
-                    let (input, entrust) = ZSet2RecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<ZSet2RecordParser>(buffer, child_input_offset)
                 }
                 RDBType::ZSetListPack => {
-                    let (input, entrust) = ZSetListPackRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<ZSetListPackRecordParser>(buffer, child_input_offset)
                 }
-                RDBType::Hash => {
-                    let (input, entrust) = HashRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
-                }
+                RDBType::Hash => self.init_and_run::<HashRecordParser>(buffer, child_input_offset),
                 RDBType::ModulePreGA => bail!("not supported type: ModulePreGA"),
                 RDBType::Module2 => {
-                    let (input, entrust) = Module2RecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<Module2RecordParser>(buffer, child_input_offset)
                 }
                 RDBType::HashZipMap => {
-                    let (input, entrust) = HashZipMapRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<HashZipMapRecordParser>(buffer, child_input_offset)
                 }
                 RDBType::HashZipList => {
-                    let (input, entrust) = HashZipListRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<HashZipListRecordParser>(buffer, child_input_offset)
                 }
                 RDBType::HashListPack => {
-                    let (input, entrust) = HashListPackRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<HashListPackRecordParser>(buffer, child_input_offset)
                 }
                 RDBType::HashListPackEx => {
-                    let (input, entrust) = HashListPackExRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<HashListPackExRecordParser>(buffer, child_input_offset)
                 }
                 RDBType::HashMetadata => {
-                    let (input, entrust) = HashMetadataRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<HashMetadataRecordParser>(buffer, child_input_offset)
                 }
-                RDBType::StreamListPacks => {
-                    let (input, entrust) = StreamListPackRecordParser::<
-                        { StreamEncoding::ListPacks },
-                    >::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
-                }
-                RDBType::StreamListPacks2 => {
-                    let (input, entrust) = StreamListPackRecordParser::<
-                        { StreamEncoding::ListPacks2 },
-                    >::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
-                }
-                RDBType::StreamListPacks3 => {
-                    let (input, entrust) = StreamListPackRecordParser::<
-                        { StreamEncoding::ListPacks3 },
-                    >::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
-                }
-                RDBType::StreamListPacks4 => {
-                    let (input, entrust) = StreamListPackRecordParser::<
-                        { StreamEncoding::ListPacks4 },
-                    >::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
-                }
-                RDBType::StreamListPacks5 => {
-                    let (input, entrust) = StreamListPackRecordParser::<
-                        { StreamEncoding::ListPacks5 },
-                    >::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
-                }
+                RDBType::StreamListPacks => self.init_and_run::<StreamListPackRecordParser<
+                    { StreamEncoding::ListPacks },
+                >>(buffer, child_input_offset),
+                RDBType::StreamListPacks2 => self.init_and_run::<StreamListPackRecordParser<
+                    { StreamEncoding::ListPacks2 },
+                >>(buffer, child_input_offset),
+                RDBType::StreamListPacks3 => self.init_and_run::<StreamListPackRecordParser<
+                    { StreamEncoding::ListPacks3 },
+                >>(buffer, child_input_offset),
+                RDBType::StreamListPacks4 => self.init_and_run::<StreamListPackRecordParser<
+                    { StreamEncoding::ListPacks4 },
+                >>(buffer, child_input_offset),
+                RDBType::StreamListPacks5 => self.init_and_run::<StreamListPackRecordParser<
+                    { StreamEncoding::ListPacks5 },
+                >>(buffer, child_input_offset),
                 RDBType::HashMetadataPreGA => bail!("unsupported type: HashMetadataPreGA"),
                 RDBType::HashListPackExPreGA => bail!("unsupported type: HashListPackExPreGA"),
                 RDBType::ZSetZipList => {
-                    let (input, entrust) = ZSetZipListRecordParser::init(buffer, input)?;
-                    buffer.consume_to(input.as_ptr());
-                    let item = self.set_entrust(entrust, buffer)?;
-                    self.return_item(item)
+                    self.init_and_run::<ZSetZipListRecordParser>(buffer, child_input_offset)
                 }
             };
         }

@@ -1,9 +1,13 @@
 use crate::{
     helper::AnyResult,
+    parse_try,
     parser::{
-        core::buffer::Buffer,
+        core::{
+            buffer::Buffer,
+            parse::{ParseResult, Parser, ParserInit},
+            view::View,
+        },
         model::Item,
-        state::traits::{InitializableParser, StateParser},
         string::StringEncodingParser,
     },
 };
@@ -13,18 +17,17 @@ pub struct Function2RecordParser {
     entrust: StringEncodingParser,
 }
 
-impl InitializableParser for Function2RecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, entrust) = StringEncodingParser::init(buffer, input)?;
-
-        Ok((input, Self {
-            started: buffer.tell(),
+impl ParserInit for Function2RecordParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let entrust = parse_try!(view.init_parser::<StringEncodingParser>());
+        ParseResult::Ok(Self {
+            started: view.base_offset(),
             entrust,
-        }))
+        })
     }
 }
 
-impl StateParser for Function2RecordParser {
+impl Parser for Function2RecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {

@@ -12,6 +12,8 @@ const COMMENT_MARKER = "<!-- rdbinsight-parser-benchmark -->";
 const CRITERION_DIR = repoPath("target", "criterion");
 const BASE_CRITERION_DIR = repoPath("target", "criterion-base");
 const CURRENT_CRITERION_DIR = repoPath("target", "criterion-current");
+const DEFAULT_CURRENT_PROFILES =
+  "string,string-int,list,list-ziplist,list-quicklist,list-quicklist2,set,set-intset,set-listpack,hash,hash-ziplist,hash-listpack,hash-zipmap,hash-metadata,hash-listpack-ex,array,zset,zset2,zset-ziplist,zset-listpack,mixed";
 
 function repoPath(...segments) {
   return path.join(process.env.GITHUB_WORKSPACE || process.cwd(), ...segments);
@@ -87,15 +89,22 @@ async function benchmarkBase() {
     return false;
   }
 
+  fs.copyFileSync(repoPath("benches", "parser.rs"), path.join(worktree, "benches", "parser.rs"));
   await run(
     "cargo",
     ["+nightly", "bench", "--bench", "parser", "--", "--noplot", "--save-baseline", "base"],
-    {
-      cwd: worktree,
-      env: envWith({ CARGO_TARGET_DIR: repoPath("target") }),
-      outputPath: BASE_OUTPUT,
-    },
-  );
+      {
+        cwd: worktree,
+        env: envWith({
+          CARGO_TARGET_DIR: repoPath("target"),
+          RDBINSIGHT_BENCH_PROFILES:
+            process.env.RDBINSIGHT_BENCH_PROFILES ||
+            process.env.RDBINSIGHT_BENCH_PROFILE ||
+            DEFAULT_CURRENT_PROFILES,
+        }),
+        outputPath: BASE_OUTPUT,
+      },
+    );
   copyCriterionOutput(BASE_CRITERION_DIR);
   return true;
 }
@@ -103,6 +112,12 @@ async function benchmarkBase() {
 async function benchmarkCurrent() {
   fs.rmSync(CRITERION_DIR, { recursive: true, force: true });
   await run("cargo", ["+nightly", "bench", "--bench", "parser", "--", "--noplot"], {
+    env: envWith({
+      RDBINSIGHT_BENCH_PROFILES:
+        process.env.RDBINSIGHT_BENCH_PROFILES ||
+        process.env.RDBINSIGHT_BENCH_PROFILE ||
+        DEFAULT_CURRENT_PROFILES,
+    }),
     outputPath: CURRENT_OUTPUT,
   });
   copyCriterionOutput(CURRENT_CRITERION_DIR);
@@ -171,6 +186,13 @@ function formatChange(currentNs, baseNs) {
   return `${prefix}${change.toFixed(2)}% ${direction}`;
 }
 
+function slowdownPercent(currentNs, baseNs) {
+  if (!Number.isFinite(currentNs) || !Number.isFinite(baseNs) || baseNs <= 0) {
+    return Number.NaN;
+  }
+  return (currentNs / baseNs - 1) * 100;
+}
+
 function markdownTableCell(value) {
   return String(value)
     .slice(0, 200)
@@ -181,6 +203,29 @@ function markdownTableCell(value) {
     .replaceAll("\n", " ")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function shortSha(sha) {
+  return (sha || "").slice(0, 7);
+}
+
+function markdownLink(label, url) {
+  return `[${markdownTableCell(label)}](${url})`;
+}
+
+function commitLink(repo, sha) {
+  if (!repo || !sha) {
+    return null;
+  }
+  return markdownLink(shortSha(sha), `https://github.com/${repo}/commit/${sha}`);
+}
+
+function actionsRunLink(label, runId) {
+  const repository = process.env.GITHUB_REPOSITORY;
+  if (!repository || !runId) {
+    return null;
+  }
+  return markdownLink(label, `https://github.com/${repository}/actions/runs/${runId}`);
 }
 
 function medianPointEstimate(filePath) {
@@ -299,16 +344,72 @@ function benchmarkNotes() {
   const profiles =
     process.env.RDBINSIGHT_BENCH_PROFILES ||
     process.env.RDBINSIGHT_BENCH_PROFILE ||
-    "string,list,set,hash,zset,zset2,mixed";
+    DEFAULT_CURRENT_PROFILES;
   const inputDescription = process.env.RDBINSIGHT_BENCH_RDB
     ? `Input: external RDB from ${process.env.RDBINSIGHT_BENCH_RDB}.`
     : `Input: generated ${generatedBytes} byte synthetic RDB profiles: ${profiles}.`;
+
+  const maxSlowdownPercent = Number.parseFloat(
+    process.env.RDBINSIGHT_BENCH_MAX_SLOWDOWN_PERCENT || "30",
+  );
+  const thresholdDescription = Number.isFinite(maxSlowdownPercent) && maxSlowdownPercent > 0
+    ? `Parser benchmark fails when any comparable profile slows down by more than ${maxSlowdownPercent.toFixed(0)}%.`
+    : "Parser benchmark slowdown threshold is disabled.";
 
   return [
     inputDescription,
     "Benchmark excludes disk I/O; RDB bytes are prepared before timing starts.",
     "Positive change means the current PR is slower than the base commit.",
+    thresholdDescription,
   ];
+}
+
+function assertNoSevereSlowdowns(rows) {
+  const maxSlowdownPercent = Number.parseFloat(
+    process.env.RDBINSIGHT_BENCH_MAX_SLOWDOWN_PERCENT || "30",
+  );
+  if (!Number.isFinite(maxSlowdownPercent) || maxSlowdownPercent <= 0) {
+    return;
+  }
+
+  const failures = rows
+    .map((row) => ({
+      ...row,
+      slowdown: slowdownPercent(row.currentNs, row.baseNs),
+    }))
+    .filter((row) => Number.isFinite(row.slowdown) && row.slowdown > maxSlowdownPercent);
+
+  if (failures.length === 0) {
+    return;
+  }
+
+  const details = failures
+    .map((row) => `${row.name}: ${row.slowdown.toFixed(2)}% slower`)
+    .join(", ");
+  throw new Error(
+    `parser benchmark slowdown exceeded ${maxSlowdownPercent.toFixed(2)}%: ${details}`,
+  );
+}
+
+function pullRequestBenchmarkLinks() {
+  const pullRequest = githubEvent().pull_request;
+  if (!pullRequest) {
+    return [];
+  }
+
+  const baseCommit = commitLink(pullRequest.base?.repo?.full_name, pullRequest.base?.sha);
+  const headCommit = commitLink(pullRequest.head?.repo?.full_name, pullRequest.head?.sha);
+  const workflowRun = actionsRunLink(`CI run ${process.env.GITHUB_RUN_ID}`, process.env.GITHUB_RUN_ID);
+  const notes = [];
+
+  if (baseCommit && headCommit) {
+    notes.push(`Base commit: ${baseCommit}; head commit: ${headCommit}.`);
+  }
+  if (workflowRun) {
+    notes.push(`Benchmark workflow: ${workflowRun}.`);
+  }
+
+  return notes;
 }
 
 async function publishSummary(rows) {
@@ -384,7 +485,9 @@ async function upsertPullRequestComment(rows) {
     return;
   }
 
-  const notes = benchmarkNotes().map((note) => `- ${note}`).join("\n");
+  const notes = [...benchmarkNotes(), ...pullRequestBenchmarkLinks()]
+    .map((note) => `- ${note}`)
+    .join("\n");
   const body = [
     COMMENT_MARKER,
     "## Parser benchmark",
@@ -442,6 +545,13 @@ async function main() {
       core.warning(`Failed to update parser benchmark PR comment: ${err.message}`);
     }
     await cleanupBaseWorktree();
+    if (!runError) {
+      try {
+        assertNoSevereSlowdowns(rows);
+      } catch (err) {
+        runError = err;
+      }
+    }
   }
 
   if (runError) {

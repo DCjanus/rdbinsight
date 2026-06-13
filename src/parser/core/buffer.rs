@@ -3,7 +3,14 @@ use bytes::{Buf, BytesMut};
 
 use crate::{
     helper::{AnyResult, wrapping_to_usize},
-    parser::{core::combinators::read_at_most_but_at_least_one, error::NeedMoreData},
+    parser::{
+        core::{
+            combinators::read_at_most_but_at_least_one,
+            parse::{ParseResult, ParserInit},
+            view::View,
+        },
+        error::NeedMoreData,
+    },
 };
 
 #[derive(Debug)]
@@ -40,6 +47,12 @@ impl Buffer {
         self.pos += delta;
         self.buf.advance(delta as usize);
         debug_assert_eq!(self.buf.as_ptr(), ptr);
+    }
+
+    pub fn consume(&mut self, n: usize) {
+        assert!(n <= self.buf.len(), "consume length exceeds buffer length");
+        self.pos += n as u64;
+        self.buf.advance(n);
     }
 
     pub fn tell(&self) -> u64 {
@@ -85,6 +98,23 @@ impl Buffer {
 
     pub fn truncate(&mut self, len: usize) {
         self.buf.truncate(len);
+    }
+
+    pub fn init_commit<P: ParserInit>(&mut self) -> AnyResult<P> {
+        self.init_commit_from_offset::<P>(0).into_any_result()
+    }
+
+    pub fn init_commit_from_offset<P: ParserInit>(&mut self, offset: usize) -> ParseResult<P> {
+        assert!(offset <= self.len(), "init offset exceeds buffer length");
+        let mut view = View::new_with_offset(self, offset);
+        match P::init(&mut view) {
+            ParseResult::Ok(parser) => {
+                self.consume(view.consumed());
+                ParseResult::Ok(parser)
+            }
+            ParseResult::NeedMore => ParseResult::NeedMore,
+            ParseResult::Err(e) => ParseResult::Err(e),
+        }
     }
 }
 

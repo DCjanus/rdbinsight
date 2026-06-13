@@ -5,11 +5,12 @@ use crate::{
     parser::{
         core::{
             buffer::{Buffer, skip_bytes},
+            parse::{ParseResult, Parser, ParserInit},
             raw::{RDBLen, RDBStr, read_rdb_len, read_rdb_str},
+            view::View,
         },
         model::Item,
         record::string::StringEncodingParser,
-        state::traits::{InitializableParser, StateParser},
     },
 };
 
@@ -25,43 +26,41 @@ pub struct ArrayRecordParser {
     entries: ArrayEntriesParser,
 }
 
-impl InitializableParser for ArrayRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read array key")?;
-        let (input, member_count) = read_rdb_len(input).context("read array element count")?;
-        let member_count = member_count
-            .as_u64()
-            .context("array element count should be numeric")?;
+impl ParserInit for ArrayRecordParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let started = view.base_offset();
+        view.parse_init(|_, input| {
+            let (input, key) = read_rdb_str(input).context("read array key")?;
+            let (input, member_count) = read_rdb_len(input).context("read array element count")?;
+            let member_count = member_count
+                .as_u64()
+                .context("array element count should be numeric")?;
 
-        let (input, insert_idx_flag) =
-            read_rdb_len(input).context("read array insert index flag")?;
-        match insert_idx_flag
-            .as_u64()
-            .context("array insert index flag should be numeric")?
-        {
-            0 => {}
-            1 => {
-                let (next, _) = read_rdb_len(input).context("read array insert index")?;
-                return Ok((next, Self {
-                    started: buffer.tell(),
-                    key,
-                    member_count,
-                    entries: ArrayEntriesParser::new(member_count),
-                }));
-            }
-            other => bail!("invalid array insert index flag: {other}"),
-        }
+            let (input, insert_idx_flag) =
+                read_rdb_len(input).context("read array insert index flag")?;
+            let input = match insert_idx_flag
+                .as_u64()
+                .context("array insert index flag should be numeric")?
+            {
+                0 => input,
+                1 => {
+                    let (input, _) = read_rdb_len(input).context("read array insert index")?;
+                    input
+                }
+                other => bail!("invalid array insert index flag: {other}"),
+            };
 
-        Ok((input, Self {
-            started: buffer.tell(),
-            key,
-            member_count,
-            entries: ArrayEntriesParser::new(member_count),
-        }))
+            Ok((input, Self {
+                started,
+                key,
+                member_count,
+                entries: ArrayEntriesParser::new(member_count),
+            }))
+        })
     }
 }
 
-impl StateParser for ArrayRecordParser {
+impl Parser for ArrayRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -88,7 +87,7 @@ impl ArrayEntriesParser {
     }
 }
 
-impl StateParser for ArrayEntriesParser {
+impl Parser for ArrayEntriesParser {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -103,7 +102,7 @@ impl StateParser for ArrayEntriesParser {
                 return Ok(());
             }
 
-            let (input, entry) = ArrayElementParser::init(buffer, buffer.as_slice())?;
+            let (input, entry) = ArrayElementParser::init_from_input(buffer.as_slice())?;
             buffer.consume_to(input.as_ptr());
             self.entry = Some(entry);
         }
@@ -115,7 +114,7 @@ enum ArrayElementValueParser {
     String(StringEncodingParser),
 }
 
-impl StateParser for ArrayElementValueParser {
+impl Parser for ArrayElementValueParser {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -133,8 +132,14 @@ struct ArrayElementParser {
     value: ArrayElementValueParser,
 }
 
-impl InitializableParser for ArrayElementParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+impl ParserInit for ArrayElementParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_, input| Self::init_from_input(input))
+    }
+}
+
+impl ArrayElementParser {
+    fn init_from_input(input: &[u8]) -> AnyResult<(&[u8], Self)> {
         let (input, index) = read_rdb_len(input).context("read array element index")?;
         if !matches!(index, RDBLen::Simple(_)) {
             bail!("array element index should be a plain length");
@@ -150,7 +155,7 @@ impl InitializableParser for ArrayElementParser {
                 (input, ArrayElementValueParser::Skip { remain: 8 })
             }
             AR_RDB_TAG_SMALLSTR | AR_RDB_TAG_SDS => {
-                let (input, parser) = StringEncodingParser::init(buffer, input)?;
+                let (input, parser) = StringEncodingParser::init_from_input(input)?;
                 (input, ArrayElementValueParser::String(parser))
             }
             other => bail!("unknown array element type tag: {other}"),
@@ -160,7 +165,7 @@ impl InitializableParser for ArrayElementParser {
     }
 }
 
-impl StateParser for ArrayElementParser {
+impl Parser for ArrayElementParser {
     type Output = ();
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {

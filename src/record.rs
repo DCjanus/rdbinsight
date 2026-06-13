@@ -3,6 +3,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use anyhow::anyhow;
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
@@ -165,6 +166,7 @@ pub struct RecordStream {
     pending_idle: Option<u64>,
     pending_freq: Option<u8>,
     finished: bool,
+    parser_finished: bool,
 }
 
 impl RecordStream {
@@ -180,6 +182,7 @@ impl RecordStream {
             pending_idle: None,
             pending_freq: None,
             finished: false,
+            parser_finished: false,
         }
     }
 
@@ -191,6 +194,14 @@ impl RecordStream {
                 None => {
                     // Need more data or end of stream
                     if self.finished {
+                        return Ok(None);
+                    }
+                    if self.parser_finished {
+                        if self.read_more_data().await? {
+                            return Err(anyhow!("trailing data after RDB EOF"));
+                        }
+                        self.finished = true;
+                        self.buffer.set_finished();
                         return Ok(None);
                     }
 
@@ -218,8 +229,14 @@ impl RecordStream {
                         None => continue, // Skip non-record items and continue processing
                     }
                 }
-                Ok(None) => return Ok(None), // End of stream
+                Ok(None) => {
+                    self.parser_finished = true;
+                    return Ok(None);
+                }
                 Err(e) if e.is::<NeedMoreData>() => {
+                    if self.buffer.is_finished() {
+                        return Err(anyhow!("truncated RDB input"));
+                    }
                     return Ok(None); // Need more data
                 }
                 Err(e) => {
@@ -497,21 +514,82 @@ impl Stream for RecordStream {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::{
+        io::Cursor,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use tokio::io::ReadBuf;
 
     use super::*;
 
+    struct ChunkedReader {
+        chunks: Vec<Vec<u8>>,
+        next: usize,
+    }
+
+    impl ChunkedReader {
+        fn new(chunks: Vec<Vec<u8>>) -> Self {
+            Self { chunks, next: 0 }
+        }
+    }
+
+    impl AsyncRead for ChunkedReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            let Some(chunk) = self.chunks.get(self.next) else {
+                return Poll::Ready(Ok(()));
+            };
+
+            assert!(chunk.len() <= buf.remaining());
+            buf.put_slice(chunk);
+            self.next += 1;
+            Poll::Ready(Ok(()))
+        }
+    }
+
     #[tokio::test]
     async fn test_record_stream_basic() {
-        // Create an empty cursor as a mock reader
+        let mut rdb = b"REDIS0011".to_vec();
+        rdb.push(0xff); // EOF.
+        rdb.extend_from_slice(&0_u64.to_le_bytes()); // Checksum placeholder.
+
+        let cursor = Cursor::new(rdb);
+        let reader = Box::pin(cursor);
+        let mut stream = RecordStream::new(reader, SourceType::File);
+
+        let result = stream.next_record().await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_record_stream_rejects_truncated_input() {
         let cursor = Cursor::new(Vec::<u8>::new());
         let reader = Box::pin(cursor);
         let mut stream = RecordStream::new(reader, SourceType::File);
 
-        // Since we have no data, this should return None
         let result = stream.next_record().await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
+        assert!(result.is_err());
+        assert!(format!("{:#}", result.unwrap_err()).contains("truncated RDB input"));
+    }
+
+    #[tokio::test]
+    async fn test_record_stream_rejects_chunked_trailing_data_after_eof() {
+        let mut rdb = b"REDIS0011".to_vec();
+        rdb.push(0xff); // EOF.
+        rdb.extend_from_slice(&0_u64.to_le_bytes()); // Checksum placeholder.
+
+        let reader = Box::pin(ChunkedReader::new(vec![rdb, b"junk".to_vec()]));
+        let mut stream = RecordStream::new(reader, SourceType::File);
+
+        let result = stream.next_record().await;
+        assert!(result.is_err());
+        assert!(format!("{:#}", result.unwrap_err()).contains("trailing data after RDB EOF"));
     }
 
     #[test]

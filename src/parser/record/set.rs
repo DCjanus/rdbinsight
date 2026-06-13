@@ -2,47 +2,47 @@ use anyhow::{Context, bail};
 
 use crate::{
     helper::AnyResult,
+    parse_try,
     parser::{
-        StringEncoding,
         core::{
             buffer::{Buffer, skip_bytes},
             combinators::{read_exact, read_u8},
+            parse::{ParseResult, Parser, ParserInit},
             raw::{RDBStr, read_rdb_len, read_rdb_str},
+            view::View,
         },
         model::{Item, SetEncoding},
-        record::string::StringEncodingParser,
-        state::{
-            combinators::{RDBStrBox, ReduceParser},
-            traits::{InitializableParser, StateParser},
-        },
+        record::string::RawStringCountParser,
+        runtime::combinators::RDBStrBox,
     },
 };
 
 pub struct SetRecordParser {
     started: u64,
     key: RDBStr,
-    entrust: ReduceParser<StringEncodingParser, u64>,
+    entrust: RawStringCountParser,
 }
 
-impl InitializableParser for SetRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, member_count) = read_rdb_len(input).context("read set length")?;
-        let member_count = member_count
-            .as_u64()
-            .context("set length should be a number")?;
+impl ParserInit for SetRecordParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|buffer, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            let (input, member_count) = read_rdb_len(input).context("read set length")?;
+            let member_count = member_count
+                .as_u64()
+                .context("set length should be a number")?;
 
-        let entrust: ReduceParser<StringEncodingParser, u64> =
-            ReduceParser::new(member_count, 0, |acc, _: StringEncoding| acc + 1);
-        Ok((input, Self {
-            started: buffer.tell(),
-            key,
-            entrust,
-        }))
+            let entrust = RawStringCountParser::new(member_count);
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
+        })
     }
 }
 
-impl StateParser for SetRecordParser {
+impl Parser for SetRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -63,19 +63,23 @@ pub struct SetIntSetRecordParser {
     entrust: RDBStrBox<IntSetInnerParser>,
 }
 
-impl InitializableParser for SetIntSetRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = RDBStrBox::<IntSetInnerParser>::init(buffer, input)?;
-        Ok((input, Self {
-            started: buffer.tell(),
+impl ParserInit for SetIntSetRecordParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let started = view.base_offset();
+        let key = parse_try!(view.parse_init(|_, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            Ok((input, key))
+        }));
+        let entrust = parse_try!(view.init_parser::<RDBStrBox<IntSetInnerParser>>());
+        ParseResult::Ok(Self {
+            started,
             key,
             entrust,
-        }))
+        })
     }
 }
 
-impl StateParser for SetIntSetRecordParser {
+impl Parser for SetIntSetRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -98,34 +102,37 @@ pub struct IntSetInnerParser {
     member_count: u64,
 }
 
-impl InitializableParser for IntSetInnerParser {
-    fn init<'a>(_buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        // When called inside RDBStrBox, the RDB string length has already been
-        // consumed; here we directly read the intset header (8 bytes) and
-        // compute payload length from element size and member_count.
-        let (input, header) = read_exact(input, 8).context("read intset header")?;
-        let encoding = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
-        let member_count = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as u64;
+impl ParserInit for IntSetInnerParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| {
+            // When called inside RDBStrBox, the RDB string length has already been
+            // consumed; here we directly read the intset header (8 bytes) and
+            // compute payload length from element size and member_count.
+            let (input, header) = read_exact(input, 8).context("read intset header")?;
+            let encoding = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+            let member_count =
+                u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as u64;
 
-        let elem_size = match encoding {
-            2 => 2u64,
-            4 => 4u64,
-            8 => 8u64,
-            _ => bail!("unknown intset encoding: {}", encoding),
-        };
+            let elem_size = match encoding {
+                2 => 2u64,
+                4 => 4u64,
+                8 => 8u64,
+                _ => bail!("unknown intset encoding: {}", encoding),
+            };
 
-        let to_skip = elem_size
-            .checked_mul(member_count)
-            .context("intset payload overflow")?;
+            let to_skip = elem_size
+                .checked_mul(member_count)
+                .context("intset payload overflow")?;
 
-        Ok((input, Self {
-            to_skip,
-            member_count,
-        }))
+            Ok((input, Self {
+                to_skip,
+                member_count,
+            }))
+        })
     }
 }
 
-impl StateParser for IntSetInnerParser {
+impl Parser for IntSetInnerParser {
     type Output = u64;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -140,19 +147,22 @@ pub struct SetListPackRecordParser {
     entrust: RDBStrBox<ListPackLengthParser>,
 }
 
-impl InitializableParser for SetListPackRecordParser {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, key) = read_rdb_str(input).context("read key")?;
-        let (input, entrust) = RDBStrBox::<ListPackLengthParser>::init(buffer, input)?;
-        Ok((input, Self {
-            started: buffer.tell(),
-            key,
-            entrust,
-        }))
+impl ParserInit for SetListPackRecordParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|buffer, input| {
+            let (input, key) = read_rdb_str(input).context("read key")?;
+            let (input, entrust) =
+                RDBStrBox::init_from_input(buffer, input, ListPackLengthParser::init_from_input)?;
+            Ok((input, Self {
+                started: buffer.tell(),
+                key,
+                entrust,
+            }))
+        })
     }
 }
 
-impl StateParser for SetListPackRecordParser {
+impl Parser for SetListPackRecordParser {
     type Output = Item;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -172,8 +182,14 @@ pub struct ListPackLengthParser {
     counted: u64,
 }
 
-impl InitializableParser for ListPackLengthParser {
-    fn init<'a>(_: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
+impl ParserInit for ListPackLengthParser {
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        view.parse_init(|_buffer, input| Self::init_from_input(input))
+    }
+}
+
+impl ListPackLengthParser {
+    pub(crate) fn init_from_input(input: &[u8]) -> AnyResult<(&[u8], Self)> {
         let (input, _header) = read_exact(input, 6).context("read listpack header")?;
         Ok((input, Self {
             entrust: None,
@@ -182,7 +198,7 @@ impl InitializableParser for ListPackLengthParser {
     }
 }
 
-impl StateParser for ListPackLengthParser {
+impl Parser for ListPackLengthParser {
     type Output = u64;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
@@ -290,7 +306,7 @@ impl IsEndListPackEntryParser {
     }
 }
 
-impl StateParser for IsEndListPackEntryParser {
+impl Parser for IsEndListPackEntryParser {
     type Output = bool;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {

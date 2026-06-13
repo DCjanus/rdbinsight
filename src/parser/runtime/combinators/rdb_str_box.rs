@@ -2,16 +2,16 @@ use anyhow::{Context, anyhow, bail, ensure};
 
 use crate::{
     helper::AnyResult,
+    parse_try,
     parser::{
         core::{
             buffer::Buffer,
+            parse::{ParseResult, Parser, ParserInit, fatal},
             raw::{RDBLen, read_rdb_len},
+            view::View,
         },
         error::NeedMoreData,
-        state::{
-            lzf::LzfChunkDecoder,
-            traits::{InitializableParser, StateParser},
-        },
+        runtime::lzf::LzfChunkDecoder,
     },
 };
 
@@ -31,10 +31,46 @@ pub enum RDBStrBox<P> {
 }
 
 impl<P> RDBStrBox<P>
-where P: InitializableParser + StateParser
+where P: Parser + ParserInit
 {
     pub fn is_lzf(&self) -> bool {
         matches!(self, Self::Lzf { .. })
+    }
+
+    pub(crate) fn init_from_input<'a>(
+        buffer: &Buffer,
+        input: &'a [u8],
+        init_inner: impl FnOnce(&'a [u8]) -> AnyResult<(&'a [u8], P)>,
+    ) -> AnyResult<(&'a [u8], Self)> {
+        let (input, len) = read_rdb_len(input).context("read string length")?;
+        match len {
+            RDBLen::Simple(length) => {
+                let expect_end = buffer.tell_to(input.as_ptr()) + length;
+                let (input, entrust) = init_inner(input)?;
+                Ok((input, Self::Simple {
+                    expect_end,
+                    entrust,
+                }))
+            }
+            RDBLen::IntStr(_) => bail!("encoded integer cannot wrap nested RDB content"),
+            RDBLen::LZFStr => {
+                let (input, in_len) = read_rdb_len(input).context("read compressed in_len")?;
+                let in_len = in_len
+                    .as_u64()
+                    .context("compressed in_len must be simple")?;
+                let (input, out_len) = read_rdb_len(input).context("read compressed out_len")?;
+                let out_len = out_len
+                    .as_u64()
+                    .context("compressed out_len must be simple")?;
+                Ok((input, Self::Lzf {
+                    remain_in: in_len,
+                    remain_out: out_len,
+                    out_buffer: Buffer::new(out_len as usize),
+                    decoder: LzfChunkDecoder::default(),
+                    entrust: None,
+                }))
+            }
+        }
     }
 
     fn call_simple(buffer: &mut Buffer, expect_end: u64, entrust: &mut P) -> AnyResult<P::Output> {
@@ -120,13 +156,10 @@ where P: InitializableParser + StateParser
     fn call_lzf_inner(
         out_buffer: &mut Buffer,
         entrust: &mut Option<P>,
-    ) -> AnyResult<<P as StateParser>::Output> {
-        let input = out_buffer.as_slice();
-
+    ) -> AnyResult<<P as Parser>::Output> {
         if entrust.is_none() {
-            let (input, parser) = P::init(out_buffer, input)?;
+            let parser = out_buffer.init_commit::<P>()?;
             *entrust = Some(parser);
-            out_buffer.consume_to(input.as_ptr());
         }
 
         let entrust = entrust.as_mut().expect("entrust should be initialized");
@@ -134,45 +167,61 @@ where P: InitializableParser + StateParser
     }
 }
 
-impl<P> InitializableParser for RDBStrBox<P>
-where P: InitializableParser
+impl<P> ParserInit for RDBStrBox<P>
+where P: Parser + ParserInit
 {
-    fn init<'a>(buffer: &Buffer, input: &'a [u8]) -> AnyResult<(&'a [u8], Self)> {
-        let (input, len) = read_rdb_len(input).context("read string length")?;
+    fn init(view: &mut View<'_>) -> ParseResult<Self> {
+        let len = parse_try!(view.parse_init(|_, input| {
+            let (input, len) = read_rdb_len(input).context("read string length")?;
+            Ok((input, len))
+        }));
         match len {
-            RDBLen::Simple(length) | RDBLen::IntStr(length) => {
-                let expect_end = buffer.tell_to(input.as_ptr()) + length;
-                let (input, entrust) = P::init(buffer, input)?;
-                Ok((input, Self::Simple {
+            RDBLen::Simple(length) => {
+                let expect_end = view.offset() + length;
+                let entrust = parse_try!(view.init_parser::<P>());
+                ParseResult::Ok(Self::Simple {
                     expect_end,
                     entrust,
-                }))
+                })
             }
+            RDBLen::IntStr(_) => fatal(anyhow!("encoded integer cannot wrap nested RDB content")),
             RDBLen::LZFStr => {
-                let (input, in_len) = read_rdb_len(input).context("read compressed in_len")?;
-                let in_len = in_len
+                let in_len = parse_try!(view.parse_init(|_, input| {
+                    let (input, in_len) = read_rdb_len(input).context("read compressed in_len")?;
+                    Ok((input, in_len))
+                }));
+                let in_len = match in_len.as_u64().context("compressed in_len must be simple") {
+                    Ok(in_len) => in_len,
+                    Err(e) => return fatal(e),
+                };
+                let out_len = parse_try!(view.parse_init(|_, input| {
+                    let (input, out_len) =
+                        read_rdb_len(input).context("read compressed out_len")?;
+                    Ok((input, out_len))
+                }));
+                let out_len = match out_len
                     .as_u64()
-                    .context("compressed in_len must be simple")?;
-                let (input, out_len) = read_rdb_len(input).context("read compressed out_len")?;
-                let out_len = out_len
-                    .as_u64()
-                    .context("compressed out_len must be simple")?;
-                Ok((input, Self::Lzf {
+                    .context("compressed out_len must be simple")
+                {
+                    Ok(out_len) => out_len,
+                    Err(e) => return fatal(e),
+                };
+                ParseResult::Ok(Self::Lzf {
                     remain_in: in_len,
                     remain_out: out_len,
                     out_buffer: Buffer::new(out_len as usize),
                     decoder: LzfChunkDecoder::default(),
                     entrust: None,
-                }))
+                })
             }
         }
     }
 }
 
-impl<P> StateParser for RDBStrBox<P>
-where P: InitializableParser + StateParser
+impl<P> Parser for RDBStrBox<P>
+where P: Parser + ParserInit
 {
-    type Output = <P as StateParser>::Output;
+    type Output = <P as Parser>::Output;
 
     fn call(&mut self, buffer: &mut Buffer) -> AnyResult<Self::Output> {
         match self {

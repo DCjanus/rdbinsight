@@ -5,7 +5,7 @@
 [![dependency status](https://deps.rs/repo/github/dcjanus/rdbinsight/status.svg)](https://deps.rs/repo/github/dcjanus/rdbinsight)
 [![Docker Image Version](https://ghcr-badge.egpl.dev/dcjanus/rdbinsight/latest_tag?color=%2344cc11&ignore=latest&label=docker+image&trim=)](https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight)
 
-RDBInsight 是面向 Redis 的分析与诊断工具。它将 RDB 快照解析为便于 OLAP 分析的结构化元数据，帮助快速定位内存与性能相关的问题。
+RDBInsight 是面向 Redis RDB 的分析工具。它可以从在线 Redis、Redis Cluster、Codis 或本地 RDB 文件读取快照数据，并将紧凑的 key 元数据写入 ClickHouse 或 Parquet，用于可重复的内存与数据分布诊断。
 
 [English](README.md) | 中文
 
@@ -17,9 +17,27 @@ RDBInsight 是面向 Redis 的分析与诊断工具。它将 RDB 快照解析为
 
 完整使用手册：[docs/USAGE.zh_CN.md](docs/USAGE.zh_CN.md)
 
-注意：本仓库目前暂不提供预编译二进制。为多个平台提供二进制较为复杂（如 Linux 上的 glibc 版本差异、musl 与 glibc 的权衡）。需要在裸机运行的请自行从源码构建。
+官方 Docker 镜像发布在 [ghcr.io](https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight)：
 
-但提供了 Docker 镜像托管在 [ghcr.io](https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight)。
+```bash
+docker run --rm ghcr.io/dcjanus/rdbinsight:v0.2.0 --help
+```
+
+示例：将本地 RDB 文件解析为 Parquet：
+
+```bash
+docker run --rm \
+  -v "$PWD:/work" \
+  ghcr.io/dcjanus/rdbinsight:v0.2.0 \
+  dump from-file \
+  --path /work/dump.rdb \
+  --cluster your_cluster \
+  --instance 127.0.0.1:6379 \
+  into-parquet \
+  --dir /work/rdb_parquet
+```
+
+本仓库目前暂不提供宿主机预编译二进制。需要在不使用 Docker 的环境运行时，请自行从源码构建。
 
 ## 为什么选择 RDBInsight
 
@@ -29,20 +47,23 @@ RDBInsight 是面向 Redis 的分析与诊断工具。它将 RDB 快照解析为
 - 错误使用 hash tag 导致数据分布严重倾斜，监控难以及时反映；
 - 业务边缘缺陷长期累积产生大量无用数据。
 
-这类问题通常需要运维编写一次性扫描脚本，耗时且难以复用。RDBInsight 通过离线解析 RDB 并将关键元数据加载到 OLAP 系统，使分析过程可复用、可审计。
+这类问题通常需要运维编写一次性扫描脚本，耗时、影响线上实例且难以复用。RDBInsight 通过解析 RDB 并将关键元数据加载到分析存储，使排查过程可复用、可审计。
 
 ## 设计理念：从“定位问题”到“赋能分析”
 
-RDBInsight 更关注提供通用的诊断能力而非固定的检查项。通过提取轻量级键元数据并加载到 ClickHouse，用户可以用标准 SQL 从任意维度进行分析，以实现：
+RDBInsight 更关注提供通用的诊断能力而非固定的检查项。通过将 RDB 数据解析成稳定的分析 schema，用户可以反复查询同一份数据，而不必重复扫描 Redis：
 
-- 生成按前缀聚合的内存火焰图；
-- 结合多维信息验证复杂假设；
-- 将一次性排查沉淀为可复用的分析流程。
+- 将元数据加载到 ClickHouse 进行即席 SQL 分析；
+- 将元数据保存为 Parquet，便于离线处理与报告生成；
+- 生成包含前缀火焰图的自包含 HTML 报告；
+- 将一次性排查沉淀为可重复的分析流程。
 
 ## 主要特性
 
 - **增量解析器**：在接近恒定内存开销下解析 RDB，能处理包含大型键值的数据集；
-- **灵活的 SQL 分析**：将结构化元数据写入 ClickHouse 后，可用 SQL 做任意即席查询；
+- **多种数据来源**：支持从单机 Redis、Redis Cluster、Codis 与本地 RDB 文件读取数据；
+- **现代 Redis 兼容性**：支持 Redis 8.6 stream 与 Redis 8.8 array/stream 等较新的 RDB 编码；
+- **灵活输出**：可将结构化元数据写入 ClickHouse 或 Parquet；
 - **自包含 HTML 报告**：生成单文件 HTML 报表，离线查看集群信息和分析结果，并包含前缀火焰图（[示例报表](https://dcjanus.github.io/rdbinsight/)）。
 
 ## 数据模型
@@ -73,7 +94,7 @@ RDBInsight 更关注提供通用的诊断能力而非固定的检查项。通过
 
 传统做法需要在每个实例上运行 `SCAN`，耗时且难以复用。使用 RDBInsight 可按如下步骤完成：
 
-1. 离线解析 RDB 并写入 ClickHouse 或其他 OLAP 存储；
+1. 解析 RDB 数据并将元数据写入 ClickHouse；
 2. 使用标准 SQL 完成诊断：
 
 ```sql

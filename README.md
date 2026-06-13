@@ -5,7 +5,7 @@
 [![dependency status](https://deps.rs/repo/github/dcjanus/rdbinsight/status.svg)](https://deps.rs/repo/github/dcjanus/rdbinsight)
 [![Docker Image Version](https://ghcr-badge.egpl.dev/dcjanus/rdbinsight/latest_tag?color=%2344cc11&ignore=latest&label=docker+image&trim=)](https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight)
 
-RDBInsight is a Redis analysis and diagnostic tool that converts RDB snapshots into structured data suitable for OLAP workloads, helping engineers investigate memory and performance issues.
+RDBInsight is a Redis RDB analysis tool. It reads Redis snapshots from live Redis instances, Redis Cluster, Codis, or local RDB files, then writes compact key metadata to ClickHouse or Parquet for repeatable memory and data-distribution investigations.
 
 English | [中文](README.zh_CN.md)
 
@@ -17,9 +17,27 @@ This project is under active development. Backward compatibility is not guarante
 
 See the full usage guide: [docs/USAGE.md](docs/USAGE.md)
 
-Note: We don't publish precompiled binaries at the moment. Building and distributing cross-platform binaries is tricky (glibc versions on Linux, musl vs glibc trade-offs), so if you need to run on bare metal please build from source.
+Official Docker images are published to [ghcr.io](https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight):
 
-But official Docker images are available at [ghcr.io](https://github.com/DCjanus/rdbinsight/pkgs/container/rdbinsight).
+```bash
+docker run --rm ghcr.io/dcjanus/rdbinsight:v0.2.0 --help
+```
+
+Example: parse a local RDB file into Parquet:
+
+```bash
+docker run --rm \
+  -v "$PWD:/work" \
+  ghcr.io/dcjanus/rdbinsight:v0.2.0 \
+  dump from-file \
+  --path /work/dump.rdb \
+  --cluster your_cluster \
+  --instance 127.0.0.1:6379 \
+  into-parquet \
+  --dir /work/rdb_parquet
+```
+
+Precompiled host binaries are not published at the moment. If you need to run without Docker, build from source.
 
 ## Why RDBInsight?
 
@@ -29,22 +47,25 @@ For common Redis issues such as large keys, mature tools already exist. In produ
 - Improper hash-tag usage leads to imbalanced data distribution that regular monitoring does not immediately reveal.
 - Minor defects in business logic accumulate over time, producing large volumes of obsolete data.
 
-Addressing these atypical problems often involves writing one-off scripts for scanning and analysis—a repetitive, time-consuming process that is hard to reuse.
+Addressing these atypical problems often involves writing one-off scripts for scanning and analysis. That is repetitive, slow on large clusters, and hard to reuse.
 
 ## Design Philosophy: Enabling, Not Prescribing
 
 RDBInsight focuses on empowering users with flexible diagnostic capabilities rather than enforcing a fixed checklist.
 
-By parsing RDB files offline, extracting lightweight key metadata, and loading the results into ClickHouse, users can rely on standard SQL to investigate the data from any dimension:
+By parsing RDB data into a stable analytical schema, users can query the same dataset repeatedly instead of rescanning Redis:
 
-- Generate memory flame graphs to visualise memory distribution by key prefix.
-- Combine multiple dimensions of information to validate hypotheses about complex issues.
-- Turn ad-hoc troubleshooting steps into reusable analysis procedures.
+- Load metadata into ClickHouse for ad-hoc SQL analysis.
+- Store metadata as Parquet for offline processing and report generation.
+- Generate self-contained HTML reports with prefix flame graphs.
+- Turn ad-hoc troubleshooting steps into repeatable analysis workflows.
 
 ## Features
 
 - **Incremental parser** – Parses RDB files with a near-constant memory footprint and can handle datasets containing very large keys.
-- **Flexible SQL analysis** – Structured data is loaded into ClickHouse, enabling ad-hoc queries across arbitrary dimensions.
+- **Multiple sources** – Reads RDB data from standalone Redis, Redis Cluster, Codis, and local RDB files.
+- **Modern Redis compatibility** – Supports recent Redis RDB encodings including Redis 8.6 streams and Redis 8.8 array/stream records.
+- **Flexible outputs** – Writes structured metadata to ClickHouse or Parquet.
 - **Self-contained HTML report** – Generates a single-file HTML report (including prefix flame graphs) that can be viewed offline. [Sample report](https://dcjanus.github.io/rdbinsight/)
 
 ## Data Model
@@ -77,7 +98,7 @@ Traditional approaches involve custom scripts that execute `SCAN` on every insta
 
 With RDBInsight:
 
-1. Parse the RDB file offline and load the data into ClickHouse (or another OLAP database).
+1. Parse the RDB data and load the metadata into ClickHouse.
 2. Use standard SQL to obtain the results:
 
 ```sql

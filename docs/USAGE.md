@@ -105,7 +105,7 @@ Flags:
 - `--cluster`: Cluster name (required)
 - `--username`: Username (optional, default empty)
 - `--password`: Password (optional)
-  -- `--require-slave` (optional): Defaults to False — fall back to master when no replica exists; when True, read from replicas only and fail if a shard has no replica.
+- `--require-slave` (optional): Prefer reading from replicas by default and fall back to masters when a shard has no replica. When set, enforce replica-only reads and fail if any shard lacks a replica.
 - `--batch-timestamp`: RFC3339, defaults to now
 
 #### from-file
@@ -149,7 +149,7 @@ Flags:
 - `--dashboard`: Codis Dashboard address (required)
 - `--cluster`: Cluster name (optional; will be fetched from Dashboard product name if omitted)
 - `--password`: Password (optional)
-  -- `--require-slave` (optional): Defaults to False — fall back to master when no replica exists; when True, read from replicas only and fail if a shard has no replica.
+- `--require-slave` (optional): Prefer reading from replicas by default and fall back to masters when a shard has no replica. When set, enforce replica-only reads and fail if any shard lacks a replica.
 - `--batch-timestamp`: RFC3339, defaults to now
 
 ### output
@@ -178,7 +178,7 @@ Tip: `rdbinsight misc clickhouse-schema` prints recommended DDLs (`sql/01_*`, `0
 ```bash
 ... into-parquet \
   --dir /path/to/output \
-  [--compression zstd|snappy|gzip] \
+  [--compression zstd|snappy|none|lz4] \
   [--max_run_rows 131072]
 ```
 

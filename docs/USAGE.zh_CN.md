@@ -105,7 +105,7 @@ rdbinsight dump from-cluster \
 - `--cluster`：集群名（必填）
 - `--username`：用户名（可选，默认空）
 - `--password`：密码（可选）
-- `--require-slave`（可选）：默认为 False，表示无从节点时回退主节点；若为 True，表示仅从从节点读取，从节点则报错。
+- `--require-slave`（可选）：默认优先读取副本；当某个分片没有副本时回退到 master。设置该参数后强制只读副本，若任一分片无副本则失败。
 - `--batch-timestamp`：RFC3339 时间戳，默认当前时间
 
 #### from-file
@@ -149,7 +149,7 @@ rdbinsight dump from-codis \
 - `--dashboard`：Codis Dashboard 地址（必填）
 - `--cluster`：集群名（可选，未提供时将尝试从 Dashboard 获取）
 - `--password`：密码（可选）
-- `--require-slave`（可选）：默认为 False，表示无从节点时回退主节点；若为 True，表示仅从从节点读取，从节点则报错。
+- `--require-slave`（可选）：默认优先读取副本；当某个分片没有副本时回退到 master。设置该参数后强制只读副本，若任一分片无副本则失败。
 - `--batch-timestamp`：RFC3339 时间戳，默认当前时间
 
 ### 输出（output）
@@ -178,7 +178,7 @@ rdbinsight dump from-codis \
 ```bash
 ... into-parquet \
   --dir /path/to/output \
-  [--compression zstd|snappy|gzip] \
+  [--compression zstd|snappy|none|lz4] \
   [--max_run_rows 131072]
 ```
 

@@ -384,9 +384,13 @@ jobs:
 
           fs.writeFileSync("parser-benchmark-summary.md", summary);
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+          if (warningLines.length > 0) {
+            throw new Error("missing expected benchmark data");
+          }
           NODE
 
       - name: Upload aggregate benchmark summary
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: parser-benchmark-summary

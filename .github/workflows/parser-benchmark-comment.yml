@@ -276,6 +276,10 @@ jobs:
 
           fs.writeFileSync("/tmp/parser-benchmark-comment-body.md", body);
           fs.writeFileSync("/tmp/parser-benchmark-comment-row-count.txt", `${rows.length}\n`);
+          fs.writeFileSync(
+            "/tmp/parser-benchmark-comment-missing-data.txt",
+            warningLines.length > 0 ? "1\n" : "0\n",
+          );
           NODE
 
           comment_id="$(gh api \
@@ -303,5 +307,10 @@ jobs:
             --jq '.body | split("\n") | map(select(startswith("| `"))) | length')"
           if [ "$actual_rows" != "$expected_rows" ]; then
             echo "Benchmark comment row count mismatch: expected $expected_rows, got $actual_rows"
+            exit 1
+          fi
+
+          if [ "$(cat /tmp/parser-benchmark-comment-missing-data.txt)" != "0" ]; then
+            echo "Benchmark comment includes missing expected benchmark data."
             exit 1
           fi

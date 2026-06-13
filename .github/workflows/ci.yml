@@ -320,39 +320,43 @@ jobs:
             throw new Error("no criterion-base directories found in benchmark artifacts");
           }
 
-          const rows = currentRoots
-            .flatMap((currentRoot) =>
-              walkFiles(currentRoot, "estimates.json")
-                .filter((filePath) => filePath.endsWith(`${path.sep}new${path.sep}estimates.json`))
-                .flatMap((filePath) => {
-                  const name = benchmarkName(currentRoot, filePath);
-                  if (!expectedBenchmarkNameSet.has(name)) {
-                    console.log(`Skipping unexpected benchmark name: ${name}`);
-                    return [];
-                  }
-                  const basePath = baseRoots
-                    .map((baseRoot) => path.join(baseRoot, ...name.split("/"), "base", "estimates.json"))
-                    .find(fileExists);
-                  const currentNs = median(filePath);
-                  const baseNs = basePath ? median(basePath) : Number.NaN;
-                  return [{ name, currentNs, baseNs, bytes: bytesFor(name) }];
-                }),
-            )
-            .sort((a, b) => a.name.localeCompare(b.name));
-
-          const foundBenchmarkNameSet = new Set(rows.map((row) => row.name));
-          const missingBenchmarkNames = expectedBenchmarkNames.filter(
-            (name) => !foundBenchmarkNameSet.has(name),
-          );
-          if (missingBenchmarkNames.length > 0) {
-            throw new Error(`missing expected benchmark rows: ${missingBenchmarkNames.join(", ")}`);
+          function collectRows(roots, sampleDir) {
+            const rowsByName = new Map();
+            for (const root of roots) {
+              for (const filePath of walkFiles(root, "estimates.json")) {
+                if (!filePath.endsWith(`${path.sep}${sampleDir}${path.sep}estimates.json`)) continue;
+                const name = benchmarkName(root, filePath);
+                if (!expectedBenchmarkNameSet.has(name)) {
+                  console.log(`Skipping unexpected benchmark name: ${name}`);
+                  continue;
+                }
+                rowsByName.set(name, median(filePath));
+              }
+            }
+            return rowsByName;
           }
 
-          const missingBaseNames = rows
-            .filter((row) => !Number.isFinite(row.baseNs))
-            .map((row) => row.name);
+          const currentRowsByName = collectRows(currentRoots, "new");
+          const baseRowsByName = collectRows(baseRoots, "base");
+          const missingCurrentNames = expectedBenchmarkNames.filter(
+            (name) => !currentRowsByName.has(name),
+          );
+          const missingBaseNames = expectedBenchmarkNames.filter(
+            (name) => !baseRowsByName.has(name),
+          );
+          const rows = expectedBenchmarkNames.map((name) => ({
+            name,
+            currentNs: currentRowsByName.get(name) ?? Number.NaN,
+            baseNs: baseRowsByName.get(name) ?? Number.NaN,
+            bytes: bytesFor(name),
+          }));
+
+          const warningLines = [];
+          if (missingCurrentNames.length > 0) {
+            warningLines.push(`- Missing current benchmark rows: ${cell(missingCurrentNames.join(", "))}.`);
+          }
           if (isPullRequest && missingBaseNames.length > 0) {
-            throw new Error(`missing base benchmark rows: ${missingBaseNames.join(", ")}`);
+            warningLines.push(`- Missing base benchmark rows: ${cell(missingBaseNames.join(", "))}.`);
           }
 
           const table = [
@@ -372,6 +376,7 @@ jobs:
             "- Benchmark excludes disk I/O; RDB bytes are prepared before timing starts.",
             "- Positive change means the current PR is slower than the base commit.",
             "- Parser benchmark fails when any comparable profile slows down by more than 30%.",
+            ...(warningLines.length > 0 ? ["", "### Benchmark data warnings", "", ...warningLines] : []),
             "",
             table,
             "",

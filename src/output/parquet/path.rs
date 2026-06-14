@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
 use anyhow::Result;
 use time::{OffsetDateTime, UtcOffset};
@@ -19,6 +21,7 @@ pub fn format_batch_dir(datetime: OffsetDateTime) -> String {
 }
 
 /// Create temporary batch directory name with tmp_ prefix
+#[cfg(test)]
 pub fn make_tmp_batch_dir(name: &str) -> String {
     format!("tmp_{name}")
 }
@@ -51,6 +54,7 @@ pub fn sanitize_instance_filename(instance: &str) -> String {
 
 /// Construct run segment filename for an instance with 6-digit zero padding
 /// e.g. <instance>.000000.run for the first run
+#[cfg(test)]
 pub fn run_filename(instance_sanitized: &str, idx: u64) -> PathBuf {
     PathBuf::from(format!("{instance_sanitized}.{idx:06}.run.lz4"))
 }

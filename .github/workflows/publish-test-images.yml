@@ -55,7 +55,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./tests/common/Dockerfile
+          file: ./src/integration_tests/common/Dockerfile
           build-args: |
             REDIS_VERSION=${{ matrix.redis }}
           platforms: ${{ matrix.docker-platform }}

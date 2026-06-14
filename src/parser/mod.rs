@@ -2,9 +2,9 @@ pub mod core;
 pub mod error;
 pub mod model;
 pub mod rdb_file;
-pub mod record;
-pub mod runtime;
-pub mod trace;
+mod record;
+pub(crate) mod runtime;
+mod trace;
 
 pub use error::*;
 pub use model::*;

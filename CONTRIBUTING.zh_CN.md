@@ -21,7 +21,7 @@ just before_commit
 - Clippy 警告视为错误（`-D warnings`），请在提交前清零。
 - 避免不必要的复杂度，优先清晰、可读的实现；仅对复杂业务逻辑添加注释。
 - 尽量避免过度嵌套的代码，这在 Rust 初学者身上比较常见。
-- 在编写新集成测试前，请先查阅 `test/` 目录中的现有用例，并优先复用已有的测试基础设施。
+- 在编写新集成测试前，请先查阅 `src/integration_tests` 中的现有用例，并优先复用已有的测试基础设施。
 - 每次修改文档时，确保 `CONTRIBUTING.md` 与 `CONTRIBUTING.zh_CN.md` 内容保持一致；同样需保持 `README.md` 与 `README.zh_CN.md` 的一致性。
 
 ### 提交信息规范（Conventional Commits）

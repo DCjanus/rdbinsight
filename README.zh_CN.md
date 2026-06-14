@@ -131,4 +131,3 @@ ORDER BY key_cnt DESC;
 - [ ] 补充 Redis Cluster source 端到端集成测试，覆盖 `dump from-cluster` 的分片发现、副本选择与记录输出。
 - [ ] 补充真实 Codis Dashboard 与 Redis backend 的 Codis 集群集成测试，验证 Dashboard 发现流程与 Codis slot 元数据。
 - [ ] 为 Parquet 报告实现 DuckDB 降级路径，用于处理 RDBInsight 汇总元数据缺失或不兼容的 Parquet 文件。
-- [ ] 将集成测试迁移到 `rdbinsight` crate 内部，使内部模块尽可能收敛为 `pub(crate)`。

@@ -1,14 +1,13 @@
 use bytes::Bytes;
+use common::setup::RedisConfig;
 use futures_util::FutureExt;
-use rdbinsight::{
+
+use super::common;
+use crate::{
     helper::AnyResult,
     parser::{Item, core::raw::RDBStr},
     source::{RdbSourceConfig, SourceType, file::Config as FileSourceConfig},
 };
-
-mod common;
-
-use common::setup::RedisConfig;
 
 #[tokio::test]
 async fn file_source_stream_basic() -> AnyResult<()> {
@@ -45,7 +44,7 @@ async fn file_source_stream_basic() -> AnyResult<()> {
 
     match &items[0] {
         Item::StringRecord { key, .. } => {
-            assert_eq!(*key, RDBStr::Str(Bytes::from("k")));
+            assert_eq!(key, &RDBStr::Str(Bytes::from("k")));
         }
         other => panic!("unexpected item: {:?}", other),
     }

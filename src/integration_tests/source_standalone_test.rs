@@ -1,11 +1,10 @@
-use rdbinsight::{
+use common::setup::{RedisConfig, RedisInstance, RedisVariant};
+
+use super::common;
+use crate::{
     helper::AnyResult,
     source::{RdbSourceConfig, standalone::Config as StandaloneConfig},
 };
-
-use crate::common::setup::{RedisConfig, RedisInstance, RedisVariant};
-
-mod common;
 
 #[derive(Debug)]
 struct TestCase {

@@ -1,13 +1,12 @@
 #[cfg(test)]
 mod delimiter_reader_tests {
     use async_async_io::read::AsyncAsyncRead;
-    use rdbinsight::{
-        parser::core::ring_buffer::RingBuffer, source::redis_stream::DelimiterReader,
-    };
     use tokio::{
         io::AsyncWriteExt,
         net::{TcpListener, TcpStream},
     };
+
+    use crate::{parser::core::ring_buffer::RingBuffer, source::redis_stream::DelimiterReader};
 
     fn init_tracing() {
         let _ = tracing_subscriber::fmt()

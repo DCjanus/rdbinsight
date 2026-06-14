@@ -1,9 +1,10 @@
 use anyhow::{bail, ensure};
-use rdbinsight::{
+use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
+
+use crate::{
     helper::AnyResult,
     parser::{Item, RDBFileParser, core::buffer::Buffer, error::NeedMoreData},
 };
-use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 
 pub async fn collect_items(reader: impl AsyncRead + Unpin) -> AnyResult<Vec<Item>> {
     let mut reader = BufReader::new(reader);

@@ -2,14 +2,15 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use rdbinsight::{
+use tempfile::TempDir;
+use time::OffsetDateTime;
+
+use super::common;
+use crate::{
     config::ParquetCompression,
     output::{ChunkWriter, Output, parquet::ParquetOutput},
     source::{RdbSourceConfig, SourceType, standalone::Config as StandaloneConfig},
 };
-use tempfile::TempDir;
-use time::OffsetDateTime;
-mod common;
 
 /// Test the Parquet output functionality end-to_end using a live Redis via testcontainers
 #[tokio::test]
@@ -19,7 +20,7 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     let output_dir = temp_dir.path().to_path_buf();
 
     // Start a Redis instance using testcontainers (no snapshot to speed up and match other tests)
-    let redis = crate::common::setup::RedisConfig::default()
+    let redis = common::setup::RedisConfig::default()
         .with_snapshot(false)
         .build()
         .await?;
@@ -74,7 +75,8 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     let mut total_records = 0usize;
 
     use futures_util::StreamExt;
-    use rdbinsight::record::RecordStream;
+
+    use crate::record::RecordStream;
 
     let mut record_stream = RecordStream::new(stream, SourceType::Standalone);
     while let Some(record_result) = record_stream.next().await {
@@ -87,12 +89,10 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     Box::new(parquet_output).finalize_batch().await?;
 
     // Verify the output files exist
-    let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_ts);
+    let batch_dir_name = crate::output::parquet::path::format_batch_dir(batch_ts);
     let final_batch_dir = output_dir
-        .join(rdbinsight::output::parquet::path::cluster_dir_name(
-            cluster_name,
-        ))
-        .join(rdbinsight::output::parquet::path::final_batch_dir_name(
+        .join(crate::output::parquet::path::cluster_dir_name(cluster_name))
+        .join(crate::output::parquet::path::final_batch_dir_name(
             &batch_dir_name,
         ));
     assert!(
@@ -160,7 +160,8 @@ async fn test_parquet_compression_algorithms() -> Result<()> {
 
         // Create a simple test record
         use bytes::Bytes;
-        use rdbinsight::{
+
+        use crate::{
             parser::{core::raw::RDBStr, model::StringEncoding},
             record::{Record, RecordEncoding, RecordType},
         };
@@ -181,12 +182,10 @@ async fn test_parquet_compression_algorithms() -> Result<()> {
         Box::new(parquet_output).finalize_batch().await?;
 
         // Verify file exists
-        let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_ts);
+        let batch_dir_name = crate::output::parquet::path::format_batch_dir(batch_ts);
         let instance_file = output_dir
-            .join(rdbinsight::output::parquet::path::cluster_dir_name(
-                cluster_name,
-            ))
-            .join(rdbinsight::output::parquet::path::final_batch_dir_name(
+            .join(crate::output::parquet::path::cluster_dir_name(cluster_name))
+            .join(crate::output::parquet::path::final_batch_dir_name(
                 &batch_dir_name,
             ))
             .join("127.0.0.1-6379.parquet");
@@ -223,7 +222,8 @@ async fn test_multiple_instances_parquet() -> Result<()> {
 
     // Create test records for different instances
     use bytes::Bytes;
-    use rdbinsight::{
+
+    use crate::{
         parser::{core::raw::RDBStr, model::StringEncoding},
         record::{Record, RecordEncoding, RecordType},
     };
@@ -247,12 +247,10 @@ async fn test_multiple_instances_parquet() -> Result<()> {
     Box::new(parquet_output).finalize_batch().await?;
 
     // Verify all instance files exist
-    let batch_dir_name = rdbinsight::output::parquet::path::format_batch_dir(batch_ts);
+    let batch_dir_name = crate::output::parquet::path::format_batch_dir(batch_ts);
     let final_batch_dir = output_dir
-        .join(rdbinsight::output::parquet::path::cluster_dir_name(
-            cluster_name,
-        ))
-        .join(rdbinsight::output::parquet::path::final_batch_dir_name(
+        .join(crate::output::parquet::path::cluster_dir_name(cluster_name))
+        .join(crate::output::parquet::path::final_batch_dir_name(
             &batch_dir_name,
         ));
 

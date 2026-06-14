@@ -5,11 +5,11 @@ use tokio::io::AsyncRead;
 
 use crate::helper::AnyResult;
 
-pub mod cluster;
-pub mod codis;
-pub mod file;
-pub mod redis_stream;
-pub mod standalone;
+pub(crate) mod cluster;
+pub(crate) mod codis;
+pub(crate) mod file;
+pub(crate) mod redis_stream;
+pub(crate) mod standalone;
 
 /// Source type enum to differentiate between different Redis deployment types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

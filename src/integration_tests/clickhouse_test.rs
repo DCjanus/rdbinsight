@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use common::clickhouse::{ClickHouseInstance, start_clickhouse};
-use rdbinsight::helper::AnyResult;
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
     core::{IntoContainerPort, WaitFor, wait::HttpWaitStrategy},
@@ -9,7 +8,8 @@ use testcontainers::{
 use tracing::debug;
 use url::Url;
 
-mod common;
+use super::common;
+use crate::helper::AnyResult;
 
 // Kept for historical context; now handled in common::clickhouse
 #[allow(dead_code)]
@@ -217,7 +217,7 @@ async fn run_clickhouse_test(test_case: &TestCase) -> AnyResult {
         println!("Proxy URL: {}", proxy);
     }
 
-    let client_result = rdbinsight::config::ClickHouseConfig::new(clickhouse_url, false, proxy_url)
+    let client_result = crate::config::ClickHouseConfig::new(clickhouse_url, false, proxy_url)
         .and_then(|cfg| cfg.create_client());
 
     if test_case.expected_success {

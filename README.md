@@ -134,4 +134,3 @@ The query-based workflow removes the need for Redis-side commands, and similar t
 - [ ] Add end-to-end Redis Cluster source integration tests that exercise `dump from-cluster` shard discovery, replica selection, and record output.
 - [ ] Add Codis cluster integration tests with a real Codis dashboard and Redis backend to verify dashboard discovery and Codis slot metadata.
 - [ ] Implement a DuckDB-based fallback for Parquet reports when RDBInsight summary metadata is missing or incompatible.
-- [ ] Move integration tests into the `rdbinsight` crate so internal modules can be made `pub(crate)` where possible.

@@ -13,8 +13,6 @@ use crate::helper::AnyResult;
 
 #[derive(Debug, Deserialize)]
 pub struct CodisOverview {
-    pub version: String,
-    pub compile: String,
     pub model: Option<CodisModel>,
     pub stats: Option<CodisStats>,
 }
@@ -44,7 +42,6 @@ pub struct Group {
 pub struct GroupServer {
     #[serde(rename = "server")]
     pub addr: String, // "host:port"
-    pub datacenter: Option<String>,
     pub replica_group: bool,
 }
 

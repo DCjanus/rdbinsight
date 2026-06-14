@@ -1,9 +1,8 @@
-pub mod mapper;
-pub mod merge;
+pub(crate) mod mapper;
+pub(crate) mod merge;
 pub mod output;
-pub mod path;
-pub mod run_lz4;
-pub mod schema;
+pub(crate) mod path;
+pub(crate) mod run_lz4;
+pub(crate) mod schema;
 
 pub use output::{ParquetChunkWriter, ParquetOutput};
-pub use run_lz4::RunChunkReader;

@@ -22,7 +22,7 @@ This command formats code, runs static checks, and executes tests to ensure your
 - Treat Clippy warnings as errors (`-D warnings`) and make sure they are cleared before committing.
 - Prefer clear, readable implementations and avoid unnecessary complexity; add comments only for non-trivial business logic.
 - Avoid deep nesting, which is a common pitfall for Rust beginners.
-- Before writing new integration tests, first review the existing cases in the `test/` directory and prefer reusing the existing test infrastructure where possible.
+- Before writing new integration tests, first review the existing cases in `src/integration_tests` and prefer reusing the existing test infrastructure where possible.
 - When updating documentation, ensure `CONTRIBUTING.md` and `CONTRIBUTING.zh_CN.md` remain content-aligned; likewise keep `README.md` and `README.zh_CN.md` in sync.
 
 ### Conventional Commits
@@ -76,5 +76,4 @@ just down_dev  # stop
 ```bash
 just demo
 ```
-
 

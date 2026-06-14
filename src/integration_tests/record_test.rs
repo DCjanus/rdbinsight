@@ -1,17 +1,16 @@
 use std::collections::HashSet;
 
 use anyhow::{Result, anyhow};
+use common::setup::{RedisConfig, RedisVariant};
 use futures_util::StreamExt;
-use rdbinsight::{
+use redis::AsyncCommands;
+
+use super::common;
+use crate::{
     parser::core::raw::RDBStr,
     record::{Record, RecordEncoding, RecordStream, RecordType},
     source::{RdbSourceConfig, standalone::Config as StandaloneConfig},
 };
-use redis::AsyncCommands;
-
-mod common;
-
-use common::setup::{RedisConfig, RedisVariant};
 
 /// Test data structure to hold expected record information
 #[derive(Debug, Clone)]
@@ -68,8 +67,7 @@ async fn test_record_stream_integration() -> Result<()> {
     stream.as_mut().prepare().await?;
 
     // Create record stream that manages buffer internally
-    let mut record_stream =
-        RecordStream::new(Box::pin(stream), rdbinsight::source::SourceType::File);
+    let mut record_stream = RecordStream::new(Box::pin(stream), crate::source::SourceType::File);
     let mut records = Vec::new();
 
     // Read all records from the stream
@@ -125,8 +123,7 @@ async fn test_record_stream_array_output() -> Result<()> {
     let mut stream = streams.remove(0);
     stream.as_mut().prepare().await?;
 
-    let mut record_stream =
-        RecordStream::new(Box::pin(stream), rdbinsight::source::SourceType::File);
+    let mut record_stream = RecordStream::new(Box::pin(stream), crate::source::SourceType::File);
 
     let mut array_record = None;
     while let Some(record) = record_stream.next().await {
@@ -544,8 +541,7 @@ async fn test_record_stream_with_expiry() -> Result<()> {
     let mut streams = standalone_config.get_rdb_streams().await?;
     let mut stream = streams.remove(0);
     stream.as_mut().prepare().await?;
-    let mut record_stream =
-        RecordStream::new(Box::pin(stream), rdbinsight::source::SourceType::File);
+    let mut record_stream = RecordStream::new(Box::pin(stream), crate::source::SourceType::File);
     let mut records_with_expiry = Vec::new();
 
     // Collect all records
@@ -610,8 +606,7 @@ async fn test_record_stream_empty_database() -> Result<()> {
     let mut streams = standalone_config.get_rdb_streams().await?;
     let mut stream = streams.remove(0);
     stream.as_mut().prepare().await?;
-    let mut record_stream =
-        RecordStream::new(Box::pin(stream), rdbinsight::source::SourceType::File);
+    let mut record_stream = RecordStream::new(Box::pin(stream), crate::source::SourceType::File);
     let mut record_count = 0;
 
     // Try to read records from empty database

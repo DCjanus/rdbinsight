@@ -15,8 +15,15 @@ use std::{
 
 use anyhow::{Context, ensure};
 use bytes::Bytes;
+use common::{
+    config_set_many, seed_hash, seed_zset,
+    setup::{RedisConfig, RedisVariant},
+    trace, utils,
+};
 use futures_util::FutureExt;
-use rdbinsight::{
+
+use super::common;
+use crate::{
     helper::AnyResult,
     parser::{
         core::raw::RDBStr,
@@ -25,14 +32,6 @@ use rdbinsight::{
             ZSetEncoding,
         },
     },
-};
-
-mod common;
-
-use common::{
-    config_set_many, seed_hash, seed_zset,
-    setup::{RedisConfig, RedisVariant},
-    trace, utils,
 };
 
 #[tokio::test]

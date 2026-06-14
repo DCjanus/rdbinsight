@@ -1,20 +1,18 @@
 use bytes::Bytes;
-use common::clickhouse::start_clickhouse;
-use rdbinsight::{
+use common::{clickhouse::start_clickhouse, init_log_for_debug};
+use time::OffsetDateTime;
+use tracing::info;
+
+use super::common;
+use crate::{
     config::ClickHouseConfig,
     output::{ChunkWriter, Output, clickhouse::ClickHouseOutput},
     record::{Record, RecordEncoding, RecordType},
     report::ch::{ClickHouseReportProvider, get_latest_batch_for_cluster},
 };
-use time::OffsetDateTime;
-use tracing::info;
-
-use crate::common::init_log_for_debug;
-
-mod common;
 
 fn make_records() -> Vec<Record> {
-    use rdbinsight::parser::{core::raw::RDBStr, model::StringEncoding};
+    use crate::parser::{core::raw::RDBStr, model::StringEncoding};
 
     vec![
         Record::builder()
@@ -38,7 +36,7 @@ fn make_records() -> Vec<Record> {
             .key(RDBStr::Str(Bytes::from("hash:1")))
             .r#type(RecordType::Hash)
             .encoding(RecordEncoding::Hash(
-                rdbinsight::parser::model::HashEncoding::Raw,
+                crate::parser::model::HashEncoding::Raw,
             ))
             .rdb_size(300)
             .member_count(Some(2))
@@ -87,7 +85,7 @@ async fn test_report_generate_data_with_clickhouse() {
         ClickHouseReportProvider::new(ch_config.clone(), cluster.clone(), batch_str.clone())
             .await
             .unwrap();
-    let data = rdbinsight::report::model::ReportDataProvider::generate_report_data(&querier)
+    let data = crate::report::model::ReportDataProvider::generate_report_data(&querier)
         .await
         .unwrap();
 
@@ -159,7 +157,7 @@ async fn test_report_generate_data_with_empty_cluster() {
         ClickHouseReportProvider::new(ch_config.clone(), cluster.clone(), batch_str.clone())
             .await
             .unwrap();
-    let data = rdbinsight::report::model::ReportDataProvider::generate_report_data(&querier)
+    let data = crate::report::model::ReportDataProvider::generate_report_data(&querier)
         .await
         .unwrap();
 

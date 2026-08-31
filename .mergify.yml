@@ -1,0 +1,11 @@
+merge_queue:
+  mode: serial
+  max_parallel_checks: 2
+  status_comments: outcomes
+
+queue_rules:
+  - name: master
+    queue_conditions:
+      - base = master
+    merge_method: squash
+    batch_size: 1

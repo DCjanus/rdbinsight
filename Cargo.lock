@@ -2259,6 +2259,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lz4_flex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
 name = "lzf"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3076,7 +3085,7 @@ dependencies = [
  "http",
  "hyper-util",
  "itertools 0.14.0",
- "lz4_flex 0.13.1",
+ "lz4_flex 0.14.0",
  "lzf",
  "memchr",
  "mimalloc",

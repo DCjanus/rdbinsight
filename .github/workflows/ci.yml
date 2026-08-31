@@ -56,7 +56,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Enable sccache for Rust builds
         run: |
@@ -129,7 +129,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Enable sccache for Rust builds
         run: |

@@ -3090,7 +3090,7 @@ dependencies = [
  "http",
  "hyper-util",
  "itertools 0.14.0",
- "lz4_flex 0.13.1",
+ "lz4_flex 0.14.0",
  "lzf",
  "memchr",
  "mimalloc",

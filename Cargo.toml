@@ -59,7 +59,7 @@ tracing-subscriber = { version = "0.3.20", features = [
 ] }
 typed-builder = "0.23.0"
 url = { version = "2.5.7", features = ["serde"] }
-wincode = { version = "0.5.5", features = ["derive"] }
+wincode = { version = "0.6.1", features = ["derive"] }
 
 [build-dependencies]
 shadow-rs = "2.0.0"

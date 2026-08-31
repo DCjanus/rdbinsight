@@ -5,6 +5,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    rebase-strategy: disabled
     assignees:
       - DCjanus
 
@@ -12,5 +13,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    rebase-strategy: disabled
     assignees:
       - DCjanus

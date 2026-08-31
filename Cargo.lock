@@ -3069,7 +3069,7 @@ dependencies = [
  "async_async_io",
  "axum",
  "backon",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "clap",
  "clap_complete",

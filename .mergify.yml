@@ -7,5 +7,6 @@ queue_rules:
   - name: master
     queue_conditions:
       - base = master
+    branch_protection_injection_mode: merge
     merge_method: squash
     batch_size: 1

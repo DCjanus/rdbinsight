@@ -13,6 +13,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      patch-updates:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - patch
     rebase-strategy: disabled
     assignees:
       - DCjanus

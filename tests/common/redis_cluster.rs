@@ -115,7 +115,7 @@ fn startup_script(ports: &[u16]) -> String {
     for port in ports {
         script.push_str(&format!(
             "mkdir -p /data/{port}\n\
-             redis-server --port {port} --bind 0.0.0.0 --protected-mode no \\\n+               --cluster-enabled yes --cluster-config-file /data/{port}/nodes.conf \\\n+               --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 \\\n+               --cluster-announce-port {port} --cluster-announce-bus-port {} \\\n+               --appendonly no --save '' --daemonize yes --dir /data/{port} \\\n+               --logfile /data/{port}/redis.log\n",
+             redis-server --port {port} --bind 0.0.0.0 --protected-mode no \\\n               --cluster-enabled yes --cluster-config-file /data/{port}/nodes.conf \\\n               --cluster-node-timeout 1000 --cluster-announce-ip 127.0.0.1 \\\n               --cluster-announce-port {port} --cluster-announce-bus-port {} \\\n               --appendonly no --save '' --daemonize yes --dir /data/{port} \\\n               --logfile /data/{port}/redis.log\n",
             port + 10_000
         ));
     }

@@ -13,8 +13,8 @@ use testcontainers::{
 
 const GROUP_COUNT: u16 = 2;
 const PORT_COUNT: u16 = 1 + GROUP_COUNT * 2;
-const PORT_RANGE_START: u16 = 60_000;
-const PORT_RANGE_END: u16 = 64_000;
+const PORT_RANGE_START: u16 = 10_000;
+const PORT_RANGE_END: u16 = 19_000;
 
 pub struct CodisInstance {
     _codis_container: ContainerAsync<GenericImage>,

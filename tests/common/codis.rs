@@ -61,7 +61,7 @@ impl CodisInstance {
                 "-c",
                 codis_startup_script(dashboard_port, &master_ports, &replica_ports).as_str(),
             ])
-            .with_mapped_port(dashboard_port, dashboard_port.tcp());
+            .with_network("host");
         let codis_container = codis_image
             .start()
             .await

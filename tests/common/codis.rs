@@ -95,6 +95,7 @@ impl CodisInstance {
 
     async fn wait_until_ready(&self) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(30);
+        let dashboard_url = format!("{}/topom", self.dashboard_url());
         loop {
             let mut ready = true;
             for port in self.master_ports.iter().chain(&self.replica_ports) {
@@ -110,7 +111,21 @@ impl CodisInstance {
                     break;
                 }
             }
-            if ready {
+            let dashboard_ready = if ready {
+                match reqwest::get(&dashboard_url).await {
+                    Ok(response) => match response.text().await {
+                        Ok(body) => self
+                            .replica_ports
+                            .iter()
+                            .all(|port| body.contains(&format!("127.0.0.1:{port}"))),
+                        Err(_) => false,
+                    },
+                    Err(_) => false,
+                }
+            } else {
+                false
+            };
+            if ready && dashboard_ready {
                 return Ok(());
             }
             ensure!(

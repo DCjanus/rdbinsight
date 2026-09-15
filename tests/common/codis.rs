@@ -3,11 +3,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail};
 use redis::Client;
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
-    core::{IntoContainerPort, WaitFor},
+    core::{ExecCommand, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
 
@@ -96,6 +96,7 @@ impl CodisInstance {
     async fn wait_until_ready(&self) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(30);
         let dashboard_url = format!("{}/topom", self.dashboard_url());
+        let mut last_dashboard_body = String::new();
         loop {
             let mut ready = true;
             for port in self.master_ports.iter().chain(&self.replica_ports) {
@@ -114,10 +115,14 @@ impl CodisInstance {
             let dashboard_ready = if ready {
                 match reqwest::get(&dashboard_url).await {
                     Ok(response) => match response.text().await {
-                        Ok(body) => self
-                            .replica_ports
-                            .iter()
-                            .all(|port| body.contains(&format!("127.0.0.1:{port}"))),
+                        Ok(body) => {
+                            let ready = self
+                                .replica_ports
+                                .iter()
+                                .all(|port| body.contains(&format!("127.0.0.1:{port}")));
+                            last_dashboard_body = body;
+                            ready
+                        }
                         Err(_) => false,
                     },
                     Err(_) => false,
@@ -128,11 +133,33 @@ impl CodisInstance {
             if ready && dashboard_ready {
                 return Ok(());
             }
-            ensure!(
-                Instant::now() < deadline,
-                "Codis servers did not become ready within 30 seconds"
-            );
+            if Instant::now() >= deadline {
+                let diagnostics = self.control_plane_diagnostics().await;
+                bail!(
+                    "Codis servers did not become ready within 30 seconds\n\
+                     dashboard response: {last_dashboard_body}\n\
+                     codis-admin output:\n{diagnostics}"
+                );
+            }
             tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    async fn control_plane_diagnostics(&self) -> String {
+        let result = self
+            ._codis_container
+            .exec(ExecCommand::new([
+                "sh",
+                "-c",
+                "cat /tmp/rdbinsight-codis/admin.log 2>&1 || true",
+            ]))
+            .await;
+        let Ok(mut result) = result else {
+            return format!("failed to collect codis-admin output: {result:?}");
+        };
+        match result.stdout_to_vec().await {
+            Ok(output) => String::from_utf8_lossy(&output).into_owned(),
+            Err(error) => format!("failed to read codis-admin output: {error}"),
         }
     }
 }
@@ -207,9 +234,9 @@ fn codis_startup_script(dashboard_port: u16, masters: &[u16], replicas: &[u16]) 
     for (index, (master, replica)) in masters.iter().zip(replicas).enumerate() {
         let group = index + 1;
         script.push_str(&format!(
-            "/codis/bin/codis-admin --dashboard=127.0.0.1:{dashboard_port} --create-group --gid={group}\n\
-             /codis/bin/codis-admin --dashboard=127.0.0.1:{dashboard_port} --group-add --gid={group} --addr=127.0.0.1:{master} --datacenter=test\n\
-             /codis/bin/codis-admin --dashboard=127.0.0.1:{dashboard_port} --group-add --gid={group} --addr=127.0.0.1:{replica} --datacenter=test\n"
+            "/codis/bin/codis-admin --dashboard=127.0.0.1:{dashboard_port} --create-group --gid={group} >> /tmp/rdbinsight-codis/admin.log 2>&1\n\
+             /codis/bin/codis-admin --dashboard=127.0.0.1:{dashboard_port} --group-add --gid={group} --addr=127.0.0.1:{master} --datacenter=test >> /tmp/rdbinsight-codis/admin.log 2>&1\n\
+             /codis/bin/codis-admin --dashboard=127.0.0.1:{dashboard_port} --group-add --gid={group} --addr=127.0.0.1:{replica} --datacenter=test >> /tmp/rdbinsight-codis/admin.log 2>&1\n"
         ));
     }
 

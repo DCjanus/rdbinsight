@@ -32,9 +32,9 @@ impl CodisInstance {
         let replica_ports = vec![ports[2]];
 
         let backend_image_repo = std::env::var("RDBINSIGHT_TEST_CODIS_SERVER_IMAGE_REPO")
-            .unwrap_or_else(|_| "zeusro/codis".to_string());
+            .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/codis-server".to_string());
         let backend_image_tag = std::env::var("RDBINSIGHT_TEST_CODIS_SERVER_IMAGE_TAG")
-            .unwrap_or_else(|_| "3.2".to_string());
+            .unwrap_or_else(|_| "3.2.2".to_string());
         let mut backend_image = GenericImage::new(backend_image_repo, backend_image_tag)
             .with_wait_for(WaitFor::message_on_stdout(
                 "rdbinsight codis backends ready",

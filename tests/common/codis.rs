@@ -33,8 +33,8 @@ impl CodisInstance {
 
         let backend_image_repo = std::env::var("RDBINSIGHT_TEST_PIKA_IMAGE_REPO")
             .unwrap_or_else(|_| "pikadb/pika".to_string());
-        let backend_image_tag =
-            std::env::var("RDBINSIGHT_TEST_PIKA_IMAGE_TAG").unwrap_or_else(|_| "3.6.0".to_string());
+        let backend_image_tag = std::env::var("RDBINSIGHT_TEST_PIKA_IMAGE_TAG")
+            .unwrap_or_else(|_| "v3.5.6".to_string());
         let mut backend_image = GenericImage::new(backend_image_repo, backend_image_tag)
             .with_wait_for(WaitFor::message_on_stdout(
                 "rdbinsight codis backends ready",
@@ -219,7 +219,6 @@ fn pika_server_command(port: u16, master: Option<u16>) -> String {
            -e 's|^dump-path :.*|dump-path : /tmp/rdbinsight-codis/{port}/dump/|' \
            -e 's|^db-sync-path :.*|db-sync-path : /tmp/rdbinsight-codis/{port}/dbsync/|' \
            -e 's|^pidfile :.*|pidfile : /tmp/rdbinsight-codis/{port}/pika.pid|' \
-           -e 's|^instance-mode :.*|instance-mode : sharding|' \
            /tmp/rdbinsight-codis/{port}.conf\n\
          echo 'daemonize : no' >> /tmp/rdbinsight-codis/{port}.conf\n\
          {replication}\

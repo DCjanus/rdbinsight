@@ -5,6 +5,7 @@ use redis::aio::MultiplexedConnection as AsyncConnection;
 use tracing_subscriber::EnvFilter;
 
 pub mod clickhouse;
+pub mod redis_cluster;
 pub mod setup;
 pub mod trace;
 pub mod utils;

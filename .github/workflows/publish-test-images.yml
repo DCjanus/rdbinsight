@@ -26,7 +26,6 @@ permissions:
 jobs:
   build-and-push:
     if: ${{ inputs.publish_redis }}
-    if: ${{ github.event_name == 'workflow_dispatch' }}
     name: Build (${{ matrix.platform }} / redis ${{ matrix.redis }})
     strategy:
       fail-fast: false

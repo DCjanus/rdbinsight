@@ -131,6 +131,7 @@ impl CodisInstance {
     async fn backend_diagnostics(&self) -> String {
         let command = "ps aux; find /tmp/rdbinsight-codis -maxdepth 3 -type f -print; \
                        for file in /tmp/rdbinsight-codis/*/startup.log \
+                                   /tmp/rdbinsight-codis/*/exit-code \
                                    /tmp/rdbinsight-codis/*/log/*; do \
                          if [ -f \"$file\" ]; then echo \"=== $file\"; tail -100 \"$file\"; fi; \
                        done";
@@ -194,7 +195,7 @@ fn pika_server_command(port: u16, master: Option<u16>) -> String {
            /tmp/rdbinsight-codis/{port}/dbsync\n\
          cp /pika/conf/pika.conf /tmp/rdbinsight-codis/{port}.conf\n\
          sed -i \
-           -e 's|^#\\?daemonize :.*|daemonize : no|' \
+           -e '/daemonize/d' \
            -e 's|^port :.*|port : {port}|' \
            -e 's|^log-path :.*|log-path : /tmp/rdbinsight-codis/{port}/log/|' \
            -e 's|^db-path :.*|db-path : /tmp/rdbinsight-codis/{port}/db/|' \
@@ -203,9 +204,11 @@ fn pika_server_command(port: u16, master: Option<u16>) -> String {
            -e 's|^pidfile :.*|pidfile : /tmp/rdbinsight-codis/{port}/pika.pid|' \
            -e 's|^instance-mode :.*|instance-mode : sharding|' \
            /tmp/rdbinsight-codis/{port}.conf\n\
+         echo 'daemonize : no' >> /tmp/rdbinsight-codis/{port}.conf\n\
          {replication}\
-         /pika/bin/pika -c /tmp/rdbinsight-codis/{port}.conf \
-           >> /tmp/rdbinsight-codis/{port}/startup.log 2>&1 &\n"
+         (set +e; /pika/bin/pika -c /tmp/rdbinsight-codis/{port}.conf \
+           >> /tmp/rdbinsight-codis/{port}/startup.log 2>&1; \
+           echo $? > /tmp/rdbinsight-codis/{port}/exit-code) &\n"
     )
 }
 

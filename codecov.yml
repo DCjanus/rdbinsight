@@ -42,4 +42,4 @@ component_management:
         - "src/report/**"
       statuses:
         - type: project
-          target: 70
+          target: 75

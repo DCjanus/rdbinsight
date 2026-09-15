@@ -168,20 +168,17 @@ fn redis_server_command(port: u16, master: Option<u16>) -> String {
 }
 
 fn codis_startup_script(dashboard_port: u16, masters: &[u16], replicas: &[u16]) -> String {
-    let dashboard_config = format!(
-        "coordinator_name = \"filesystem\"\n\
-         coordinator_addr = \"/tmp/rdbinsight-codis/rootfs\"\n\
-         product_name = \"rdbinsight-codis-e2e\"\n\
-         product_auth = \"\"\n\
-         admin_addr = \"0.0.0.0:{dashboard_port}\"\n\
-         max_slot_num = 1024\n\
-         migration_method = \"semi-async\"\n\
-         migration_timeout = \"30s\"\n"
-    );
     let mut script = format!(
         "set -eu\n\
          mkdir -p /tmp/rdbinsight-codis/rootfs\n\
-         printf '%s' '{dashboard_config}' > /tmp/rdbinsight-codis/dashboard.toml\n\
+         /codis/bin/codis-dashboard --default-config > /tmp/rdbinsight-codis/dashboard.toml\n\
+         sed -i \
+           -e 's|^coordinator_name =.*|coordinator_name = \"filesystem\"|' \
+           -e 's|^coordinator_addr =.*|coordinator_addr = \"/tmp/rdbinsight-codis/rootfs\"|' \
+           -e 's|^product_name =.*|product_name = \"rdbinsight-codis-e2e\"|' \
+           -e 's|^product_auth =.*|product_auth = \"\"|' \
+           -e 's|^admin_addr =.*|admin_addr = \"0.0.0.0:{dashboard_port}\"|' \
+           /tmp/rdbinsight-codis/dashboard.toml\n\
          /codis/bin/codis-dashboard -c /tmp/rdbinsight-codis/dashboard.toml &\n\
          until /codis/bin/codis-admin --dashboard=127.0.0.1:{dashboard_port} model >/dev/null 2>&1; do sleep 0.1; done\n"
     );

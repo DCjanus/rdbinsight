@@ -31,16 +31,18 @@ impl CodisInstance {
         let master_ports = vec![ports[1]];
         let replica_ports = vec![ports[2]];
 
-        let backend_image_repo = std::env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
-            .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
-        let mut backend_image = GenericImage::new(backend_image_repo, "8.0.5".to_string())
+        let backend_image_repo = std::env::var("RDBINSIGHT_TEST_PIKA_IMAGE_REPO")
+            .unwrap_or_else(|_| "pikadb/pika".to_string());
+        let backend_image_tag =
+            std::env::var("RDBINSIGHT_TEST_PIKA_IMAGE_TAG").unwrap_or_else(|_| "3.6.0".to_string());
+        let mut backend_image = GenericImage::new(backend_image_repo, backend_image_tag)
             .with_wait_for(WaitFor::message_on_stdout(
                 "rdbinsight codis backends ready",
             ))
             .with_cmd([
                 "sh",
                 "-c",
-                redis_startup_script(&master_ports, &replica_ports).as_str(),
+                pika_startup_script(&master_ports, &replica_ports).as_str(),
             ]);
         for port in master_ports.iter().chain(&replica_ports) {
             backend_image = backend_image.with_mapped_port(*port, port.tcp());
@@ -48,7 +50,7 @@ impl CodisInstance {
         let backend_container = backend_image
             .start()
             .await
-            .context("start Codis Redis backends")?;
+            .context("start Codis Pika backends")?;
 
         let codis_image_repo = std::env::var("RDBINSIGHT_TEST_CODIS_IMAGE_REPO")
             .unwrap_or_else(|_| "pikadb/codis".to_string());
@@ -187,31 +189,41 @@ fn reserve_contiguous_ports() -> Result<Vec<u16>> {
     anyhow::bail!("failed to reserve three contiguous ports for Codis")
 }
 
-fn redis_startup_script(masters: &[u16], replicas: &[u16]) -> String {
+fn pika_startup_script(masters: &[u16], replicas: &[u16]) -> String {
     let mut script = "set -eu\nmkdir -p /tmp/rdbinsight-codis\n".to_string();
     for (master, replica) in masters.iter().zip(replicas) {
-        script.push_str(&redis_server_command(*master, None));
-        script.push_str(&redis_server_command(*replica, Some(*master)));
-        script.push_str(&format!(
-            "until redis-cli -p {master} ping >/dev/null 2>&1; do sleep 0.1; done\n\
-             until redis-cli -p {replica} ping >/dev/null 2>&1; do sleep 0.1; done\n"
-        ));
+        script.push_str(&pika_server_command(*master, None));
+        script.push_str(&pika_server_command(*replica, Some(*master)));
     }
     script.push_str("echo 'rdbinsight codis backends ready'\ntail -f /dev/null\n");
     script
 }
 
-fn redis_server_command(port: u16, master: Option<u16>) -> String {
+fn pika_server_command(port: u16, master: Option<u16>) -> String {
     let replication = master
-        .map(|master| format!("--replicaof 127.0.0.1 {master}"))
+        .map(|master| {
+            format!("echo 'slaveof : 127.0.0.1:{master}' >> /tmp/rdbinsight-codis/{port}.conf\n")
+        })
         .unwrap_or_default();
     format!(
-        "mkdir -p /tmp/rdbinsight-codis/{port}\n\
-         redis-server --port {port} --bind 0.0.0.0 --protected-mode no \
-           --appendonly no --save '' --daemonize yes \
-           --dir /tmp/rdbinsight-codis/{port} \
-           --pidfile /tmp/rdbinsight-codis/{port}/redis.pid \
-           --logfile /tmp/rdbinsight-codis/{port}/redis.log {replication}\n"
+        "mkdir -p /tmp/rdbinsight-codis/{port}/log \
+           /tmp/rdbinsight-codis/{port}/db \
+           /tmp/rdbinsight-codis/{port}/dump \
+           /tmp/rdbinsight-codis/{port}/dbsync\n\
+         cp /pika/conf/pika.conf /tmp/rdbinsight-codis/{port}.conf\n\
+         sed -i \
+           -e '/daemonize/d' \
+           -e 's|^port :.*|port : {port}|' \
+           -e 's|^log-path :.*|log-path : /tmp/rdbinsight-codis/{port}/log/|' \
+           -e 's|^db-path :.*|db-path : /tmp/rdbinsight-codis/{port}/db/|' \
+           -e 's|^dump-path :.*|dump-path : /tmp/rdbinsight-codis/{port}/dump/|' \
+           -e 's|^db-sync-path :.*|db-sync-path : /tmp/rdbinsight-codis/{port}/dbsync/|' \
+           -e 's|^pidfile :.*|pidfile : /tmp/rdbinsight-codis/{port}/pika.pid|' \
+           -e 's|^instance-mode :.*|instance-mode : sharding|' \
+           /tmp/rdbinsight-codis/{port}.conf\n\
+         echo 'daemonize : no' >> /tmp/rdbinsight-codis/{port}.conf\n\
+         {replication}\
+         /pika/bin/pika -c /tmp/rdbinsight-codis/{port}.conf &\n"
     )
 }
 

@@ -13,7 +13,10 @@ use testcontainers::{
 
 const NODE_COUNT: u16 = 6;
 const PORT_RANGE_START: u16 = 20_000;
-const PORT_RANGE_END: u16 = 40_000;
+// Keep fixed Redis Cluster ports below Linux's default ephemeral port range.
+// Docker assigns dynamic host ports from that range to the other concurrent
+// Testcontainers, so overlapping it creates a race between probing and bind.
+const PORT_RANGE_END: u16 = 30_000;
 
 pub struct RedisClusterInstance {
     pub container: ContainerAsync<GenericImage>,
@@ -90,7 +93,8 @@ impl RedisClusterInstance {
 
 fn reserve_contiguous_ports() -> Result<Vec<u16>> {
     for _ in 0..100 {
-        let base = PORT_RANGE_START + rand::random::<u16>() % (PORT_RANGE_END - PORT_RANGE_START);
+        let base = PORT_RANGE_START
+            + rand::random::<u16>() % (PORT_RANGE_END - PORT_RANGE_START - NODE_COUNT);
         let mut listeners = Vec::with_capacity(NODE_COUNT as usize);
         let mut ports = Vec::with_capacity(NODE_COUNT as usize);
         for offset in 0..NODE_COUNT {

@@ -5,6 +5,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use rdbinsight::{
     config::ParquetCompression,
     output::{ChunkWriter, Output, parquet::ParquetOutput},
+    report::{model::ReportDataProvider, parquet::ParquetReportProvider},
     source::{RdbSourceConfig, SourceType, standalone::Config as StandaloneConfig},
 };
 use tempfile::TempDir;
@@ -13,7 +14,7 @@ mod common;
 
 /// Test the Parquet output functionality end-to_end using a live Redis via testcontainers
 #[tokio::test]
-async fn test_parquet_output_end_to_end() -> Result<()> {
+async fn test_parquet_output_and_report_end_to_end() -> Result<()> {
     // Create a temporary directory for output
     let temp_dir = TempDir::new()?;
     let output_dir = temp_dir.path().to_path_buf();
@@ -72,6 +73,7 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     stream.as_mut().prepare().await?;
 
     let mut total_records = 0usize;
+    let mut records = Vec::new();
 
     use futures_util::StreamExt;
     use rdbinsight::record::RecordStream;
@@ -80,10 +82,19 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     while let Some(record_result) = record_stream.next().await {
         let record = record_result?;
         total_records += 1;
-        writer.write_record(record).await?;
+        writer.write_record(record.clone()).await?;
+        records.push(record);
     }
 
     writer.finalize_instance().await?;
+
+    let second_instance = "replica.example:6380";
+    let mut second_writer = parquet_output.create_writer(second_instance).await?;
+    for record in records {
+        second_writer.write_record(record).await?;
+    }
+    second_writer.finalize_instance().await?;
+
     Box::new(parquet_output).finalize_batch().await?;
 
     // Verify the output files exist
@@ -118,8 +129,62 @@ async fn test_parquet_output_end_to_end() -> Result<()> {
     assert!(total_rows > 0, "Should have at least one record");
     assert_eq!(total_rows, total_records, "Record count should match");
 
+    let second_instance_file = final_batch_dir.join("replica.example-6380.parquet");
+    assert!(
+        second_instance_file.exists(),
+        "Second instance parquet file should exist"
+    );
+
+    let report_provider =
+        ParquetReportProvider::new(output_dir, cluster_name.to_string(), batch_dir_name);
+    let report = report_provider.generate_report_data().await?;
+
+    assert_eq!(report.cluster, cluster_name);
+    let report_batch = OffsetDateTime::parse(
+        &report.batch,
+        &time::format_description::well_known::Rfc3339,
+    )?;
+    assert_eq!(report_batch, batch_ts);
+
+    assert_eq!(report.db_aggregates.len(), 1);
+    assert_eq!(report.db_aggregates[0].db, 0);
+    assert_eq!(
+        report.db_aggregates[0].key_count,
+        (total_records * 2) as u64
+    );
+
+    assert_eq!(report.type_aggregates.len(), 1);
+    assert_eq!(report.type_aggregates[0].data_type, "string");
+    assert_eq!(
+        report.type_aggregates[0].key_count,
+        (total_records * 2) as u64
+    );
+
+    let mut instances = report
+        .instance_aggregates
+        .iter()
+        .map(|aggregate| (aggregate.instance.as_str(), aggregate.key_count))
+        .collect::<Vec<_>>();
+    instances.sort_unstable();
+    assert_eq!(instances, vec![
+        (instance, total_records as u64),
+        (second_instance, total_records as u64),
+    ]);
+
+    assert_eq!(report.top_keys.len(), 100);
+    assert!(report.top_keys.windows(2).all(|keys| {
+        keys[0].rdb_size > keys[1].rdb_size
+            || (keys[0].rdb_size == keys[1].rdb_size && keys[0].key <= keys[1].key)
+    }));
+    assert!(report.top_prefixes.iter().any(|prefix| {
+        prefix.prefix.as_ref() == b"str_key_" && prefix.key_count == (total_records * 2) as u64
+    }));
+    assert!(report.cluster_issues.big_keys.is_empty());
+    assert!(!report.cluster_issues.codis_slot_skew);
+    assert!(!report.cluster_issues.redis_cluster_slot_skew);
+
     println!(
-        "Test passed: processed {total_records} records to {}",
+        "Test passed: processed {total_records} records per instance and generated a report from {}",
         instance_file.display()
     );
 

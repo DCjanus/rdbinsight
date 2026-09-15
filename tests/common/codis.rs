@@ -194,6 +194,7 @@ fn pika_server_command(port: u16, master: Option<u16>) -> String {
            /tmp/rdbinsight-codis/{port}/dbsync\n\
          cp /pika/conf/pika.conf /tmp/rdbinsight-codis/{port}.conf\n\
          sed -i \
+           -e 's|^#\\?daemonize :.*|daemonize : no|' \
            -e 's|^port :.*|port : {port}|' \
            -e 's|^log-path :.*|log-path : /tmp/rdbinsight-codis/{port}/log/|' \
            -e 's|^db-path :.*|db-path : /tmp/rdbinsight-codis/{port}/db/|' \

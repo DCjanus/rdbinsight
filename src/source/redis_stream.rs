@@ -593,45 +593,53 @@ async fn perform_rdb_handshake_internal(
     let response = read_response(buf, stream, Duration::from_secs(1))
         .await
         .context("read replconf response")?;
-    ensure!(
-        response.as_bytes() == Some(b"OK"),
-        "unexpected response from replconf: {:?}",
-        response
-    );
-    debug!(
-        operation = "redis_replconf_eof_success",
-        "REPLCONF capa eof successful"
-    );
-
-    debug!(
-        operation = "redis_replconf_rdb_only_start",
-        "Sending REPLCONF rdb-only 1 command"
-    );
-    send_command(stream, "REPLCONF rdb-only 1")
-        .await
-        .context("send replconf rdb-only command")?;
-    let response = read_response(buf, stream, Duration::from_secs(1))
-        .await
-        .context("read replconf rdb-only response")?;
     match response {
         OwnedFrame::SimpleString(s) if s == b"OK" => {
-            parser_trace!("replconf.rdb_only.supported");
             debug!(
-                operation = "redis_replconf_rdb_only",
-                supported = true,
-                "Master supports rdb-only option"
+                operation = "redis_replconf_eof_success",
+                "REPLCONF capa eof successful"
             );
-        }
-        OwnedFrame::Error(s) if s.starts_with("ERR Unrecognized REPLCONF option") => {
-            parser_trace!("replconf.rdb_only.unsupported");
+
             debug!(
-                operation = "redis_replconf_rdb_only",
-                supported = false,
+                operation = "redis_replconf_rdb_only_start",
+                "Sending REPLCONF rdb-only 1 command"
+            );
+            send_command(stream, "REPLCONF rdb-only 1")
+                .await
+                .context("send replconf rdb-only command")?;
+            let response = read_response(buf, stream, Duration::from_secs(1))
+                .await
+                .context("read replconf rdb-only response")?;
+            match response {
+                OwnedFrame::SimpleString(s) if s == b"OK" => {
+                    parser_trace!("replconf.rdb_only.supported");
+                    debug!(
+                        operation = "redis_replconf_rdb_only",
+                        supported = true,
+                        "Master supports rdb-only option"
+                    );
+                }
+                OwnedFrame::Error(s) if s.starts_with("ERR Unrecognized REPLCONF option") => {
+                    parser_trace!("replconf.rdb_only.unsupported");
+                    debug!(
+                        operation = "redis_replconf_rdb_only",
+                        supported = false,
+                        error = ?s,
+                        "Master does not support rdb-only option (non-critical)"
+                    );
+                }
+                _ => anyhow::bail!("unexpected response from replconf rdb-only: {:?}", response),
+            }
+        }
+        OwnedFrame::Error(s) if s.to_ascii_lowercase().starts_with("err unknown command") => {
+            parser_trace!("replconf.unsupported");
+            debug!(
+                operation = "redis_replconf_unsupported",
                 error = ?s,
-                "Master does not support rdb-only option (non-critical)"
+                "Master does not support REPLCONF; continuing with PSYNC"
             );
         }
-        _ => anyhow::bail!("unexpected response from replconf rdb-only: {:?}", response),
+        _ => anyhow::bail!("unexpected response from replconf: {:?}", response),
     }
 
     debug!(

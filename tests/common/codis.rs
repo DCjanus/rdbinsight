@@ -201,13 +201,10 @@ fn codis_startup_script(dashboard_port: u16, masters: &[u16], replicas: &[u16]) 
 
     for (index, (master, replica)) in masters.iter().zip(replicas).enumerate() {
         let group = index + 1;
-        let slot_start = index * 512;
-        let slot_end = slot_start + 511;
         script.push_str(&format!(
             "/codis/bin/codis-admin --dashboard=127.0.0.1:{dashboard_port} --create-group --gid={group}\n\
              /codis/bin/codis-admin --dashboard=127.0.0.1:{dashboard_port} --group-add --gid={group} --addr=127.0.0.1:{master} --datacenter=test\n\
-             /codis/bin/codis-admin --dashboard=127.0.0.1:{dashboard_port} --group-add --gid={group} --addr=127.0.0.1:{replica} --datacenter=test\n\
-             /codis/bin/codis-admin --dashboard=127.0.0.1:{dashboard_port} --slots-assign --beg={slot_start} --end={slot_end} --gid={group} --confirm\n"
+             /codis/bin/codis-admin --dashboard=127.0.0.1:{dashboard_port} --group-add --gid={group} --addr=127.0.0.1:{replica} --datacenter=test\n"
         ));
     }
 

@@ -33,7 +33,7 @@ impl CodisInstance {
 
         let redis_image_repo = std::env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
             .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
-        let mut redis_image = GenericImage::new(redis_image_repo, "8.0.5")
+        let mut redis_image = GenericImage::new(redis_image_repo, "8.0.5".to_string())
             .with_wait_for(WaitFor::message_on_stdout(
                 "rdbinsight codis backends ready",
             ))

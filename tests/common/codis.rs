@@ -3,11 +3,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail};
 use redis::Client;
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
-    core::{IntoContainerPort, WaitFor},
+    core::{ExecCommand, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
 
@@ -97,6 +97,7 @@ impl CodisInstance {
 
     async fn wait_until_ready(&self) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(30);
+        let mut last_error = None;
         loop {
             let mut ready = true;
             for port in self.master_ports.iter().chain(&self.replica_ports) {
@@ -107,7 +108,8 @@ impl CodisInstance {
                     Result::<_, anyhow::Error>::Ok(())
                 }
                 .await;
-                if result.is_err() {
+                if let Err(error) = result {
+                    last_error = Some(format!("port {port}: {error:#}"));
                     ready = false;
                     break;
                 }
@@ -115,11 +117,33 @@ impl CodisInstance {
             if ready {
                 return Ok(());
             }
-            ensure!(
-                Instant::now() < deadline,
-                "Codis servers did not become ready within 30 seconds"
-            );
+            if Instant::now() >= deadline {
+                let diagnostics = self.backend_diagnostics().await;
+                bail!(
+                    "Codis servers did not become ready within 30 seconds ({})\n{diagnostics}",
+                    last_error.as_deref().unwrap_or("no Redis client error")
+                );
+            }
             tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    async fn backend_diagnostics(&self) -> String {
+        let command = "ps aux; find /tmp/rdbinsight-codis -maxdepth 3 -type f -print; \
+                       for file in /tmp/rdbinsight-codis/*/startup.log \
+                                   /tmp/rdbinsight-codis/*/log/*; do \
+                         if [ -f \"$file\" ]; then echo \"=== $file\"; tail -100 \"$file\"; fi; \
+                       done";
+        let result = self
+            ._backend_container
+            .exec(ExecCommand::new(["sh", "-c", command]))
+            .await;
+        let Ok(mut result) = result else {
+            return format!("failed to collect Pika diagnostics: {result:?}");
+        };
+        match result.stdout_to_vec().await {
+            Ok(output) => String::from_utf8_lossy(&output).into_owned(),
+            Err(error) => format!("failed to read Pika diagnostics: {error}"),
         }
     }
 }
@@ -179,7 +203,8 @@ fn pika_server_command(port: u16, master: Option<u16>) -> String {
            -e 's|^instance-mode :.*|instance-mode : sharding|' \
            /tmp/rdbinsight-codis/{port}.conf\n\
          {replication}\
-         /pika/bin/pika -c /tmp/rdbinsight-codis/{port}.conf &\n"
+         /pika/bin/pika -c /tmp/rdbinsight-codis/{port}.conf \
+           >> /tmp/rdbinsight-codis/{port}/startup.log 2>&1 &\n"
     )
 }
 

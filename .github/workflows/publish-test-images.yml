@@ -14,7 +14,7 @@ on:
         required: false
         default: '["8.8.0", "8.6.4", "8.0.5", "7.0.15", "6.0.20", "2.8.24", "2.4.18"]'
       publish_codis_server:
-        description: 'Build and publish the Codis Server 3.2 test image'
+        description: 'Build and publish the Codis Server 3.2.2 test image'
         type: boolean
         required: false
         default: true
@@ -138,7 +138,7 @@ jobs:
             "$IMAGE@${ARM_DIGEST}"
 
   build-and-push-codis-server:
-    name: Build Codis Server 3.2 (amd64)
+    name: Build Codis Server 3.2.2 (amd64)
     if: ${{ inputs.publish_codis_server }}
     runs-on: ubuntu-latest
     permissions:
@@ -169,4 +169,4 @@ jobs:
           file: ./tests/common/Dockerfile.codis-server
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.vars.outputs.image }}:3.2
+          tags: ${{ steps.vars.outputs.image }}:3.2.2

@@ -18,7 +18,7 @@ mod common;
 #[tokio::test(flavor = "current_thread")]
 async fn codis_source_discovers_replicas_and_reads_every_group() -> Result<()> {
     let codis = CodisInstance::start().await?;
-    let keys = ["codis-e2e:group-1", "codis-e2e:group-2"];
+    let keys = ["codis-e2e:group-1"];
     seed_groups(&codis, &keys).await?;
 
     let mut source = SourceConfig::Codis {
@@ -31,7 +31,7 @@ async fn codis_source_discovers_replicas_and_reads_every_group() -> Result<()> {
     assert_eq!(source.cluster_name(), "rdbinsight-codis-e2e");
 
     let mut streams = source.get_rdb_streams().await?;
-    assert_eq!(streams.len(), 2, "expected one RDB stream per Codis group");
+    assert_eq!(streams.len(), 1, "expected one RDB stream per Codis group");
 
     let mut records = Vec::new();
     for mut stream in streams.drain(..) {

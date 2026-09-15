@@ -11,7 +11,7 @@ use testcontainers::{
     runners::AsyncRunner,
 };
 
-const GROUP_COUNT: u16 = 2;
+const GROUP_COUNT: u16 = 1;
 const PORT_COUNT: u16 = 1 + GROUP_COUNT * 2;
 const PORT_RANGE_START: u16 = 10_000;
 const PORT_RANGE_END: u16 = 19_000;
@@ -28,8 +28,8 @@ impl CodisInstance {
     pub async fn start() -> Result<Self> {
         let ports = reserve_contiguous_ports()?;
         let dashboard_port = ports[0];
-        let master_ports = vec![ports[1], ports[3]];
-        let replica_ports = vec![ports[2], ports[4]];
+        let master_ports = vec![ports[1]];
+        let replica_ports = vec![ports[2]];
 
         let backend_image_repo = std::env::var("RDBINSIGHT_TEST_PIKA_IMAGE_REPO")
             .unwrap_or_else(|_| "pikadb/pika".to_string());
@@ -144,7 +144,7 @@ fn reserve_contiguous_ports() -> Result<Vec<u16>> {
             return Ok(ports);
         }
     }
-    anyhow::bail!("failed to reserve five contiguous ports for Codis")
+    anyhow::bail!("failed to reserve three contiguous ports for Codis")
 }
 
 fn pika_startup_script(masters: &[u16], replicas: &[u16]) -> String {

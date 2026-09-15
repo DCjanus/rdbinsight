@@ -185,7 +185,7 @@ fn pika_server_command(port: u16, master: Option<u16>) -> String {
 
 fn codis_startup_script(dashboard_port: u16, masters: &[u16], replicas: &[u16]) -> String {
     let mut script = format!(
-        "set -eu\n\
+        "set -u\n\
          mkdir -p /tmp/rdbinsight-codis/rootfs\n\
          /codis/bin/codis-dashboard --default-config > /tmp/rdbinsight-codis/dashboard.toml\n\
          sed -i \

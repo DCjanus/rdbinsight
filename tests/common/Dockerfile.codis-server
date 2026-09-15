@@ -1,9 +1,11 @@
 # syntax=docker/dockerfile:1
 
-ARG CODIS_COMMIT=de1ad026e329561c22e2a3035fbfe89dc7fef764
+ARG CODIS_VERSION=3.2.2
+ARG CODIS_SOURCE_SHA256=ecd4e17763e4fa4cf5c003940b877dea7987c9b25ab1a2e9c30cd633c06cfcea
 FROM debian:trixie AS builder
 
-ARG CODIS_COMMIT
+ARG CODIS_VERSION
+ARG CODIS_SOURCE_SHA256
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
@@ -16,7 +18,8 @@ RUN apt-get update \
 WORKDIR /tmp/build
 
 RUN set -eux; \
-    axel -n 8 -o codis.tar.gz "https://github.com/CodisLabs/codis/archive/${CODIS_COMMIT}.tar.gz"; \
+    axel -n 8 -o codis.tar.gz "https://github.com/CodisLabs/codis/archive/refs/tags/${CODIS_VERSION}.tar.gz"; \
+    echo "${CODIS_SOURCE_SHA256}  codis.tar.gz" | sha256sum -c -; \
     mkdir codis; \
     tar -xzf codis.tar.gz --strip-components=1 -C codis; \
     make -C codis -j"$(nproc)" codis-server; \
@@ -26,7 +29,7 @@ RUN set -eux; \
 
 FROM debian:trixie-slim AS runtime
 
-ARG CODIS_COMMIT
+ARG CODIS_VERSION
 
 COPY --from=builder /opt/codis /opt/codis
 
@@ -40,4 +43,4 @@ EXPOSE 6379
 CMD ["/opt/codis/bin/codis-server"]
 
 LABEL org.opencontainers.image.source="https://github.com/CodisLabs/codis" \
-      org.opencontainers.image.revision="${CODIS_COMMIT}"
+      org.opencontainers.image.version="${CODIS_VERSION}"

@@ -55,13 +55,12 @@ jobs:
         with:
           components: llvm-tools-preview
 
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
-
-      - name: Enable sccache for Rust builds
-        run: |
-          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
-          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+      - name: Set up mr boxington
+        uses: jdx/mr-boxington-action@9df1d4b18b2147788a7ee7a2c7b84ecf62fd89d3 # v1.5.0
+        with:
+          version: 1.18.0
+          toolchain: nightly
+          cache-generation: coverage-v1
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -72,7 +71,7 @@ jobs:
       - name: Generate coverage report (cargo llvm-cov + nextest)
         run: |
           CARGO_LLVM_COV_SETUP=yes \
-          cargo +nightly llvm-cov nextest \
+          mbx +nightly llvm-cov nextest \
             --all-features --workspace \
             --ignore-filename-regex '^benches/' \
             --codecov --output-path codecov.json
@@ -83,10 +82,6 @@ jobs:
           use_oidc: true
           files: codecov.json
           fail_ci_if_error: true
-
-      - name: Show sccache stats
-        if: always()
-        run: ${SCCACHE_PATH} --show-stats
 
   parser-benchmark:
     name: Parser Benchmark (${{ matrix.shard }})
@@ -128,13 +123,12 @@ jobs:
       - name: Install nightly Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
-
-      - name: Enable sccache for Rust builds
-        run: |
-          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
-          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+      - name: Set up mr boxington
+        uses: jdx/mr-boxington-action@9df1d4b18b2147788a7ee7a2c7b84ecf62fd89d3 # v1.5.0
+        with:
+          version: 1.18.0
+          toolchain: nightly
+          cache-generation: parser-benchmark-v1
 
       - name: Install parser benchmark helper dependencies
         run: npm ci --ignore-scripts --prefix .github/actions/parser-benchmark

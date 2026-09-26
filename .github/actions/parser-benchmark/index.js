@@ -91,7 +91,7 @@ async function benchmarkBase() {
 
   fs.copyFileSync(repoPath("benches", "parser.rs"), path.join(worktree, "benches", "parser.rs"));
   await run(
-    "cargo",
+    "mbx",
     ["+nightly", "bench", "--bench", "parser", "--", "--noplot", "--save-baseline", "base"],
       {
         cwd: worktree,
@@ -111,7 +111,7 @@ async function benchmarkBase() {
 
 async function benchmarkCurrent() {
   fs.rmSync(CRITERION_DIR, { recursive: true, force: true });
-  await run("cargo", ["+nightly", "bench", "--bench", "parser", "--", "--noplot"], {
+  await run("mbx", ["+nightly", "bench", "--bench", "parser", "--", "--noplot"], {
     env: envWith({
       RDBINSIGHT_BENCH_PROFILES:
         process.env.RDBINSIGHT_BENCH_PROFILES ||

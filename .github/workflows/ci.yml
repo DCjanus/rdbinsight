@@ -92,9 +92,43 @@ jobs:
           files: codecov.json
           fail_ci_if_error: true
 
+  parser-benchmark-cache:
+    name: Parser Benchmark Cache
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    env:
+      MBX_TARGET_VIEWS: "0"
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install nightly Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Set up mr boxington
+        uses: jdx/mr-boxington-action@v1.5.0
+        with:
+          version: 1.18.0
+          toolchain: nightly
+          cache-generation: parser-benchmark-v1
+          github-cache-mode: objects
+
+      - name: Build parser benchmark for the shared cache
+        env:
+          MBX_STATS_REPORT: ${{ runner.temp }}/mbx-parser-cache-stats.json
+        run: mbx +nightly bench --bench parser --no-run --locked
+
+      - name: Publish mbx build cache summary
+        if: ${{ !cancelled() }}
+        run: node .github/scripts/mbx-summary.mjs "Parser benchmark build=${{ runner.temp }}/mbx-parser-cache-stats.json"
+
   parser-benchmark:
     name: Parser Benchmark (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    needs: [parser-benchmark-cache]
+    if: ${{ !cancelled() && (needs.parser-benchmark-cache.result == 'success' || needs.parser-benchmark-cache.result == 'skipped') }}
     permissions:
       contents: read
     strategy:

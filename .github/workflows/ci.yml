@@ -72,12 +72,18 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage report (cargo llvm-cov + nextest)
+        env:
+          MBX_STATS_REPORT: ${{ runner.temp }}/mbx-coverage-stats.json
         run: |
           CARGO_LLVM_COV_SETUP=yes \
           mbx +nightly llvm-cov nextest \
             --all-features --workspace \
             --ignore-filename-regex '^benches/' \
             --codecov --output-path codecov.json
+
+      - name: Publish mbx build cache summary
+        if: ${{ !cancelled() }}
+        run: node .github/scripts/mbx-summary.mjs "Coverage=${{ runner.temp }}/mbx-coverage-stats.json"
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v7
@@ -142,6 +148,13 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: node .github/actions/parser-benchmark/index.js
+
+      - name: Publish mbx build cache summary
+        if: ${{ !cancelled() }}
+        run: |
+          node .github/scripts/mbx-summary.mjs \
+            "Base=${{ runner.temp }}/mbx-parser-base-stats.json" \
+            "Current=${{ runner.temp }}/mbx-parser-current-stats.json"
 
       - name: Upload benchmark artifacts
         if: always()

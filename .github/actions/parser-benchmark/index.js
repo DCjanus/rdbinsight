@@ -97,6 +97,10 @@ async function benchmarkBase() {
         cwd: worktree,
         env: envWith({
           CARGO_TARGET_DIR: repoPath("target"),
+          MBX_STATS_REPORT: path.join(
+            process.env.RUNNER_TEMP || os.tmpdir(),
+            "mbx-parser-base-stats.json",
+          ),
           RDBINSIGHT_BENCH_PROFILES:
             process.env.RDBINSIGHT_BENCH_PROFILES ||
             process.env.RDBINSIGHT_BENCH_PROFILE ||
@@ -113,6 +117,10 @@ async function benchmarkCurrent() {
   fs.rmSync(CRITERION_DIR, { recursive: true, force: true });
   await run("mbx", ["+nightly", "bench", "--bench", "parser", "--", "--noplot"], {
     env: envWith({
+      MBX_STATS_REPORT: path.join(
+        process.env.RUNNER_TEMP || os.tmpdir(),
+        "mbx-parser-current-stats.json",
+      ),
       RDBINSIGHT_BENCH_PROFILES:
         process.env.RDBINSIGHT_BENCH_PROFILES ||
         process.env.RDBINSIGHT_BENCH_PROFILE ||

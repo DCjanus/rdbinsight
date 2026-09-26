@@ -10,13 +10,14 @@ permissions:
 jobs:
   compare:
     name: ${{ matrix.cache }} compilation
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         cache: [sccache, mbx]
     env:
-      SCCACHE_GHA_VERSION: rdbinsight-mbx-comparison-v1
+      SCCACHE_GHA_VERSION: rdbinsight-mbx-comparison-v2
     steps:
       - uses: actions/checkout@v7
 
@@ -39,8 +40,8 @@ jobs:
         with:
           version: 1.18.0
           toolchain: nightly
-          cache-generation: comparison-v1
-          save-on-pull-request: true
+          cache-generation: comparison-v2
+          save-on-workflow-dispatch: true
 
       - name: Record compiler and cache state
         run: |

@@ -40,7 +40,8 @@ jobs:
         with:
           version: 1.18.0
           toolchain: nightly
-          cache-generation: comparison-v2
+          cache-generation: comparison-objects-v1
+          github-cache-mode: objects
           save-on-workflow-dispatch: true
 
       - name: Record compiler and cache state
@@ -49,7 +50,6 @@ jobs:
           if [ "${{ matrix.cache }}" = mbx ]; then
             mbx doctor
             echo "mbx cache hit: ${{ steps.mbx.outputs.cache-hit }}"
-            echo "mbx cache save: ${{ steps.mbx.outputs.cache-save-reason }}"
           fi
 
       - name: Build test binaries twice with a fresh target
@@ -72,6 +72,9 @@ jobs:
             echo "phase=$phase cache=${{ matrix.cache }} seconds=$elapsed"
             echo "| $phase | ${{ matrix.cache }} | $elapsed |" >> "$GITHUB_STEP_SUMMARY"
           done
+          if [ "${{ matrix.cache }}" = mbx ]; then
+            find target -maxdepth 3 -type d | head -60 || true
+          fi
 
       - name: Report cache stats
         if: always()

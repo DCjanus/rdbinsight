@@ -17,7 +17,8 @@ jobs:
       matrix:
         cache: [sccache, mbx]
     env:
-      SCCACHE_GHA_VERSION: rdbinsight-mbx-comparison-v2
+      SCCACHE_GHA_VERSION: rdbinsight-mbx-comparison-v3
+      MBX_TARGET_VIEWS: "0"
     steps:
       - uses: actions/checkout@v7
 
@@ -40,7 +41,7 @@ jobs:
         with:
           version: 1.18.0
           toolchain: nightly
-          cache-generation: comparison-objects-v1
+          cache-generation: comparison-objects-v2
           github-cache-mode: objects
           save-on-workflow-dispatch: true
 
@@ -71,10 +72,11 @@ jobs:
             elapsed=$((SECONDS - start))
             echo "phase=$phase cache=${{ matrix.cache }} seconds=$elapsed"
             echo "| $phase | ${{ matrix.cache }} | $elapsed |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "${{ matrix.cache }}" = mbx ]; then
+              ls -ld target
+              test ! -L target
+            fi
           done
-          if [ "${{ matrix.cache }}" = mbx ]; then
-            find target -maxdepth 3 -type d | head -60 || true
-          fi
 
       - name: Report cache stats
         if: always()

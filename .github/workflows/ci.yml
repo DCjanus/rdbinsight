@@ -42,6 +42,8 @@ jobs:
   coverage:
     name: Coverage (llvm-cov + nextest)
     runs-on: ubuntu-latest
+    env:
+      MBX_TARGET_VIEWS: "0"
     permissions:
       contents: read
       id-token: write
@@ -61,6 +63,7 @@ jobs:
           version: 1.18.0
           toolchain: nightly
           cache-generation: coverage-v1
+          github-cache-mode: objects
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -114,6 +117,7 @@ jobs:
       RDBINSIGHT_BENCH_WARM_UP_SECS: "1"
       RDBINSIGHT_BENCH_MEASUREMENT_SECS: "3"
       RDBINSIGHT_BENCH_SAMPLING_MODE: "flat"
+      MBX_TARGET_VIEWS: "0"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -129,6 +133,7 @@ jobs:
           version: 1.18.0
           toolchain: nightly
           cache-generation: parser-benchmark-v1
+          github-cache-mode: objects
 
       - name: Install parser benchmark helper dependencies
         run: npm ci --ignore-scripts --prefix .github/actions/parser-benchmark

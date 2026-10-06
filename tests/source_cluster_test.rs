@@ -10,10 +10,35 @@ use rdbinsight::{
     source::{RdbSourceConfig, SourceType},
 };
 use redis::{AsyncCommands, cluster::ClusterClientBuilder};
+use testcontainers::{GenericImage, ImageExt, core::WaitFor, runners::AsyncRunner};
 
 use crate::common::redis_cluster::RedisClusterInstance;
 
 mod common;
+
+#[tokio::test(flavor = "current_thread")]
+async fn redis_cluster_startup_waits_for_every_node() -> Result<()> {
+    // No host port mappings are needed to test startup inside the container.
+    let ports = (24_000..24_006).collect::<Vec<_>>();
+    let delayed_port = ports.last().unwrap();
+    let script = common::redis_cluster::startup_script(&ports)
+        .replace(
+            &format!("redis-server --port {delayed_port}"),
+            &format!("(sleep 2; redis-server --port {delayed_port}"),
+        )
+        .replace(
+            &format!("--logfile /data/{delayed_port}/redis.log\n"),
+            &format!("--logfile /data/{delayed_port}/redis.log) &\n"),
+        );
+    let image_repo = std::env::var("RDBINSIGHT_TEST_REDIS_IMAGE_REPO")
+        .unwrap_or_else(|_| "ghcr.io/dcjanus/rdbinsight/redis".to_string());
+    let _container = GenericImage::new(image_repo, "8.0.5".to_string())
+        .with_wait_for(WaitFor::message_on_stdout("rdbinsight cluster ready"))
+        .with_cmd(["sh", "-c", script.as_str()])
+        .start()
+        .await?;
+    Ok(())
+}
 
 #[tokio::test(flavor = "current_thread")]
 async fn redis_cluster_source_reads_every_shard_from_replicas() -> Result<()> {

@@ -114,7 +114,7 @@ fn reserve_contiguous_ports() -> Result<Vec<u16>> {
     anyhow::bail!("failed to reserve six contiguous ports for Redis Cluster")
 }
 
-fn startup_script(ports: &[u16]) -> String {
+pub fn startup_script(ports: &[u16]) -> String {
     let mut script = String::from("set -eu\n");
     for port in ports {
         script.push_str(&format!(
@@ -129,13 +129,33 @@ fn startup_script(ports: &[u16]) -> String {
         .map(|port| format!("127.0.0.1:{port}"))
         .collect::<Vec<_>>()
         .join(" ");
+    let node_ports = ports
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(" ");
+    // Daemonized redis-server can return before its child accepts connections.
+    // Cluster creation requires every node, not just the first one, to be ready.
     script.push_str(&format!(
-        "until redis-cli -p {} ping >/dev/null 2>&1; do sleep 0.1; done\n\
-         redis-cli --cluster create {node_addresses} --cluster-replicas 1 --cluster-yes\n\
+        "for port in {node_ports}; do\n\
+           attempt=0\n\
+           until redis-cli -p \"$port\" ping 2>/dev/null | grep -qx PONG; do\n\
+             attempt=$((attempt + 1))\n\
+             if [ \"$attempt\" -ge 100 ]; then\n\
+               echo \"Redis node $port did not become ready\"\n\
+               cat /data/\"$port\"/redis.log\n\
+               exit 1\n\
+             fi\n\
+             sleep 0.1\n\
+           done\n\
+         done\n"
+    ));
+    script.push_str(&format!(
+        "redis-cli --cluster create {node_addresses} --cluster-replicas 1 --cluster-yes\n\
          until redis-cli -p {} cluster info | grep -q '^cluster_state:ok'; do sleep 0.1; done\n\
          echo 'rdbinsight cluster ready'\n\
          tail -f /dev/null\n",
-        ports[0], ports[0]
+        ports[0]
     ));
     script
 }

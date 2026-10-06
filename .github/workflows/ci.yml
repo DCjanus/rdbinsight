@@ -58,7 +58,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Set up mr boxington
-        uses: jdx/mr-boxington-action@v1.5.0
+        uses: jdx/mr-boxington-action@v1.6.0
         with:
           version: 1.18.0
           toolchain: nightly
@@ -108,7 +108,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Set up mr boxington
-        uses: jdx/mr-boxington-action@v1.5.0
+        uses: jdx/mr-boxington-action@v1.6.0
         with:
           version: 1.18.0
           toolchain: nightly
@@ -168,7 +168,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Set up mr boxington
-        uses: jdx/mr-boxington-action@v1.5.0
+        uses: jdx/mr-boxington-action@v1.6.0
         with:
           version: 1.18.0
           toolchain: nightly

@@ -56,6 +56,14 @@ just verify_version
 just verify_version tag=v1.2.3
 ```
 
+### GitHub Actions dependencies
+
+- Install the official lockfile tool with `gh extension install github/gh-actions-lock`.
+- After adding or changing Action references, run `gh actions-lock --no-narrow` from the repository root and review both workflow and lockfile changes. Never edit `.github/workflows/actions.lock` by hand.
+- Keep compatible major references such as `@v1`; toolchain and installer channel references retain their existing meaning. The generator migrates same-repository Actions to `$/` references resolved at the running commit.
+- Run `just verify_actions` for an offline coverage check, or `gh actions-lock --verify` for the online validation also performed by CI.
+- During weekly dependency maintenance, review upstream changes to moving references and refresh approved pins with `gh actions-lock --relock --no-narrow`. Dependabot updates existing locks when proposing Action version changes; it does not onboard new workflows.
+
 ### Tests & Coverage
 
 - Unit tests: use `cargo nextest` (via `just test`).

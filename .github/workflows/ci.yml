@@ -9,6 +9,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -23,9 +26,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Verify Actions lockfile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh extension install github/gh-actions-lock
+          gh actions-lock --verify
+
       - name: Verify version consistency (tag/Cargo.toml/CHANGELOG)
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        uses: ./.github/actions/verify-version-consistency
+        uses: $/.github/actions/verify-version-consistency
 
       - name: Install nightly Rust toolchain (rustfmt + llvm-tools-preview)
         id: toolchain
@@ -37,7 +47,7 @@ jobs:
         run: cargo +nightly fmt --all -- --check
 
       - name: Run cargo clippy (nightly)
-        run: cargo +nightly clippy --all -- -D warnings
+        run: cargo +nightly clippy --locked --all -- -D warnings
 
   coverage:
     name: Coverage (llvm-cov + nextest)
@@ -58,7 +68,7 @@ jobs:
           components: llvm-tools-preview
 
       - name: Set up mr boxington
-        uses: jdx/mr-boxington-action@v1.7.1
+        uses: jdx/mr-boxington-action@v1
         with:
           version: 1.18.0
           toolchain: nightly
@@ -76,7 +86,7 @@ jobs:
           MBX_STATS_REPORT: ${{ runner.temp }}/mbx-coverage-stats.json
         run: |
           CARGO_LLVM_COV_SETUP=yes \
-          mbx +nightly llvm-cov nextest \
+          mbx +nightly llvm-cov nextest --locked \
             --all-features --workspace \
             --ignore-filename-regex '^benches/' \
             --codecov --output-path codecov.json
@@ -108,7 +118,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Set up mr boxington
-        uses: jdx/mr-boxington-action@v1.7.1
+        uses: jdx/mr-boxington-action@v1
         with:
           version: 1.18.0
           toolchain: nightly
@@ -168,7 +178,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Set up mr boxington
-        uses: jdx/mr-boxington-action@v1.7.1
+        uses: jdx/mr-boxington-action@v1
         with:
           version: 1.18.0
           toolchain: nightly
@@ -486,7 +496,20 @@ jobs:
         with:
           images: ${{ steps.vars.outputs.image }}
 
-      - name: Build and push (${{ matrix.platform }})
+      - name: Build image for runtime verification (${{ matrix.platform }})
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          platforms: ${{ matrix.platform }}
+          tags: rdbinsight:smoke
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Verify image starts (${{ matrix.platform }})
+        run: docker run --rm --network none --platform '${{ matrix.platform }}' rdbinsight:smoke --help
+
+      - name: Build and push verified image (${{ matrix.platform }})
         id: build
         uses: docker/build-push-action@v7
         with:

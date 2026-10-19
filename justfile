@@ -8,6 +8,9 @@ check:
 	cargo machete
 	cargo clippy --all -- -D warnings
 
+verify_actions:
+	gh actions-lock --verify-local
+
 test: init_test
     cargo nextest run --all --status-level=all
 

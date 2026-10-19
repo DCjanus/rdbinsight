@@ -55,6 +55,14 @@ just verify_version
 just verify_version tag=v1.2.3
 ```
 
+### GitHub Actions 依赖
+
+- 使用 `gh extension install github/gh-actions-lock` 安装官方锁文件工具。
+- 新增或修改 Action 引用后，在仓库根目录执行 `gh actions-lock --no-narrow`，同时审查 workflow 和锁文件的变化。不要手工编辑 `.github/workflows/actions.lock`。
+- 保留 `@v1` 等兼容的大版本引用；工具链和安装器频道引用保留原有语义。生成器会将同仓库 Action 迁移为按运行提交解析的 `$/` 引用。
+- 执行 `just verify_actions` 离线检查锁文件覆盖范围，或执行 `gh actions-lock --verify` 进行与 CI 相同的在线校验。
+- 每周依赖维护时审查移动引用的上游变化，确认后通过 `gh actions-lock --relock --no-narrow` 刷新锁定。Dependabot 提议 Action 版本变更时会更新已有锁定，但不会首次接入新 workflow。
+
 ### 测试与覆盖率
 
 - 单元测试：使用 `cargo nextest`（通过 `just test`）。

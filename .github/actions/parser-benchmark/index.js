@@ -92,7 +92,7 @@ async function benchmarkBase() {
   fs.copyFileSync(repoPath("benches", "parser.rs"), path.join(worktree, "benches", "parser.rs"));
   await run(
     "mbx",
-    ["+nightly", "bench", "--bench", "parser", "--", "--noplot", "--save-baseline", "base"],
+    ["+nightly", "bench", "--locked", "--bench", "parser", "--", "--noplot", "--save-baseline", "base"],
       {
         cwd: worktree,
         env: envWith({
@@ -115,7 +115,7 @@ async function benchmarkBase() {
 
 async function benchmarkCurrent() {
   fs.rmSync(CRITERION_DIR, { recursive: true, force: true });
-  await run("mbx", ["+nightly", "bench", "--bench", "parser", "--", "--noplot"], {
+  await run("mbx", ["+nightly", "bench", "--locked", "--bench", "parser", "--", "--noplot"], {
     env: envWith({
       MBX_STATS_REPORT: path.join(
         process.env.RUNNER_TEMP || os.tmpdir(),

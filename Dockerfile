@@ -13,7 +13,7 @@ WORKDIR /usr/src/app
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/src/app/target \
-    cargo build --release --bin rdbinsight && \
+    cargo build --locked --release --bin rdbinsight && \
     cp target/release/rdbinsight /tmp/rdbinsight
 
 FROM debian:trixie-slim

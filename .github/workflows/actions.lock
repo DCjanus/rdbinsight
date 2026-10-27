@@ -93,7 +93,7 @@ dependencies:
         repo_id: 241092383
     'docker/login-action@v4':
         ref: 'v4'
-        commit: 'sha1-dbcb813823bdd20940b903addbd779551569679f'
+        commit: 'sha1-81c6f93d4bc991e510b342a00b419b3bb4efc5c6'
         owner_id: 5429470
         repo_id: 287743349
     'docker/metadata-action@v6':
@@ -113,16 +113,16 @@ dependencies:
         repo_id: 260749683
     'jdx/mr-boxington-action@v1':
         ref: 'v1'
-        commit: 'sha1-47ce49b32025d93a7a2f4570815afaa2b7092240'
+        commit: 'sha1-88acf2bb50552c7c508cbac13e5f8c576b95b1de'
         owner_id: 216188
         repo_id: 1345301886
     'taiki-e/install-action@cargo-llvm-cov':
         ref: 'cargo-llvm-cov'
-        commit: 'sha1-671164c891d3e20f5b8ece04798d0154d1262d65'
+        commit: 'sha1-f9ee2b3488b5862cca1caf86effaa61f55953001'
         owner_id: 43724913
         repo_id: 442947557
     'taiki-e/install-action@nextest':
         ref: 'nextest'
-        commit: 'sha1-9252097d36d2d3618ad98f5d873696a962b6897c'
+        commit: 'sha1-42b98ff034a377bb5e4aa99118b5b160f96a8ef2'
         owner_id: 43724913
         repo_id: 442947557

@@ -12,7 +12,7 @@ workflows:
         - 'docker/login-action@v4'
         - 'docker/metadata-action@v6'
         - 'docker/setup-buildx-action@v4'
-        - 'dtolnay/rust-toolchain@nightly'
+        - 'dtolnay/rust-toolchain@v1'
         - 'jdx/mr-boxington-action@v1'
         - 'taiki-e/install-action@v2'
     '.github/workflows/deploy-pages.yml':
@@ -105,9 +105,9 @@ dependencies:
         commit: 'sha1-f87e5991a6d7451dcb8d9637bfbc97413f497069'
         owner_id: 5429470
         repo_id: 288485773
-    'dtolnay/rust-toolchain@nightly':
-        ref: 'nightly'
-        commit: 'sha1-2c76c034f9e32a5d6e2c104dc4df23a22476db04'
+    'dtolnay/rust-toolchain@v1':
+        ref: 'v1'
+        commit: 'sha1-683b588c487a69d01f6c6ddf40f036ff682cc2c8'
         owner_id: 1940490
         repo_id: 260749683
     'jdx/mr-boxington-action@v1':

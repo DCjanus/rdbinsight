@@ -231,7 +231,7 @@ pub struct ClusterNode {
 
 impl ClusterNode {
     pub fn is_master(&self) -> bool {
-        self.flags.contains(&"master".to_string())
+        self.flags.iter().any(|flag| flag == "master")
     }
 
     pub fn is_healthy(&self) -> bool {
